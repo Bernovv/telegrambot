@@ -1,0 +1,36 @@
+{
+  "name": "telegram-ticket-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "ci:check": "node scripts/check-ci-config.mjs",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\" \"scripts/**/*.ts\" --max-warnings=0",
+    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.json",
+    "test": "pnpm -r test",
+    "test:migrations": "pnpm --filter @ticket-platform/database test:migrations",
+    "db:migrations:check": "node scripts/check-migrations.mjs && node scripts/generate-pgboss-migration.mjs --check",
+    "db:pgboss:generate": "node scripts/generate-pgboss-migration.mjs",
+    "db:pgboss:check": "node scripts/generate-pgboss-migration.mjs --check",
+    "admin:bootstrap": "node --import tsx scripts/bootstrap-admin.ts",
+    "db:migrate": "pnpm --filter @ticket-platform/database db:migrate",
+    "db:migrate:deploy": "pnpm --filter @ticket-platform/database db:migrate:deploy",
+    "graphify:update": "graphify --update"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "^24.0.0",
+    "eslint": "9.39.5",
+    "js-yaml": "4.3.0",
+    "tsx": "^4.20.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "8.65.0"
+  }
+}

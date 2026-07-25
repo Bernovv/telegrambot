@@ -1,0 +1,19 @@
+{
+  "name": "@ticket-platform/application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/application",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/application",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@ticket-platform/contracts": "workspace:*",
+    "@ticket-platform/domain": "workspace:*"
+  }
+}

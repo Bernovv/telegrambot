@@ -1,0 +1,15 @@
+{
+  "name": "@ticket-platform/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/contracts",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/contracts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../scripts/noop.mjs test @ticket-platform/contracts"
+  }
+}

@@ -1,0 +1,321 @@
+import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
+import {
+  AcceptTelegramOfferService,
+  AuthorizeAdminRequestService,
+  ConfirmPaymentService,
+  CreateOrderService,
+  GetReadinessService,
+  GetAdminOrderService,
+  GetAdminUserService,
+  HandleTelegramContactService,
+  HandleTelegramStartService,
+  HmacOrderReferenceGenerator,
+  HmacTicketReferenceGenerator,
+  HandleTBankRefundWebhookService,
+  HandleTBankPaymentWebhookService,
+  InitializeTelegramTBankPaymentService,
+  ListTelegramTicketsService,
+  ListAdminOrdersService,
+  ListAdminUsersService,
+  RequestTelegramTicketRedeliveryService,
+  RequestFullTBankRefundService,
+  type IdGenerator
+} from "@ticket-platform/application";
+import { loadApiConfig } from "@ticket-platform/config";
+import {
+  createOfferAcceptancePersistence,
+  createAdminOperationsPersistence,
+  createNodePostgresPool,
+  createPostgresHealthProbes,
+  createPhonePersistence,
+  createPaymentConfirmationPersistence,
+  createOrderSalesPersistence,
+  createTelegramTicketAccessPersistence,
+  createTelegramStartPersistence,
+  createTBankPaymentPersistence,
+  createTBankRefundPersistence,
+  migrations,
+  PostgresAdminPrincipalRepository,
+  type ManagedSqlConnectionPool
+} from "@ticket-platform/database";
+import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
+import {
+  createTelegramBot,
+  TelegramUpdateController,
+  type TelegramUpdateProcessor
+} from "@ticket-platform/messenger-telegram";
+import { createLogger } from "@ticket-platform/observability";
+import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
+import { createApiApplication } from "./app.js";
+import { SupabaseAdminAccessTokenVerifier } from "./supabase-admin-token-verifier.js";
+
+export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const config = loadApiConfig(env);
+  const logger = createLogger({ service: "api", environment: config.appEnv });
+  let pool: ManagedSqlConnectionPool | undefined;
+
+  let app: Awaited<ReturnType<typeof createApiApplication>> | undefined;
+
+  try {
+    let processor: TelegramUpdateProcessor | undefined;
+
+    pool = createNodePostgresPool({
+      connectionString: config.databaseUrl,
+      maxConnections: config.databasePoolMax,
+      applicationName: "ticket-platform-api",
+      onIdleClientError(error) {
+        logger.error("postgres idle client failed", { errorType: error.name });
+      }
+    });
+    const expectedMigrationVersion = getExpectedMigrationVersion();
+    const idGenerator: IdGenerator = { newId: uuidv7 };
+    const readiness = new GetReadinessService(
+      "api",
+      config.appVersion,
+      createPostgresHealthProbes(pool, {
+        expectedMigrationVersion,
+        pgBossSchema: config.pgBossSchema,
+        expectedPgBossVersion: 37,
+        workerHeartbeatDegradedSeconds: config.workerHeartbeatDegradedSeconds,
+        workerHeartbeatFailedSeconds: config.workerHeartbeatFailedSeconds,
+        outboxLagDegradedSeconds: config.outboxLagDegradedSeconds,
+        outboxLagFailedSeconds: config.outboxLagFailedSeconds
+      })
+    );
+    const adminAuth = config.adminAuth.enabled
+      ? {
+          tokenVerifier: new SupabaseAdminAccessTokenVerifier({
+            issuer: config.adminAuth.issuer,
+            audience: config.adminAuth.audience
+          }),
+          authorizer: new AuthorizeAdminRequestService(
+            new PostgresAdminPrincipalRepository(pool)
+          )
+        }
+      : undefined;
+    const adminOperations = adminAuth
+      ? (() => {
+          const repository = createAdminOperationsPersistence(pool);
+          return {
+            listUsers: new ListAdminUsersService(repository),
+            getUser: new GetAdminUserService(repository),
+            listOrders: new ListAdminOrdersService(repository),
+            getOrder: new GetAdminOrderService(repository)
+          };
+        })()
+      : undefined;
+    const orders = adminAuth
+      ? (() => {
+          const persistence = createOrderSalesPersistence(pool, idGenerator);
+          return new CreateOrderService(
+            persistence.orderSalesRepository,
+            persistence.outboxWriter,
+            persistence.unitOfWork,
+            idGenerator,
+            new HmacOrderReferenceGenerator(
+              config.orderTokenSecret,
+              config.orderNumberPrefix
+            )
+          );
+        })()
+      : undefined;
+    const manualPayments = adminAuth
+      ? (() => {
+          const persistence = createPaymentConfirmationPersistence(pool, idGenerator);
+          return new ConfirmPaymentService(
+            persistence.paymentConfirmationRepository,
+            persistence.outboxWriter,
+            persistence.unitOfWork,
+            idGenerator,
+            new HmacTicketReferenceGenerator(config.orderTokenSecret)
+          );
+        })()
+      : undefined;
+    const tbank = config.tbankPayments.enabled
+      ? (() => {
+          const provider = new TBankPaymentProvider({
+            baseUrl: config.tbankPayments.apiBaseUrl,
+            terminalKey: config.tbankPayments.terminalKey,
+            password: config.tbankPayments.password,
+            timeoutMs: config.tbankPayments.timeoutMs
+          });
+          const paymentPersistence = createTBankPaymentPersistence(pool, idGenerator);
+          const refundPersistence = createTBankRefundPersistence(pool);
+          const confirmationPersistence = createPaymentConfirmationPersistence(
+            pool,
+            idGenerator
+          );
+          const confirmation = new ConfirmPaymentService(
+            confirmationPersistence.paymentConfirmationRepository,
+            confirmationPersistence.outboxWriter,
+            confirmationPersistence.unitOfWork,
+            idGenerator,
+            new HmacTicketReferenceGenerator(config.orderTokenSecret)
+          );
+          const refundWebhook = new HandleTBankRefundWebhookService(
+            refundPersistence,
+            idGenerator
+          );
+          return {
+            provider,
+            initialization: new InitializeTelegramTBankPaymentService(
+              paymentPersistence.initializationRepository,
+              provider,
+              {
+                notificationUrl: config.tbankPayments.notificationUrl,
+                successUrl: config.tbankPayments.successUrl,
+                failUrl: config.tbankPayments.failUrl
+              }
+            ),
+            webhook: new HandleTBankPaymentWebhookService(
+              paymentPersistence.webhookRepository,
+              confirmation,
+              idGenerator,
+              refundWebhook
+            ),
+            refunds: adminAuth
+              ? new RequestFullTBankRefundService(
+                  refundPersistence,
+                  provider,
+                  idGenerator,
+                  { newId: randomUUID }
+                )
+              : undefined
+          };
+        })()
+      : undefined;
+
+    if (config.telegramWebhook.enabled) {
+      const startPersistence = createTelegramStartPersistence(pool, idGenerator);
+      const phonePersistence = createPhonePersistence(pool, idGenerator);
+      const offerPersistence = createOfferAcceptancePersistence(pool);
+      const ticketPersistence = createTelegramTicketAccessPersistence(pool);
+      const startService = new HandleTelegramStartService(
+        startPersistence.identityRepository,
+        startPersistence.idempotencyRepository,
+        startPersistence.outboxWriter,
+        startPersistence.unitOfWork,
+        idGenerator
+      );
+      const contactService = new HandleTelegramContactService(
+        new LibPhoneNumberNormalizer(config.telegramWebhook.defaultCountry),
+        phonePersistence.telegramUserResolver,
+        phonePersistence.phoneRepository,
+        phonePersistence.phoneBonusRepository,
+        phonePersistence.idempotencyRepository,
+        phonePersistence.outboxWriter,
+        phonePersistence.unitOfWork,
+        idGenerator
+      );
+      const offerService = new AcceptTelegramOfferService(
+        offerPersistence.offerAcceptanceRepository,
+        offerPersistence.outboxWriter,
+        offerPersistence.unitOfWork,
+        idGenerator
+      );
+      const ticketListService = new ListTelegramTicketsService(
+        ticketPersistence.ticketAccessRepository
+      );
+      const ticketRedeliveryService = new RequestTelegramTicketRedeliveryService(
+        ticketPersistence.ticketAccessRepository,
+        ticketPersistence.idempotencyRepository,
+        ticketPersistence.outboxWriter,
+        ticketPersistence.unitOfWork,
+        idGenerator
+      );
+      const bot = createTelegramBot(
+        config.telegramWebhook.botToken,
+        new TelegramUpdateController(
+          startService,
+          contactService,
+          offerService,
+          ticketListService,
+          ticketRedeliveryService,
+          tbank?.initialization
+        ),
+        logger,
+        { rethrowUpdateErrors: true }
+      );
+
+      await pool.ping();
+      await bot.init();
+      processor = { handleUpdate: (update) => bot.handleUpdate(update) };
+      logger.info("telegram webhook dependencies ready", { botId: String(bot.botInfo.id) });
+    }
+
+    app = await createApiApplication({
+      appVersion: config.appVersion,
+      bodyLimitBytes: Math.max(
+        config.telegramWebhook.bodyLimitBytes,
+        config.tbankPayments.bodyLimitBytes
+      ),
+      readiness,
+      ...(adminAuth ? { adminAuth } : {}),
+      ...(orders ? { orders } : {}),
+      ...(manualPayments ? { manualPayments } : {}),
+      ...(adminOperations ? { adminOperations } : {}),
+      ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
+      ...(tbank
+        ? {
+            tbankWebhook: {
+              config: {
+                bodyLimitBytes: config.tbankPayments.bodyLimitBytes
+              },
+              verifier: tbank.provider,
+              handler: tbank.webhook
+            }
+          }
+        : {}),
+      ...(config.telegramWebhook.enabled && processor
+        ? {
+            webhook: {
+              config: {
+                pathSecret: config.telegramWebhook.pathSecret,
+                headerSecret: config.telegramWebhook.headerSecret
+              },
+              processor
+            }
+          }
+        : {})
+    });
+    await app.listen(config.apiPort, config.apiHost);
+    logger.info("api started", {
+      version: config.appVersion,
+      port: config.apiPort,
+      telegramWebhookEnabled: config.telegramWebhook.enabled,
+      tbankPaymentsEnabled: config.tbankPayments.enabled
+    });
+  } catch (error) {
+    await app?.close();
+    await pool?.close();
+    throw error;
+  }
+
+  let shuttingDown = false;
+  const close = async () => {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
+    await app.close();
+    await pool?.close();
+    logger.info("api stopped", { version: config.appVersion });
+  };
+
+  process.once("SIGINT", () => void close());
+  process.once("SIGTERM", () => void close());
+}
+
+await bootstrapApi();
+
+function getExpectedMigrationVersion(): string {
+  const latestMigration = migrations.at(-1);
+
+  if (!latestMigration) {
+    throw new Error("At least one database migration is required");
+  }
+
+  return latestMigration.id.slice(0, 14);
+}

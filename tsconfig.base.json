@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@ticket-platform/application": ["packages/application/src/index.ts"],
+      "@ticket-platform/config": ["packages/config/src/index.ts"],
+      "@ticket-platform/contracts": ["packages/contracts/src/index.ts"],
+      "@ticket-platform/database": ["packages/database/src/index.ts"],
+      "@ticket-platform/domain": ["packages/domain/src/index.ts"],
+      "@ticket-platform/messenger-core": ["packages/messenger-core/src/index.ts"],
+      "@ticket-platform/messenger-telegram": ["packages/messenger-telegram/src/index.ts"],
+      "@ticket-platform/observability": ["packages/observability/src/index.ts"],
+      "@ticket-platform/payment-tbank": ["packages/payment-tbank/src/index.ts"],
+      "@ticket-platform/scenario-engine": ["packages/scenario-engine/src/index.ts"],
+      "@ticket-platform/ticket-rendering": ["packages/ticket-rendering/src/index.ts"]
+    }
+  }
+}

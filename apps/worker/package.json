@@ -1,0 +1,25 @@
+{
+  "name": "@ticket-platform/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --import tsx --watch src/main.ts",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/worker",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@ticket-platform/application": "workspace:*",
+    "@ticket-platform/config": "workspace:*",
+    "@ticket-platform/contracts": "workspace:*",
+    "@ticket-platform/database": "workspace:*",
+    "@ticket-platform/messenger-telegram": "workspace:*",
+    "@ticket-platform/observability": "workspace:*",
+    "@ticket-platform/payment-tbank": "workspace:*",
+    "@ticket-platform/ticket-rendering": "workspace:*",
+    "pg-boss": "12.26.2",
+    "uuid": "14.0.1"
+  }
+}

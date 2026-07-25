@@ -1,0 +1,26 @@
+{
+  "name": "@ticket-platform/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/database",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/database",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/*.test.ts",
+    "test:migrations": "node --import tsx scripts/test-migrations.ts",
+    "db:migrate": "node ../../scripts/noop.mjs db:migrate @ticket-platform/database",
+    "db:migrate:deploy": "node ../../scripts/noop.mjs db:migrate:deploy @ticket-platform/database"
+  },
+  "dependencies": {
+    "@ticket-platform/application": "workspace:*",
+    "@ticket-platform/domain": "workspace:*",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@ticket-platform/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node src/main.ts",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/admin-web",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../scripts/noop.mjs test @ticket-platform/admin-web"
+  },
+  "dependencies": {
+    "@ticket-platform/contracts": "workspace:*"
+  }
+}
