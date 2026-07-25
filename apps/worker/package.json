@@ -19,7 +19,7 @@
     "@ticket-platform/observability": "workspace:*",
     "@ticket-platform/payment-tbank": "workspace:*",
     "@ticket-platform/ticket-rendering": "workspace:*",
-    "pg-boss": "12.26.2",
+    "pg-boss": "12.26.3",
     "uuid": "14.0.1"
   }
 }
