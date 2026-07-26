@@ -30,7 +30,7 @@
     "js-yaml": "4.3.0",
     "tsx": "^4.20.0",
     "turbo": "^2.5.0",
-    "typescript": "^5.9.0",
+    "typescript": "^7.0.2",
     "typescript-eslint": "8.65.0"
   }
 }
