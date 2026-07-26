@@ -23,6 +23,7 @@ export interface CreateOrderResult {
   readonly orderId: string;
   readonly orderNumber: string;
   readonly publicToken: string;
+  readonly offerPublicUrl: string | null;
   readonly status: "awaiting_offer" | "awaiting_payment";
   readonly currency: string;
   readonly totalKopecks: string;

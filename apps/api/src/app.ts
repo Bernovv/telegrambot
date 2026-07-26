@@ -45,6 +45,10 @@ import {
   type AdminOperationsHandlers
 } from "./admin-operations-api.js";
 import {
+  AdminEventsApiModule,
+  type AdminEventsHandlers
+} from "./admin-events-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -110,6 +114,7 @@ export interface ApiApplicationOptions {
   readonly manualPayments?: ConfirmManualPaymentHandler;
   readonly fullRefunds?: RequestFullRefundHandler;
   readonly adminOperations?: AdminOperationsHandlers;
+  readonly adminEvents?: AdminEventsHandlers;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -143,6 +148,9 @@ class ApiModule {
         ...(options.adminOperations
           ? [AdminOperationsApiModule.register(options.adminOperations)]
           : []),
+        ...(options.adminEvents
+          ? [AdminEventsApiModule.register(options.adminEvents)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -172,10 +180,11 @@ export async function createApiApplication(
       || options.manualPayments
       || options.fullRefunds
       || options.adminOperations
+      || options.adminEvents
     )
     && !options.adminAuth
   ) {
-    throw new Error("Orders APIs require administrator authentication");
+    throw new Error("Administrator APIs require administrator authentication");
   }
 
   return NestFactory.create<NestFastifyApplication>(

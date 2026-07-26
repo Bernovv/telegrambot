@@ -81,4 +81,42 @@ describe("GrammyTextNotificationSender", () => {
     assert.equal(calls[0]?.caption, "Ticket caption");
     assert.deepEqual(calls[0]?.bytes, bytes);
   });
+
+  it("sends scenario buttons with compact owner-bound callbacks", async () => {
+    const calls: {
+      readonly text: string;
+      readonly keyboard: unknown;
+    }[] = [];
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage(_chatId, text, options) {
+        calls.push({
+          text,
+          keyboard: options?.reply_markup.inline_keyboard
+        });
+        return { message_id: 44 };
+      },
+      async sendPhoto() {
+        throw new Error("Unexpected photo call");
+      }
+    });
+    const sessionId = "019c0123-4567-789a-bcde-f0123456789a";
+    const edgeId = "019c0123-4567-789a-bcde-f0123456789b";
+
+    const result = await sender.sendScenarioPresentation(
+      "123456789",
+      sessionId,
+      {
+        text: "Оплата подтверждена",
+        buttons: [{ text: "Продолжить", edgeId }]
+      }
+    );
+
+    assert.deepEqual(result, { providerMessageId: "44" });
+    assert.equal(calls[0]?.text, "Оплата подтверждена");
+    assert.deepEqual(calls[0]?.keyboard, [[{
+      text: "Продолжить",
+      callback_data:
+        "scenario:AZwBI0VneJq83vASNFZ4mg:AZwBI0VneJq83vASNFZ4mw"
+    }]]);
+  });
 });

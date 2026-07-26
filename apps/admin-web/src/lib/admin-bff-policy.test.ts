@@ -1,0 +1,130 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  getAdminMutationBodyLimit,
+  isAllowedAdminApiPath,
+  isTrustedMutationOrigin
+} from "./admin-bff-policy";
+
+test("allowlists only implemented administrator API methods and paths", () => {
+  assert.equal(isAllowedAdminApiPath("GET", "events"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/publish"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/scenario-drafts"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/scenario-versions/00000000-0000-4000-8000-000000000701/publish"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/offer-versions"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "events/00000000-0000-4000-8000-000000000101/offer/deactivate"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "events"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "events/00000000-0000-4000-8000-000000000101/general"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/products"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/content-blocks"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "events/00000000-0000-4000-8000-000000000101/content-blocks/00000000-0000-4000-8000-000000000401"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "events/00000000-0000-4000-8000-000000000101/products/00000000-0000-4000-8000-000000000201/pricing-rules/00000000-0000-4000-8000-000000000301"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "orders"), false);
+  assert.equal(isAllowedAdminApiPath("PATCH", "events/all/general"), false);
+});
+
+test("allows a larger body only for bounded document and graph payloads", () => {
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "events/00000000-0000-4000-8000-000000000101/offer-versions"
+    ),
+    262_144
+  );
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "events/00000000-0000-4000-8000-000000000101/scenario-drafts"
+    ),
+    262_144
+  );
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "events/00000000-0000-4000-8000-000000000101/content-blocks"
+    ),
+    65_536
+  );
+});
+
+test("requires an exact same-origin mutation request", () => {
+  assert.equal(
+    isTrustedMutationOrigin(
+      "https://admin.example.com",
+      "https://admin.example.com/events"
+    ),
+    true
+  );
+  assert.equal(
+    isTrustedMutationOrigin(
+      "https://attacker.example",
+      "https://admin.example.com/events"
+    ),
+    false
+  );
+  assert.equal(isTrustedMutationOrigin(null, "https://admin.example.com"), false);
+});

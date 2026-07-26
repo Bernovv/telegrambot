@@ -10,6 +10,6 @@
     "dev": "node ../../scripts/noop.mjs dev @ticket-platform/scenario-engine",
     "lint": "node ../../scripts/noop.mjs lint @ticket-platform/scenario-engine",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node ../../scripts/noop.mjs test @ticket-platform/scenario-engine"
+    "test": "node --import tsx --test src/*.test.ts"
   }
 }

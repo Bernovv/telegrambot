@@ -6,6 +6,7 @@ import type {
   TelegramInlineButton,
   TelegramReplyModel
 } from "./controller.js";
+import { decodeScenarioCallback } from "./scenario-callback.js";
 
 export type TelegramUpdate = Parameters<Bot["handleUpdate"]>[0];
 
@@ -93,6 +94,19 @@ export function createTelegramBot(
     }
   });
 
+  bot.on("message:text", async (ctx) => {
+    if (!ctx.from || ctx.chat.type !== "private") {
+      return;
+    }
+    const replies = await controller.onScenarioInput({
+      senderExternalUserId: String(ctx.from.id),
+      updateId: String(ctx.update.update_id),
+      text: ctx.message.text,
+      occurredAt: new Date(ctx.message.date * 1_000)
+    });
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
   bot.callbackQuery(/^offer_accept:([A-Za-z0-9_-]{43})$/, async (ctx) => {
     const publicOrderToken = ctx.match[1];
     if (!publicOrderToken) {
@@ -126,6 +140,9 @@ export function createTelegramBot(
         });
       }
     }
+    if (view.replies) {
+      await sendReplies(ctx.reply.bind(ctx), view.replies);
+    }
   });
 
   bot.callbackQuery(/^payment_init:([A-Za-z0-9_-]{43})$/, async (ctx) => {
@@ -154,6 +171,31 @@ export function createTelegramBot(
       });
     }
   });
+
+  bot.callbackQuery(
+    /^scenario:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]{22}$/,
+    async (ctx) => {
+      const reference = decodeScenarioCallback(ctx.callbackQuery.data);
+      if (
+        !reference
+        || !ctx.callbackQuery.message
+        || ctx.callbackQuery.message.chat.type !== "private"
+      ) {
+        await ctx.answerCallbackQuery({ text: "Действие недоступно" });
+        return;
+      }
+      const view = await controller.onScenarioTransition({
+        sessionId: reference.sessionId,
+        edgeId: reference.edgeId,
+        senderExternalUserId: String(ctx.from.id),
+        updateId: String(ctx.update.update_id),
+        callbackQueryId: ctx.callbackQuery.id,
+        occurredAt: new Date()
+      });
+      await ctx.answerCallbackQuery({ text: view.callbackText });
+      await sendReplies(ctx.reply.bind(ctx), view.replies);
+    }
+  );
 
   bot.callbackQuery("my_tickets", async (ctx) => {
     if (

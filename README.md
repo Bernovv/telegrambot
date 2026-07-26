@@ -1,56 +1,115 @@
-# Telegram Ticket Platform
+# Платформа продажи билетов в Telegram
 
-Monorepo for the Telegram-first ticket sales platform described in the parent technical specification.
+Монорепозиторий платформы продажи билетов через Telegram, описанной в технической документации
+родительского каталога.
 
-## Current Slice
+## Текущий этап
 
-Phase 1 foundation is code-complete. The current Phase 2 slice adds event sales, immutable order
-snapshots, inventory reservations, and wallet-backed checkout.
+Базовая инфраструктура этапа 1 завершена на уровне кода. Существенная часть этапов 2 и 3
+реализует продажи мероприятий, неизменяемые снимки заказов, резервирование мест, внутренний баланс
+и интеграцию с Т-Банком. Этап 4 выполнен частично: доступны основные списки, карточки и управление
+черновиками мероприятий.
 
-- `apps/api` - HTTP API, webhooks, health endpoints.
-- `apps/telegram-bot` - Telegram transport process.
-- `apps/worker` - background jobs and scheduler process.
-- `apps/admin-web` - admin panel shell.
-- `packages/*` - shared modular-monolith packages.
-- `supabase/migrations` - versioned PostgreSQL migrations.
+- `apps/api` — HTTP API, вебхуки и точки проверки состояния.
+- `apps/telegram-bot` — транспортный процесс Telegram.
+- `apps/worker` — фоновые задания и планировщик.
+- `apps/admin-web` — операционная панель администратора на Next.js.
+- `packages/*` — общие пакеты модульного монолита.
+- `supabase/migrations` — версионируемые миграции PostgreSQL.
 
-Implemented critical-path foundations:
+Реализованные части критического пути:
 
-- idempotent Telegram `/start` identity upsert and attribution;
-- owned-contact verification with strict E.164 normalization;
-- one-time configurable phone bonus;
-- transactional outbox and PostgreSQL unit of work;
-- append-only wallet transactions and entries with hold allocations.
-- shared grammY transport for long polling and webhook delivery;
-- NestJS/Fastify Telegram webhook with schema, dual-secret, and body-limit checks.
-- pg-boss outbox dispatcher with leased PostgreSQL claims, retry backoff, and worker heartbeat.
-- liveness and aggregate readiness checks for PostgreSQL, migrations, pg-boss, workers, and outbox lag.
-- database-backed administrator RBAC with asymmetric JWT verification and MFA enforcement.
-- bigint-only deterministic pricing and centralized order state transitions;
-- event, product, pricing, offer, order, reservation, and ticket schema;
-- idempotent order creation with event locking, FIFO wallet holds, and transactional outbox;
-- HMAC-derived opaque order tokens with only hashes stored in PostgreSQL;
-- authenticated and boundary-validated `POST /api/v1/orders`.
-- owner-bound, idempotent Telegram offer acceptance with immutable evidence and status history.
-- multi-replica-safe order expiry with atomic inventory and wallet release.
-- shared idempotent payment confirmation with atomic wallet capture and inventory consumption.
-- append-only manual payment evidence, audit history, HMAC ticket references, and ticket issuance.
-- MFA-protected manual payment API with post-commit payment, ticket, and admin outbox events.
-- pg-boss notification consumer with per-ticket idempotency, leased delivery records, Telegram
-  ticket messages, and administrator purchase notifications.
-- owner-bound `/tickets` and «Мои билеты» views with explicit, idempotent ticket redelivery.
-- deterministic in-memory QR PNG rendering and Telegram photo delivery without persisted tokens
-  or ticket files.
-- feature-gated T-Bank one-stage `Init`, owner-bound Telegram payment buttons, signed webhook
-  verification, append-only provider evidence, and atomic `CONFIRMED` ticket issuance.
-- separately gated T-Bank `CheckOrder` reconciliation with leased claims, bounded backoff,
-  repeated-empty protection, append-only observations, and shared atomic confirmation.
-- MFA-protected full T-Bank refunds with immutable intent, stable provider idempotency,
-  signed-webhook/reconciliation completion, ticket revocation, wallet reversal, and audit.
-- RBAC-protected administrator user/order lists and details with opaque cursor pagination,
-  masked contacts, UTC timestamps, kopeck strings, and repeatable read-only snapshots.
+- идемпотентное создание или обновление Telegram-пользователя и атрибуции при `/start`;
+- проверка принадлежности контакта пользователю и строгая нормализация E.164;
+- однократный настраиваемый бонус за телефон;
+- транзакционный журнал исходящих событий и единица работы PostgreSQL;
+- транзакции и проводки внутреннего баланса только для добавления с распределением резервов;
+- общий транспорт grammY для длительного опроса и вебхука;
+- Telegram-вебхук на NestJS/Fastify с проверкой схемы, двух секретов и ограничения тела;
+- диспетчер транзакционной очереди исходящих событий на pg-boss с арендой записей PostgreSQL,
+  интервалом повторов и сигналом активности фонового процесса;
+- проверки жизнеспособности и агрегированной готовности PostgreSQL, миграций, pg-boss, фонового
+  процесса и задержки транзакционной очереди;
+- администраторский RBAC из базы данных с асимметричной проверкой JWT и обязательной MFA;
+- детерминированный расчет цен только через `bigint` и централизованные переходы состояния заказа;
+- схема мероприятий, продуктов, тарифов, оферт, заказов, резервов и билетов;
+- идемпотентное создание заказа с блокировкой мероприятия, FIFO-резервом внутреннего баланса и
+  транзакционной записью outbox;
+- непрозрачные HMAC-токены заказов, в PostgreSQL хранятся только их хеши;
+- аутентифицированный и валидируемый маршрут `POST /api/v1/orders`;
+- привязанное к владельцу идемпотентное принятие оферты в Telegram с неизменяемыми доказательствами
+  и историей статусов;
+- безопасное для нескольких реплик истечение заказов с атомарным освобождением мест и резерва;
+- общий идемпотентный процесс подтверждения оплаты с атомарным списанием резерва и потреблением
+  резерва мест;
+- доказательства ручной оплаты только для добавления, история аудита, HMAC-ссылки билетов и их
+  выпуск;
+- защищенный MFA API ручной оплаты с событиями оплаты, билетов и уведомлений после фиксации
+  транзакции;
+- обработчик уведомлений pg-boss с идемпотентностью по билету, арендой записей доставки,
+  Telegram-сообщениями с билетами и уведомлениями администраторов о покупке;
+- привязанные к владельцу `/tickets` и «Мои билеты» с явной идемпотентной повторной отправкой;
+- детерминированный QR PNG 512×512 в памяти и отправка Telegram-фото без сохранения токенов или
+  файлов билетов;
+- отключенный по умолчанию одностадийный `Init` Т-Банка, привязанные к владельцу кнопки оплаты,
+  проверка подписанного вебхука, доказательства провайдера только для добавления и атомарный выпуск
+  билетов
+  после `CONFIRMED`;
+- отдельно включаемая сверка Т-Банка через `CheckOrder` с арендой записей, ограниченным интервалом
+  повторов, защитой от повторных пустых ответов, неизменяемыми наблюдениями и общей транзакцией
+  подтверждения;
+- защищенные MFA полные возвраты Т-Банка с неизменяемым намерением, стабильной идемпотентностью
+  провайдера, завершением по подписанному вебхуку или сверке, отзывом билетов, возвратом внутреннего
+  баланса и аудитом;
+- защищенные RBAC списки и карточки пользователей и заказов с непрозрачной курсорной пагинацией,
+  маскированными контактами, временными метками UTC, строками копеек и повторяемыми снимками только
+  для чтения;
+- защищенные RBAC проекции каталога и карточки мероприятия с продуктами, тарифами, вместимостью,
+  контентными блоками и метаданными активной неизменяемой оферты;
+- администраторское приложение Next.js с аутентификацией Supabase, BFF того же источника,
+  адаптивными
+  страницами мероприятий, пользователей и заказов, а также формами черновиков мероприятий,
+  продуктов, простых тарифов, контентных блоков и неизменяемых версий оферты с аудитом и
+  оптимистической блокировкой;
+- обязательный TOTP MFA-переход веб-админки с безопасным enrollment по QR-коду, подтверждением
+  Supabase-сессии до `aal2` и серверной защитой всех административных страниц;
+- версионируемые сценарии мероприятий с типизированными узлами и переходами, сохранением ошибок
+  черновика, серверной проверкой связности, циклов, идемпотентности и обязательной оферты до оплаты,
+  отдельным правом публикации, неизменяемой историей и структурированным редактором;
+- закрепленные за опубликованной версией пользовательские сессии сценария, неизменяемый журнал
+  выполнения, идемпотентная обработка обновлений Telegram, привязанные к владельцу обратные вызовы
+  и безопасное выполнение узлов `start`, `message`, `menu`, `choice`, `text_input`,
+  `number_input`, `order_start`, `offer_acceptance`, `payment_start` и `end` в длительном опросе
+  и вебхуке; ввод валидируется по явным границам, заказ создается по снимку тарифов и запасов,
+  принятие оферты возобновляет только сессию владельца, а денежные значения остаются строками
+  целых копеек; подтвержденное событие оплаты из webhook, reconciliation или ручной операции
+  идемпотентно продолжает связанную с заказом сессию и доставляет следующий экран через
+  transactional outbox;
+- редактор сценария создает безопасный каркас покупки по первому активному продукту и не добавляет
+  неработающие узлы оферты и оплаты, если у мероприятия еще нет активного продукта;
+- атомарная публикация мероприятия с отдельным правом, оптимистической блокировкой, аудитом и
+  серверной проверкой названия, даты, поддержки, активных продуктов и положительных цен,
+  опубликованного сценария и обязательной оферты; карточка мероприятия показывает готовность
+  каждого условия.
 
-## Local Commands
+## Что еще не реализовано
+
+- выбор мероприятия без стартовой ссылки, состав заказа из нескольких последовательных действий,
+  бесплатный заказ и оплата только внутренним балансом;
+- остальные узлы действий сценария, включая `order_add_item`, `order_summary`, статусы, категории
+  и начисление баланса, а также предметно-ориентированный язык выражений, предварительный просмотр,
+  тестовый режим, визуальное полотно и откат сценария;
+- партнерская программа, комиссии, уровни и возврат партнерских начислений;
+- статусы, категории, сегменты, опросы и рассылки;
+- импорт, экспорт, дедупликация и безопасная выдача файлов;
+- полная информационная панель, экраны платежей, билетов, внутреннего баланса, заданий и интеграций;
+- регистрация посетителей по билетам и администрирование через Telegram;
+- общий планировщик, резервное копирование, проверка восстановления, Sentry, оповещения,
+  нагрузочные тесты и тесты безопасности;
+- приемочное тестирование на тестовом стенде и обязательные юридические, фискальные и
+  инфраструктурные условия промышленной эксплуатации.
+
+## Локальные команды
 
 ```bash
 pnpm install
@@ -62,101 +121,157 @@ pnpm db:migrate
 pnpm db:pgboss:check
 ```
 
-After the local PostgreSQL schema and seed are applied, the Telegram transport can run in
-long-polling mode with values from `.env`:
+`pnpm db:migrate` применяет миграции только при `APP_ENV=local` или `APP_ENV=test`.
+`pnpm db:migrate:deploy` предназначена для `staging` и `production`. Обе команды используют
+`DATABASE_DIRECT_URL`, берут advisory lock, сверяют порядок файлов и SHA-256 уже примененных
+миграций и выполняют каждый новый файл в отдельной транзакции. Для production дополнительно
+обязательны проверенная резервная копия, план отката и точная фраза подтверждения. Полный порядок
+запуска и восстановления описан в `docs/runbooks/database-migrations.md`.
+
+После применения локальной схемы PostgreSQL и начальных данных Telegram-транспорт можно запустить
+в режиме длительного опроса со значениями из `.env`:
 
 ```bash
 pnpm --filter @ticket-platform/telegram-bot dev
 ```
 
-Production defaults to webhook delivery. Webhook hosting and secret validation belong to the
-API runtime. Configure `TELEGRAM_WEBHOOK_PATH_SECRET` and `TELEGRAM_WEBHOOK_SECRET` with
-different URL-safe values of at least 32 characters, then start:
+В рабочем окружении по умолчанию используется вебхук. Его размещение и проверка секретов относятся
+к процессу API. Настройте `TELEGRAM_WEBHOOK_PATH_SECRET` и `TELEGRAM_WEBHOOK_SECRET` разными
+безопасными для URL значениями длиной не менее 32 символов, затем запустите:
 
 ```bash
 pnpm --filter @ticket-platform/api dev
 ```
 
-The endpoint is `POST /webhooks/telegram/<TELEGRAM_WEBHOOK_PATH_SECRET>` and requires the
-`X-Telegram-Bot-Api-Secret-Token` header. Telegram `setWebhook` is intentionally not called at
-startup; register it through a reviewed deployment operation using the same endpoint and header
-secret. A failed update returns a non-2xx response so Telegram can retry it.
+Маршрут `POST /webhooks/telegram/<TELEGRAM_WEBHOOK_PATH_SECRET>` требует заголовок
+`X-Telegram-Bot-Api-Secret-Token`. Вызов Telegram `setWebhook` намеренно не выполняется при
+старте: регистрируйте вебхук отдельной проверенной операцией развертывания с тем же маршрутом и
+секретом заголовка. Ошибка обработки обновления возвращает ответ не `2xx`, чтобы Telegram мог
+повторить запрос.
 
-Use `GET /health/live` for process liveness and `GET /health/ready` for Railway readiness.
-Readiness returns HTTP 503 for failed dependencies and does not expose component details.
-Operational thresholds and response semantics are documented in
+Для проверки жизнеспособности используйте `GET /health/live`, для проверки готовности Railway —
+`GET /health/ready`. Проверка готовности возвращает HTTP 503 при отказе зависимостей и не раскрывает
+подробности компонентов.
+Пороговые значения и семантика ответов описаны в
 `docs/runbooks/health-readiness.md`.
 
-Administrator authentication is disabled by default outside production. Configure
-`ADMIN_AUTH_ISSUER` with the trusted OIDC/Supabase Auth issuer and enable `ADMIN_AUTH_ENABLED`.
-The protected `GET /api/v1/operations/health` endpoint requires `system.read` and returns
-component diagnostics. The API accepts only asymmetric `ES256` or `RS256` JWT signing keys;
-financial and other sensitive permissions require an `aal2` session.
+Аутентификация администраторов по умолчанию отключена вне рабочего окружения. Настройте
+`ADMIN_AUTH_ISSUER` доверенным издателем OIDC/Supabase Auth и включите `ADMIN_AUTH_ENABLED`.
+Защищенный маршрут `GET /api/v1/operations/health` требует `system.read` и возвращает диагностику
+компонентов. API принимает только асимметричные JWT с алгоритмами `ES256` или `RS256`; финансовые
+и другие чувствительные разрешения требуют сессию `aal2`.
 
-Order creation additionally requires `ORDER_TOKEN_SECRET` in production and the
-`orders.create` permission. The secret derives stable opaque callback tokens and is never stored
-in the database; only each token's SHA-256 hash is persisted. The same root secret is
-domain-separated for ticket tokens, and only ticket token hashes are stored.
+Создание заказа дополнительно требует `ORDER_TOKEN_SECRET` в рабочем окружении и разрешение
+`orders.create`. Секрет создает стабильные непрозрачные токены обратного вызова и никогда не сохраняется
+в базе данных: хранится только SHA-256 каждого токена. Тот же корневой секрет с разделением доменов
+используется для токенов билетов, которые также хранятся только в виде хешей.
 
-Manual payment confirmation uses `POST /api/v1/orders/:id/manual-payment`, requires
-`orders.manual_paid` with an `aal2` administrator session, and requires a stable
-`Idempotency-Key`. Operational recovery is documented in
+Ручное подтверждение оплаты использует `POST /api/v1/orders/:id/manual-payment`, требует
+`orders.manual_paid`, администраторскую сессию `aal2` и стабильный `Idempotency-Key`.
+Восстановление после сбоев описано в
 `docs/runbooks/manual-payment-confirmation.md`.
 
-T-Bank payments are disabled by default. Enabling them registers
-`POST /webhooks/payments/tbank` and adds payment callbacks to accepted Telegram offers. Only a
-signed `CONFIRMED` notification can pay an order; browser redirects have no financial authority.
-Configuration, staging verification, ambiguous `Init` recovery, and rollback are documented in
-`docs/runbooks/tbank-payments.md`.
+Платежи Т-Банка по умолчанию отключены. После включения регистрируется
+`POST /webhooks/payments/tbank`, а у принятых в Telegram оферт появляются кнопки оплаты. Оплатить
+заказ может только подписанное уведомление `CONFIRMED`; перенаправление браузера не имеет
+финансовых полномочий. Конфигурация, проверка тестового окружения, восстановление неоднозначного
+`Init` и откат описаны в `docs/runbooks/tbank-payments.md`.
 
-Automatic T-Bank reconciliation is independently disabled by default. Apply migration
-`20260725120000_tbank_payment_reconciliation` before enabling
-`TBANK_RECONCILIATION_ENABLED` on the worker. It never creates a second payment: it only checks
-the stable merchant order ID and confirms an exact, unambiguous provider result.
+Автоматическая сверка Т-Банка отключается и включается независимо от приема платежей. Перед
+включением `TBANK_RECONCILIATION_ENABLED` на фоновом процессе примените миграцию
+`20260725120000_tbank_payment_reconciliation`. Сверка не создает второй платеж: она только
+проверяет стабильный идентификатор заказа продавца и подтверждает точный однозначный результат
+провайдера.
 
-Full T-Bank refunds use `POST /api/v1/orders/:id/refunds/full`, require `payments.refund` with an
-`aal2` administrator session, and require a stable `Idempotency-Key`. Apply migration
-`20260725160000_tbank_full_refunds` first. Only exact provider `REFUNDED` evidence changes local
-financial state. Partial refunds and refunds of checked-in tickets are intentionally unsupported;
-see `docs/adr/0011-tbank-full-refunds.md` and `docs/runbooks/tbank-payments.md`.
+Полные возвраты Т-Банка используют `POST /api/v1/orders/:id/refunds/full`, требуют
+`payments.refund`, администраторскую сессию `aal2` и стабильный `Idempotency-Key`. Сначала примените
+миграцию `20260725160000_tbank_full_refunds`. Локальное финансовое состояние меняется только после
+точного доказательства `REFUNDED` от провайдера. Частичные возвраты и возвраты по уже отмеченным на
+входе билетам намеренно не поддерживаются; подробности находятся в
+`docs/adr/0011-tbank-full-refunds.md` и `docs/runbooks/tbank-payments.md`.
 
-Administrator read operations use `GET /api/v1/users`, `GET /api/v1/users/:id`,
-`GET /api/v1/orders`, and `GET /api/v1/orders/:id`. They require `users.read` or `orders.read`,
-never expose raw phone contacts, and use opaque cursors. Operational details are in
-`docs/runbooks/admin-read-operations.md`.
+Администраторские операции чтения используют `GET /api/v1/users`, `GET /api/v1/users/:id`,
+`GET /api/v1/orders`, `GET /api/v1/orders/:id`, `GET /api/v1/events` и
+`GET /api/v1/events/:id`. Они требуют соответствующее разрешение `users.read`, `orders.read` или
+`events.read`, никогда не раскрывают исходные номера телефонов и используют непрозрачные курсоры.
+Подробности находятся в `docs/runbooks/admin-read-operations.md`.
 
-After the RBAC migration is applied, the first super administrator can be created once with
-`pnpm admin:bootstrap`. The operation requires `DATABASE_DIRECT_URL`, the
-`ADMIN_BOOTSTRAP_*` values from `.env.example`, and the exact confirmation phrase
-`bootstrap-first-super-admin`. It uses one transaction and writes an audit row. Never run it
-against production without a reviewed change and explicit approval.
+Управление черновиками мероприятий использует `POST /api/v1/events`,
+`PATCH /api/v1/events/:id/general` и доступные только для черновика маршруты продуктов и тарифов
+под `/api/v1/events/:id/products`, а также маршруты контентных блоков под
+`/api/v1/events/:id/content-blocks` и версии оферты под
+`/api/v1/events/:id/offer-versions`. Операции требуют `events.write`, причину, аудит только для
+добавления и текущий `lockVersion` для существующего агрегата. Продукты и тарифы отключаются,
+контентные блоки скрываются, а опубликованные версии оферты остаются неизменяемыми. Отдельный
+`POST /api/v1/events/:id/publish` требует `events.publish` и атомарно открывает продажи только
+после проверки каталога, сценария, поддержки и обязательной оферты. Подробности находятся в
+`docs/runbooks/admin-event-drafts.md` и `docs/runbooks/admin-event-offers.md`.
 
-After all versioned migrations have been applied, run the outbox worker with:
+Хранилище снимков оферты отключено по умолчанию. Для его включения API нужны
+`OFFER_STORAGE_ENABLED=true`, HTTPS-адрес Supabase, серверный ключ служебной роли и имя заранее
+созданного публичного контейнера. Секрет не передается в браузер. Сервер экранирует согласованный
+текст, формирует статический HTML без исполняемого пользовательского кода, считает SHA-256 и
+загружает каждый снимок по новому пути без перезаписи.
+
+Администраторский интерфейс запускается отдельно от API. Перенесите шаблонные значения из
+`apps/admin-web/.env.example` в игнорируемый `apps/admin-web/.env.local`, настройте URL Supabase,
+публичный ключ и `ADMIN_API_BASE_URL` с внутренним источником API. Затем запустите интерфейс на
+отдельном локальном порту:
+
+```bash
+pnpm --filter @ticket-platform/admin-web dev -- --port 3001
+```
+
+Браузер обращается только к `/admin-api/*` на источнике Next.js. BFF проверяет сессию Supabase,
+передает короткоживущий токен доступа в Nest API и разрешает только реализованные маршруты
+мероприятий, пользователей и заказов. Мутации мероприятий дополнительно требуют точный
+JSON-запрос с того же источника и ограничены 64 КиБ на границе BFF.
+
+После проверки email и пароля маршрут `/mfa` подключает TOTP-приложение по QR-коду и подтверждает
+Supabase-сессию до `aal2`. Все страницы веб-админки требуют `aal2` на сервере; пароля без второго
+фактора недостаточно. Восстановление потерянного фактора выполняется только контролируемой
+операцией Supabase Auth. Подробности находятся в `docs/runbooks/admin-mfa.md`.
+
+После применения миграции RBAC первый суперадминистратор создается однократной командой
+`pnpm admin:bootstrap`. Операция требует `DATABASE_DIRECT_URL`, значений `ADMIN_BOOTSTRAP_*` из
+`.env.example` и точной фразы подтверждения `bootstrap-first-super-admin`. Она использует одну
+транзакцию и записывает строку аудита. Не запускайте ее в рабочем окружении без проверенного
+изменения и явного подтверждения.
+
+После применения всех версионируемых миграций запустите фоновый обработчик outbox:
 
 ```bash
 pnpm --filter @ticket-platform/worker dev
 ```
 
-The worker never migrates pg-boss at runtime. It verifies schema v37, the `outbox-dispatch` queue,
-and its dead-letter queue before claiming events. The outbox `event_id` is reused as the pg-boss
-job UUID, so a crash between publish and `processed_at` produces a harmless duplicate insert.
+Фоновый процесс никогда не изменяет схему pg-boss во время запуска. Он проверяет схему v37, очередь
+`outbox-dispatch` и ее очередь необработанных ошибок до начала обработки событий. `event_id` из
+outbox
+повторно используется как UUID задания pg-boss, поэтому сбой между публикацией и установкой
+`processed_at` приводит только к безопасной повторной вставке.
 
-Telegram notification consumption is disabled by default. Enable it only after configuring the
-worker values documented in `docs/runbooks/notification-delivery.md`. Delivery rows do not contain
-message bodies or ticket tokens; successful rows retain only the Telegram message ID.
+Обработчик Telegram-уведомлений по умолчанию отключен. Включайте его только после настройки
+значений фонового процесса из `docs/runbooks/notification-delivery.md`. Записи доставки не содержат
+тексты сообщений или токены билетов; успешные записи сохраняют только идентификатор сообщения
+Telegram.
 
-The local database workflow should use Supabase CLI or Docker Compose PostgreSQL. Production schema changes must go through versioned migrations and human review.
+Локальная база данных может работать через Supabase CLI или PostgreSQL в Docker Compose.
+Изменения схемы выполняются только файлами из `supabase/migrations`, после человеческой проверки
+и через защищенный запускатель. Supabase CLI остается средством запуска локальных сервисов, но
+прикладные миграции не следует повторно применять параллельно двумя инструментами.
 
-CI runs frozen dependency installation, dependency review, real type-aware ESLint, typecheck,
-tests, build, migration source checks, and PostgreSQL migration smoke tests. The smoke harness
-tests both a fresh schema and an upgrade from the previous migration. It is restricted to an
-explicitly confirmed loopback PostgreSQL instance; see `docs/adr/0006-ci-migration-testing.md`.
+CI выполняет установку строго зафиксированных зависимостей, проверку зависимостей, настоящий ESLint
+с учетом типов, проверку типов, тесты, сборку, проверку исходников миграций и smoke-тесты миграций
+PostgreSQL. Тестовый стенд проверяет чистую схему и обновление с предыдущей миграции. Он разрешён
+только для явно подтвержденного локального PostgreSQL; подробности находятся в
+`docs/adr/0006-ci-migration-testing.md`.
 
-## Safety
+## Безопасность
 
-- Do not commit real `.env` files or production secrets.
-- Do not run destructive database actions without explicit approval.
-- Money is represented as integer kopecks.
-- Financial, audit, and outbox records are append-only.
-- Queue schema changes are generated from the pinned pg-boss version and applied only as migrations.
-- The first super administrator is provisioned through a reviewed one-time operation, never migration data.
+- Не добавляйте настоящие `.env` или секреты рабочего окружения в Git.
+- Не выполняйте разрушительные операции с базой данных без явного подтверждения.
+- Деньги представлены целым количеством копеек.
+- Финансовые записи, аудит и outbox доступны только для добавления.
+- Изменения схемы очереди генерируются из зафиксированной версии pg-boss и применяются только
+  миграциями.
+- Первый суперадминистратор создается проверенной однократной операцией, а не данными миграции.

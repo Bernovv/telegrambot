@@ -17,7 +17,7 @@ import type {
   AdminUserDetail,
   AdminUserSummary,
   CursorPage
-} from "@ticket-platform/application";
+} from "@ticket-platform/contracts";
 import { z } from "zod";
 import {
   RequireAdminPermission,

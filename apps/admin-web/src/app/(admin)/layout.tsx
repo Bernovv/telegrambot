@@ -1,0 +1,33 @@
+import { AdminShell } from "@/components/admin-shell";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
+
+export default async function ProtectedLayout({
+  children
+}: Readonly<{ children: ReactNode }>) {
+  const supabase = await createServerSupabaseClient();
+  if (!supabase) {
+    redirect("/login");
+  }
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) {
+    redirect("/login");
+  }
+  const { data: assurance, error: assuranceError } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (assuranceError) {
+    redirect("/login");
+  }
+  if (assurance.currentLevel !== "aal2") {
+    redirect("/mfa");
+  }
+
+  return (
+    <AdminShell identity={data.user.email ?? "Администратор"}>
+      {children}
+    </AdminShell>
+  );
+}

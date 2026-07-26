@@ -10,14 +10,15 @@
     "dev": "node ../../scripts/noop.mjs dev @ticket-platform/database",
     "lint": "node ../../scripts/noop.mjs lint @ticket-platform/database",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts scripts/*.test.ts",
     "test:migrations": "node --import tsx scripts/test-migrations.ts",
-    "db:migrate": "node ../../scripts/noop.mjs db:migrate @ticket-platform/database",
-    "db:migrate:deploy": "node ../../scripts/noop.mjs db:migrate:deploy @ticket-platform/database"
+    "db:migrate": "node --import tsx scripts/migrate.ts local",
+    "db:migrate:deploy": "node --import tsx scripts/migrate.ts deploy"
   },
   "dependencies": {
     "@ticket-platform/application": "workspace:*",
     "@ticket-platform/domain": "workspace:*",
+    "@ticket-platform/scenario-engine": "workspace:*",
     "pg": "8.22.0"
   },
   "devDependencies": {

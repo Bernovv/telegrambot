@@ -134,3 +134,132 @@ export type RequestTelegramTicketRedeliveryResult =
       readonly accepted: false;
       readonly reason: "ticket_unavailable";
     };
+
+export type ScenarioPresentationButton =
+  | {
+      readonly text: string;
+      readonly edgeId: string;
+    }
+  | {
+      readonly text: string;
+      readonly callbackData: string;
+    }
+  | {
+      readonly text: string;
+      readonly url: string;
+    };
+
+export interface ScenarioPresentationModel {
+  readonly text: string;
+  readonly buttons: readonly ScenarioPresentationButton[];
+}
+
+export interface StartTelegramScenarioCommand {
+  readonly userId: string;
+  readonly messengerIdentityId: string;
+  readonly eventSlug: string | null;
+  readonly updateId: string;
+  readonly occurredAt: Date;
+}
+
+export type StartTelegramScenarioResult =
+  | {
+      readonly handled: false;
+      readonly reason:
+        | "event_not_found"
+        | "event_selection_required"
+        | "scenario_not_published"
+        | "scenario_invalid";
+    }
+  | {
+      readonly handled: true;
+      readonly duplicate: boolean;
+      readonly sessionId: string;
+      readonly status: "waiting_input" | "completed" | "blocked";
+      readonly presentations: readonly ScenarioPresentationModel[];
+    };
+
+export interface AdvanceTelegramScenarioCommand {
+  readonly sessionId: string;
+  readonly edgeId: string;
+  readonly senderExternalUserId: string;
+  readonly updateId: string;
+  readonly callbackQueryId: string;
+  readonly occurredAt: Date;
+}
+
+export type AdvanceTelegramScenarioResult =
+  | {
+      readonly accepted: false;
+      readonly reason:
+        | "session_not_found"
+        | "session_not_waiting"
+        | "invalid_transition";
+    }
+  | {
+      readonly accepted: true;
+      readonly duplicate: boolean;
+      readonly sessionId: string;
+      readonly status: "waiting_input" | "completed" | "blocked";
+      readonly presentations: readonly ScenarioPresentationModel[];
+    };
+
+export interface SubmitTelegramScenarioInputCommand {
+  readonly senderExternalUserId: string;
+  readonly updateId: string;
+  readonly text: string;
+  readonly occurredAt: Date;
+}
+
+export type SubmitTelegramScenarioInputResult =
+  | {
+      readonly handled: false;
+      readonly reason: "input_not_expected" | "input_ambiguous";
+    }
+  | {
+      readonly handled: true;
+      readonly accepted: boolean;
+      readonly duplicate: boolean;
+      readonly sessionId: string;
+      readonly status: "waiting_input" | "completed" | "blocked";
+      readonly presentations: readonly ScenarioPresentationModel[];
+    };
+
+export interface ResumeTelegramScenarioAfterOfferCommand {
+  readonly orderId: string;
+  readonly senderExternalUserId: string;
+  readonly updateId: string;
+  readonly occurredAt: Date;
+}
+
+export type ResumeTelegramScenarioAfterOfferResult =
+  | {
+      readonly handled: false;
+      readonly reason: "action_not_expected" | "action_ambiguous";
+    }
+  | {
+      readonly handled: true;
+      readonly duplicate: boolean;
+      readonly sessionId: string;
+      readonly status: "waiting_input" | "completed" | "blocked";
+      readonly presentations: readonly ScenarioPresentationModel[];
+    };
+
+export interface ResumeTelegramScenarioAfterPaymentCommand {
+  readonly orderId: string;
+  readonly sourceEventId: string;
+  readonly occurredAt: Date;
+}
+
+export type ResumeTelegramScenarioAfterPaymentResult =
+  | {
+      readonly handled: false;
+      readonly reason: "action_not_expected" | "action_ambiguous";
+    }
+  | {
+      readonly handled: true;
+      readonly duplicate: boolean;
+      readonly sessionId: string;
+      readonly status: "waiting_input" | "completed" | "blocked";
+      readonly presentations: readonly ScenarioPresentationModel[];
+    };

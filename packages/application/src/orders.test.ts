@@ -25,6 +25,7 @@ describe("CreateOrderService", () => {
       orderId: "id-2",
       orderNumber: "BP-ID-2",
       publicToken: "order_token_id-2",
+      offerPublicUrl: "https://example.test/offers/offer-version-1",
       status: "awaiting_offer",
       currency: "RUB",
       totalKopecks: "249000",
@@ -123,7 +124,8 @@ function createFixture(options: { readonly context?: OrderSalesContext } = {}) {
         walletApplied: input.walletApplied,
         externalDue: input.externalDue,
         expiresAt: input.expiresAt,
-        creationRequestHash: input.creationRequestHash
+        creationRequestHash: input.creationRequestHash,
+        offerPublicUrl: input.offerPublicUrl
       };
       orders.set(input.creationIdempotencyKey, order);
       return { created: true, order };
@@ -204,6 +206,7 @@ const salesContext: OrderSalesContext = {
     phoneRequiredForPurchase: true,
     offerRequired: true,
     activeOfferVersionId: "offer-version-1",
+    activeOfferPublicUrl: "https://example.test/offers/offer-version-1",
     reservationTtlMinutes: 30
   },
   userPhoneStatus: "verified",

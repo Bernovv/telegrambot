@@ -27,6 +27,12 @@ describe("PostgreSQL notification delivery persistence", () => {
       if (text.includes("from public.tickets")) {
         return rows(ticketRows);
       }
+      if (text.includes("from public.users users")) {
+        return rows([{
+          recipient_external_user_id: "123456789",
+          recipient_blocked: false
+        }]);
+      }
       return affected();
     });
     const repository = new PostgresNotificationContextRepository(
@@ -39,12 +45,14 @@ describe("PostgreSQL notification delivery persistence", () => {
       ownerUserId
     );
     const admin = await repository.getAdminPurchaseContext(orderId);
+    const scenario = await repository.getScenarioDeliveryContext(ownerUserId);
 
     assert.equal(tickets?.recipientExternalUserId, "123456789");
     assert.equal(tickets?.tickets.length, 2);
     assert.equal(admin?.username, "buyer");
     assert.equal(admin?.ticketCount, 2);
     assert.equal(admin?.totalKopecks, 249_000n);
+    assert.equal(scenario?.recipientExternalUserId, "123456789");
     assert.match(
       findQuery(connection, "from public.orders orders").text,
       /orders\.status in \('paid', 'partially_refunded'\)/
@@ -52,6 +60,10 @@ describe("PostgreSQL notification delivery persistence", () => {
     assert.match(
       findQuery(connection, "from public.tickets").text,
       /owner_user_id = \$3/
+    );
+    assert.match(
+      findQuery(connection, "from public.users users").text,
+      /channel = 'telegram'/
     );
   });
 

@@ -70,6 +70,7 @@ const orderResult: CreateOrderResult = {
   orderId: "019c0123-4567-789a-bcde-f0123456789d",
   orderNumber: "BP-20260724-4567789ABCDEF0123456789D",
   publicToken: "opaque",
+  offerPublicUrl: "https://example.test/offers/offer-version-1",
   status: "awaiting_offer",
   currency: "RUB",
   totalKopecks: "498000",

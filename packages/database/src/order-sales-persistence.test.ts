@@ -203,6 +203,7 @@ const eventContextRow = {
   phone_required_for_purchase: true,
   offer_required: true,
   active_offer_version_id: "offer-version-1",
+  active_offer_public_url: "https://example.test/offers/offer-version-1",
   phone_status: "verified",
   wallet_available_kopecks: "10000"
 } as const;

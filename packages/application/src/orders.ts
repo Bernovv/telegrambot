@@ -31,6 +31,7 @@ export interface OrderSalesEvent {
   readonly phoneRequiredForPurchase: boolean;
   readonly offerRequired: boolean;
   readonly activeOfferVersionId: string | null;
+  readonly activeOfferPublicUrl: string | null;
   readonly reservationTtlMinutes: number;
 }
 
@@ -97,6 +98,7 @@ export interface PersistOrderInput {
   readonly eventSnapshot: Readonly<Record<string, unknown>>;
   readonly pricingSnapshot: OrderPricingSnapshot;
   readonly offerVersionId: string | null;
+  readonly offerPublicUrl: string | null;
   readonly expiresAt: Date;
   readonly source: string;
   readonly createdAt: Date;
@@ -113,6 +115,7 @@ export interface PersistedOrder {
   readonly externalDue: MoneyKopecks;
   readonly expiresAt: Date;
   readonly creationRequestHash: string;
+  readonly offerPublicUrl: string | null;
 }
 
 export interface PersistOrderResult {
@@ -196,6 +199,7 @@ export class CreateOrderService {
           lines: pricedItems.map((item) => item.pricingSnapshot)
         },
         offerVersionId: context.event.activeOfferVersionId,
+        offerPublicUrl: context.event.activeOfferPublicUrl,
         expiresAt,
         source: command.source,
         createdAt: command.createdAt,
@@ -223,6 +227,9 @@ export class CreateOrderService {
       orderId: order.id,
       orderNumber: order.number,
       publicToken: this.referenceGenerator.publicToken(order.id).token,
+      offerPublicUrl: order.status === "awaiting_offer"
+        ? order.offerPublicUrl
+        : null,
       status: order.status,
       currency: order.currency,
       totalKopecks: order.total.toString(),
@@ -232,6 +239,7 @@ export class CreateOrderService {
       created
     };
   }
+
 }
 
 function validateCommand(command: CreateOrderCommand): void {
@@ -278,7 +286,10 @@ function validateSalesContext(context: OrderSalesContext, at: Date): void {
   ) {
     throw new Error("Verified or imported phone is required to create an order");
   }
-  if (event.offerRequired && !event.activeOfferVersionId) {
+  if (
+    event.offerRequired
+    && (!event.activeOfferVersionId || !event.activeOfferPublicUrl)
+  ) {
     throw new Error("Event requires an active immutable offer version");
   }
   if (!Number.isSafeInteger(event.reservationTtlMinutes) || event.reservationTtlMinutes < 1) {

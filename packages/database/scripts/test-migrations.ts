@@ -1,23 +1,21 @@
-import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { migrations as migrationDescriptors } from "../src/migrations.js";
+import {
+  applyMigrationsToDatabase,
+  readMigrationFiles,
+  type MigrationFile
+} from "./migration-runner.js";
 
 const { Client } = pg;
 const databasePrefix = "ticket_platform_migration_";
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const migrationDirectory = join(projectRoot, "supabase", "migrations");
 
-interface MigrationFile {
-  readonly fileName: string;
-  readonly version: string;
-  readonly name: string;
-  readonly sql: string;
-}
-
 async function main(): Promise<void> {
   const adminUrl = validateAdminUrl();
-  const migrations = await readMigrations();
+  const migrations = await readMigrationFiles(migrationDirectory, migrationDescriptors);
 
   if (migrations.length < 2) {
     throw new Error("Migration upgrade test requires at least two migrations");
@@ -28,15 +26,15 @@ async function main(): Promise<void> {
   const upgradeDatabase = `${databasePrefix}upgrade_${suffix}`;
 
   await withEphemeralDatabase(adminUrl, cleanDatabase, async (databaseUrl) => {
-    await applyMigrations(databaseUrl, migrations);
+    await applyMigrationsToDatabase(databaseUrl, migrations);
     await verifyMigrations(databaseUrl, migrations);
   });
 
   await withEphemeralDatabase(adminUrl, upgradeDatabase, async (databaseUrl) => {
     const previousMigrations = migrations.slice(0, -1);
-    await applyMigrations(databaseUrl, previousMigrations);
+    await applyMigrationsToDatabase(databaseUrl, previousMigrations);
     await verifyMigrations(databaseUrl, previousMigrations);
-    await applyMigrations(databaseUrl, migrations.slice(-1));
+    await applyMigrationsToDatabase(databaseUrl, migrations);
     await verifyMigrations(databaseUrl, migrations);
   });
 
@@ -71,24 +69,6 @@ function validateAdminUrl(): URL {
   }
 
   return url;
-}
-
-async function readMigrations(): Promise<readonly MigrationFile[]> {
-  const fileNames = (await readdir(migrationDirectory))
-    .filter((fileName) => /^\d{14}_[a-z0-9_]+\.sql$/.test(fileName))
-    .sort();
-
-  return Promise.all(fileNames.map(async (fileName) => {
-    const migrationName = fileName.slice(0, -4);
-    const separator = migrationName.indexOf("_");
-
-    return {
-      fileName,
-      version: migrationName.slice(0, separator),
-      name: migrationName.slice(separator + 1),
-      sql: await readFile(join(migrationDirectory, fileName), "utf8")
-    };
-  }));
 }
 
 async function withEphemeralDatabase(
@@ -128,49 +108,6 @@ async function dropDatabase(client: pg.Client, databaseName: string): Promise<vo
   await client.query(`drop database if exists ${quoteIdentifier(databaseName)}`);
 }
 
-async function applyMigrations(
-  databaseUrl: string,
-  migrations: readonly MigrationFile[]
-): Promise<void> {
-  const client = new Client({ connectionString: databaseUrl });
-
-  await client.connect();
-  try {
-    await client.query("create schema if not exists supabase_migrations");
-    await client.query(
-      `create table if not exists supabase_migrations.schema_migrations (
-         version text primary key,
-         statements text[] not null default array[]::text[],
-         name text
-       )`
-    );
-
-    for (const migration of migrations) {
-      const applied = await client.query<{ readonly exists: boolean }>(
-        `select exists(
-           select 1
-             from supabase_migrations.schema_migrations
-            where version = $1
-         ) as exists`,
-        [migration.version]
-      );
-
-      if (applied.rows[0]?.exists === true) {
-        continue;
-      }
-
-      await client.query(migration.sql);
-      await client.query(
-        `insert into supabase_migrations.schema_migrations (version, name)
-         values ($1, $2)`,
-        [migration.version, migration.name]
-      );
-    }
-  } finally {
-    await client.end();
-  }
-}
-
 async function verifyMigrations(
   databaseUrl: string,
   expectedMigrations: readonly MigrationFile[]
@@ -200,6 +137,10 @@ async function verifyMigrations(
       readonly payment_attempts: string | null;
       readonly manual_payments: string | null;
       readonly notification_deliveries: string | null;
+      readonly scenarios: string | null;
+      readonly scenario_versions: string | null;
+      readonly scenario_sessions: string | null;
+      readonly scenario_events: string | null;
       readonly pgboss_version: string | null;
     }>(
       `select
@@ -212,6 +153,10 @@ async function verifyMigrations(
          to_regclass('public.payment_attempts')::text as payment_attempts,
          to_regclass('public.manual_payments')::text as manual_payments,
          to_regclass('public.notification_deliveries')::text as notification_deliveries,
+         to_regclass('public.scenarios')::text as scenarios,
+         to_regclass('public.scenario_versions')::text as scenario_versions,
+         to_regclass('public.scenario_sessions')::text as scenario_sessions,
+         to_regclass('public.scenario_events')::text as scenario_events,
          to_regclass('pgboss.version')::text as pgboss_version`
     );
     const row = schema.rows[0];
@@ -244,6 +189,19 @@ async function verifyMigrations(
     const includesNotificationDelivery = expectedVersions.includes("20260724190000");
     if (includesNotificationDelivery !== Boolean(row.notification_deliveries)) {
       throw new Error("Notification delivery schema presence does not match the migration sequence");
+    }
+
+    const includesScenarios = expectedVersions.includes("20260726120000");
+    if (includesScenarios !== Boolean(row.scenarios && row.scenario_versions)) {
+      throw new Error("Scenario schema presence does not match the migration sequence");
+    }
+
+    const includesScenarioRuntime = expectedVersions.includes("20260726160000");
+    if (
+      includesScenarioRuntime
+      !== Boolean(row.scenario_sessions && row.scenario_events)
+    ) {
+      throw new Error("Scenario runtime schema presence does not match the migration sequence");
     }
   } finally {
     await client.end();

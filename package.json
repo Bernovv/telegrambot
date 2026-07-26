@@ -11,7 +11,7 @@
     "build": "pnpm -r build",
     "ci:check": "node scripts/check-ci-config.mjs",
     "dev": "pnpm -r --parallel dev",
-    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\" \"scripts/**/*.ts\" --max-warnings=0",
+    "lint": "eslint \"apps/**/*.{ts,tsx}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" --max-warnings=0",
     "typecheck": "pnpm -r typecheck && tsc -p tsconfig.json",
     "test": "pnpm -r test",
     "test:migrations": "pnpm --filter @ticket-platform/database test:migrations",
@@ -21,7 +21,7 @@
     "admin:bootstrap": "node --import tsx scripts/bootstrap-admin.ts",
     "db:migrate": "pnpm --filter @ticket-platform/database db:migrate",
     "db:migrate:deploy": "pnpm --filter @ticket-platform/database db:migrate:deploy",
-    "graphify:update": "graphify --update"
+    "graphify:update": "graphify update ."
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

@@ -1,9 +1,12 @@
-import { Api, InputFile } from "grammy";
+import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
+import { Api, InlineKeyboard, InputFile } from "grammy";
+import { encodeScenarioCallback } from "./scenario-callback.js";
 
 export interface TelegramNotificationApi {
   sendMessage(
     chatId: string | number,
-    text: string
+    text: string,
+    options?: { readonly reply_markup: InlineKeyboard }
   ): Promise<{ readonly message_id: number }>;
   sendPhoto(
     chatId: string | number,
@@ -65,6 +68,56 @@ export class GrammyTextNotificationSender {
 
     return { providerMessageId: String(message.message_id) };
   }
+
+  async sendScenarioPresentation(
+    recipientId: string,
+    sessionId: string,
+    presentation: ScenarioPresentationModel
+  ): Promise<{ readonly providerMessageId: string }> {
+    validateRecipient(recipientId);
+    if (!presentation.text || presentation.text.length > 4_096) {
+      throw new Error("Telegram scenario presentation text is invalid");
+    }
+    if (presentation.buttons.length > 20) {
+      throw new Error("Telegram scenario presentation buttons are invalid");
+    }
+    const keyboard = new InlineKeyboard();
+    for (const [index, button] of presentation.buttons.entries()) {
+      if (index > 0) {
+        keyboard.row();
+      }
+      validateButtonText(button.text);
+      if ("edgeId" in button) {
+        keyboard.text(
+          button.text,
+          encodeScenarioCallback(sessionId, button.edgeId)
+        );
+      } else if ("callbackData" in button) {
+        if (
+          button.callbackData.length < 1
+          || Buffer.byteLength(button.callbackData, "utf8") > 64
+        ) {
+          throw new Error("Telegram scenario callback data is invalid");
+        }
+        keyboard.text(button.text, button.callbackData);
+      } else {
+        if (!button.url.startsWith("https://") || button.url.length > 2_048) {
+          throw new Error("Telegram scenario URL is invalid");
+        }
+        keyboard.url(button.text, button.url);
+      }
+    }
+
+    const message = await this.api.sendMessage(
+      recipientId,
+      presentation.text,
+      ...(presentation.buttons.length > 0
+        ? [{ reply_markup: keyboard }]
+        : [])
+    );
+    validateMessageId(message.message_id);
+    return { providerMessageId: String(message.message_id) };
+  }
 }
 
 export function createTelegramNotificationSender(
@@ -86,5 +139,11 @@ function validateRecipient(recipientId: string): void {
 function validateMessageId(messageId: number): void {
   if (!Number.isSafeInteger(messageId) || messageId < 1) {
     throw new Error("Telegram returned an invalid message ID");
+  }
+}
+
+function validateButtonText(text: string): void {
+  if (!text || text.length > 64) {
+    throw new Error("Telegram scenario button text is invalid");
   }
 }

@@ -1,11 +1,17 @@
 import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
+  AdvanceTelegramScenarioService,
+  CreateOrderService,
   HandleTelegramContactService,
   HandleTelegramStartService,
   InitializeTelegramTBankPaymentService,
   ListTelegramTicketsService,
   RequestTelegramTicketRedeliveryService,
+  ResumeTelegramScenarioAfterOfferService,
+  StartTelegramScenarioService,
+  SubmitTelegramScenarioInputService,
+  HmacOrderReferenceGenerator,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadTelegramBotConfig } from "@ticket-platform/config";
@@ -13,6 +19,7 @@ import {
   createOfferAcceptancePersistence,
   createNodePostgresPool,
   createPhonePersistence,
+  createScenarioRuntimePersistence,
   createTBankPaymentPersistence,
   createTelegramTicketAccessPersistence,
   createTelegramStartPersistence
@@ -45,6 +52,17 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
   const startPersistence = createTelegramStartPersistence(pool, idGenerator);
   const phonePersistence = createPhonePersistence(pool, idGenerator);
   const offerPersistence = createOfferAcceptancePersistence(pool);
+  const scenarioPersistence = createScenarioRuntimePersistence(pool, idGenerator);
+  const scenarioOrderCreator = new CreateOrderService(
+    scenarioPersistence.orderSalesRepository,
+    scenarioPersistence.outboxWriter,
+    scenarioPersistence.unitOfWork,
+    idGenerator,
+    new HmacOrderReferenceGenerator(
+      config.orderTokenSecret,
+      config.orderNumberPrefix
+    )
+  );
   const ticketPersistence = createTelegramTicketAccessPersistence(pool);
   const paymentInitializationService = config.tbankPayments.enabled
     ? new InitializeTelegramTBankPaymentService(
@@ -95,13 +113,38 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     ticketPersistence.unitOfWork,
     idGenerator
   );
+  const scenario = {
+    start: new StartTelegramScenarioService(
+      scenarioPersistence.repository,
+      scenarioPersistence.unitOfWork,
+      idGenerator,
+      undefined,
+      scenarioOrderCreator
+    ),
+    advance: new AdvanceTelegramScenarioService(
+      scenarioPersistence.repository,
+      scenarioPersistence.unitOfWork,
+      scenarioOrderCreator
+    ),
+    input: new SubmitTelegramScenarioInputService(
+      scenarioPersistence.repository,
+      scenarioPersistence.unitOfWork,
+      scenarioOrderCreator
+    ),
+    offerAccepted: new ResumeTelegramScenarioAfterOfferService(
+      scenarioPersistence.repository,
+      scenarioPersistence.unitOfWork,
+      scenarioOrderCreator
+    )
+  };
   const controller = new TelegramUpdateController(
     startService,
     contactService,
     offerService,
     ticketListService,
     ticketRedeliveryService,
-    paymentInitializationService
+    paymentInitializationService,
+    scenario
   );
   const bot = createTelegramBot(config.telegramBotToken, controller, logger);
   const stop = () => {

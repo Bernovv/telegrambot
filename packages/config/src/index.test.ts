@@ -9,6 +9,8 @@ describe("loadTelegramBotConfig", () => {
     assert.equal(config.telegramDeliveryMode, "long-polling");
     assert.equal(config.telegramDefaultCountry, "RU");
     assert.equal(config.databasePoolMax, 10);
+    assert.equal(config.orderNumberPrefix, "BP");
+    assert.match(config.orderTokenSecret, /^local-only/);
     assert.deepEqual(config.tbankPayments, {
       enabled: false,
       bodyLimitBytes: 65_536
@@ -18,6 +20,7 @@ describe("loadTelegramBotConfig", () => {
   it("defaults production to webhook without registering it", () => {
     const config = loadTelegramBotConfig(validEnvironment({
       APP_ENV: "production",
+      ORDER_TOKEN_SECRET: "production-order-token-secret-123456789",
       TBANK_API_BASE_URL: "https://securepay.tinkoff.ru/v2"
     }));
 
@@ -60,6 +63,7 @@ describe("loadApiConfig", () => {
     assert.equal(config.outboxLagDegradedSeconds, 60);
     assert.equal(config.outboxLagFailedSeconds, 300);
     assert.equal(config.adminAuth.enabled, false);
+    assert.deepEqual(config.offerStorage, { enabled: false });
     assert.equal(config.orderNumberPrefix, "BP");
     assert.match(config.orderTokenSecret, /^local-only/);
     assert.equal(config.tbankPayments.enabled, false);
@@ -110,6 +114,30 @@ describe("loadApiConfig", () => {
       issuer: "https://project.supabase.co/auth/v1",
       audience: "authenticated"
     });
+  });
+
+  it("loads a bounded server-only immutable offer storage configuration", () => {
+    const config = loadApiConfig(validEnvironment({
+      OFFER_STORAGE_ENABLED: "true",
+      OFFER_STORAGE_SUPABASE_URL: "https://project.supabase.co",
+      OFFER_STORAGE_SERVICE_ROLE_KEY: "s".repeat(48),
+      OFFER_STORAGE_BUCKET: "offer-snapshots"
+    }));
+
+    assert.deepEqual(config.offerStorage, {
+      enabled: true,
+      supabaseUrl: "https://project.supabase.co",
+      serviceRoleKey: "s".repeat(48),
+      bucket: "offer-snapshots"
+    });
+    assert.throws(
+      () => loadApiConfig(validEnvironment({
+        OFFER_STORAGE_ENABLED: "true",
+        OFFER_STORAGE_SUPABASE_URL: "http://project.supabase.co",
+        OFFER_STORAGE_SERVICE_ROLE_KEY: "s".repeat(48)
+      })),
+      /OFFER_STORAGE_SUPABASE_URL/
+    );
   });
 
   it("rejects weak secrets and oversized body limits", () => {

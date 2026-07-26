@@ -97,6 +97,9 @@ No destructive operation is included.
 - Added an explicit one-time, advisory-locked first-superadmin bootstrap operation with audit.
 - Replaced scaffold lint commands with a root type-aware ESLint gate and module dependency rules.
 - Added a guarded PostgreSQL migration harness for clean-schema and previous-schema upgrades.
+- Replaced migration command scaffolds with the guarded application runner: exact manifest
+  matching, a non-blocking advisory lock, transactional application, append-only SHA-256 evidence,
+  and explicit production backup, rollback-plan, and confirmation gates.
 - Added a read-only GitHub Actions CI workflow with full-SHA-pinned actions, dependency review,
   frozen install, lint, typecheck, tests, build, and migration jobs.
 - Added Dependabot configuration, CI policy validation, and the required pull-request template.
@@ -167,7 +170,9 @@ No destructive operation is included.
 - Partial refunds remain gated on approved fiscal `Receipt.Items` mapping. Referral reversal will
   be added with the referral commission module; the current payment path creates no referral
   commission.
-- Event catalog administration and the remaining purchase UX remain in Phase 2.
+- Read-only event catalog administration, draft product, simple-pricing, content-block,
+  immutable-offer management, and validated atomic event publication are implemented; the
+  remaining purchase UX remains in Phase 2.
 
 ## Phase 4 Admin Operations Slice
 
@@ -179,5 +184,42 @@ No destructive operation is included.
 - Masked phone contacts in normal user reads; raw export remains gated by `contacts.export`.
 - Added RBAC-protected `GET /api/v1/users`, `GET /api/v1/users/:id`,
   `GET /api/v1/orders`, and `GET /api/v1/orders/:id` contracts.
-- The Next.js admin screens remain pending because the current execution environment could not
-  install the required frontend dependencies. The backend contract is ready for that UI slice.
+- Added the Next.js App Router administrator application with Supabase SSR authentication and
+  session refresh.
+- Added mandatory TOTP enrollment and challenge verification, `aal2` session elevation, and a
+  server-side assurance gate for every administrator page.
+- Added a same-origin BFF forwarding the short-lived administrator access token to the Nest API;
+  reads and event-draft mutations use separate method/path allowlists.
+- Added responsive user/order lists and detail screens with strict filters, opaque cursor
+  pagination, masked contacts, bigint-safe money rendering, loading, empty, and failure states.
+- Added an `events.read` catalog projection for event list/detail views, including aggregate
+  capacity, order and ticket counts, content blocks, products, pricing rules, and active offer.
+- Added strict event filters and cursor pagination to the API and same-origin BFF.
+- Added responsive event list/detail screens with event-timezone rendering.
+- Added audited event draft creation and general-settings updates guarded by `events.write`,
+  row/advisory locking, exact optimistic versions, strict date/timezone validation, and
+  transactional before/after audit.
+- Added same-origin JSON and body-limit protection to the BFF plus responsive create/edit forms.
+- Added draft-only product and simple pricing create/update operations with event-level sales
+  locking, aggregate optimistic versions, append-only audit, deactivation instead of deletion,
+  currency checks, and bigint-only money handling.
+- Added a responsive product and tariff editor to the event detail workflow.
+- Added draft-only content-block create/update operations with bounded schema-versioned JSON,
+  unique ordering, hide-instead-of-delete behavior, aggregate locking, audit, and a responsive
+  editor.
+- Added server-rendered immutable HTML offer snapshots with SHA-256, feature-gated Supabase
+  Storage, version history, acceptance counts, event-level locking, append-only audit, withdrawal,
+  and a responsive administrator workflow.
+- Conditional pricing, PDF/rich-text offer import, dashboard metrics, jobs, and integration
+  screens remain future Phase 4 slices and require reviewed backend contracts.
+- Added normalized event scenario/version/node/edge storage with one mutable draft, immutable
+  published history, event assignment, aggregate locking, and append-only audit.
+- Added a framework-free publication validator for graph references, reachability, terminal nodes,
+  bounded cycles, wallet idempotency, and offer-before-payment paths.
+- Added RBAC-separated draft and publication APIs plus a responsive structured scenario editor.
+- Added PostgreSQL-pinned scenario sessions, append-only execution trace, owner-bound compact
+  Telegram callbacks, and idempotent safe-node execution in long polling and webhook.
+- Added bounded text/number input nodes, owner-bound Telegram text routing, typed session context,
+  and atomic idempotent input persistence without raw answers in execution events.
+- Scenario action ports, Expression DSL, preview/test execution, canvas, and rollback cloning
+  remain future slices.

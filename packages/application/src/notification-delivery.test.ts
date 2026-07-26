@@ -7,6 +7,7 @@ import {
   type NotificationSender,
   type NotificationContextRepository,
   type NotificationDeliveryLedger,
+  type ScenarioPaymentContinuation,
   type TicketPngRenderer,
   type TicketDeliveryContext
 } from "./notification-delivery.js";
@@ -91,6 +92,81 @@ describe("HandleNotificationJobService", () => {
     assert.equal(sender.messages.length, 2);
     assert.match(sender.messages[0]?.text ?? "", /^Повторная отправка билета\./);
   });
+
+  it("continues a scenario only from a confirmed payment domain event", async () => {
+    const calls: Parameters<ScenarioPaymentContinuation["execute"]>[0][] = [];
+    const continuation: ScenarioPaymentContinuation = {
+      async execute(input) {
+        calls.push(input);
+      }
+    };
+    const service = createService(
+      new MemoryLedger(),
+      new RecordingSender(),
+      new RecordingRenderer(),
+      continuation
+    );
+
+    const result = await service.execute(execution(paymentConfirmedJob));
+
+    assert.deepEqual(result, {
+      eventType: "PaymentConfirmed",
+      delivered: 0,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.deepEqual(calls, [{
+      orderId: ticketContext.orderId,
+      sourceEventId: paymentConfirmedJob.correlationId,
+      occurredAt: new Date(paymentConfirmedJob.createdAt)
+    }]);
+  });
+
+  it("delivers scenario presentations once through the notification ledger", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const service = createService(ledger, sender);
+
+    const first = await service.execute(execution(scenarioPresentationJob));
+    const retry = await service.execute(execution(scenarioPresentationJob));
+
+    assert.deepEqual(first, {
+      eventType: "ScenarioPresentationRequested",
+      delivered: 1,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.equal(retry.duplicates, 1);
+    assert.equal(sender.scenarioMessages.length, 1);
+    assert.equal(sender.scenarioMessages[0]?.sessionId, scenarioSessionId);
+    assert.deepEqual(sender.scenarioMessages[0]?.presentation.buttons, [{
+      text: "Завершить",
+      edgeId: scenarioEdgeId
+    }]);
+  });
+
+  it("rejects an unsafe scenario presentation before delivery", async () => {
+    const sender = new RecordingSender();
+    const service = createService(new MemoryLedger(), sender);
+
+    await assert.rejects(
+      service.execute(execution({
+        ...scenarioPresentationJob,
+        event: {
+          ...scenarioPresentationJob.event,
+          payload: {
+            ...scenarioPresentationJob.event.payload,
+            presentations: [{
+              text: "Открыть",
+              buttons: [{ text: "Ссылка", url: "http://example.test" }]
+            }]
+          }
+        }
+      })),
+      /button URL/
+    );
+    assert.equal(sender.messages.length, 0);
+  });
 });
 
 class MemoryLedger implements NotificationDeliveryLedger {
@@ -148,6 +224,13 @@ class MemoryLedger implements NotificationDeliveryLedger {
 
 class RecordingSender implements NotificationSender {
   readonly messages: { readonly recipientId: string; readonly text: string }[] = [];
+  readonly scenarioMessages: {
+    readonly recipientId: string;
+    readonly sessionId: string;
+    readonly presentation: Parameters<
+      NotificationSender["sendScenarioPresentation"]
+    >[2];
+  }[] = [];
   private failed = false;
 
   constructor(private readonly failOnceWhenTextIncludes?: string) {}
@@ -170,6 +253,17 @@ class RecordingSender implements NotificationSender {
     return this.record(recipientId, caption);
   }
 
+  async sendScenarioPresentation(
+    recipientId: string,
+    sessionId: string,
+    presentation: Parameters<
+      NotificationSender["sendScenarioPresentation"]
+    >[2]
+  ) {
+    this.scenarioMessages.push({ recipientId, sessionId, presentation });
+    return this.record(recipientId, presentation.text);
+  }
+
   private async record(recipientId: string, text: string) {
     this.messages.push({ recipientId, text });
     if (
@@ -190,7 +284,8 @@ class RecordingSender implements NotificationSender {
 function createService(
   ledger: NotificationDeliveryLedger,
   sender: NotificationSender,
-  renderer: TicketPngRenderer = new RecordingRenderer()
+  renderer: TicketPngRenderer = new RecordingRenderer(),
+  continuation?: ScenarioPaymentContinuation
 ): HandleNotificationJobService {
   let id = 0;
   const contexts: NotificationContextRepository = {
@@ -202,6 +297,12 @@ function createService(
     },
     async getAdminPurchaseContext() {
       return adminContext;
+    },
+    async getScenarioDeliveryContext() {
+      return {
+        recipientExternalUserId: ticketContext.recipientExternalUserId,
+        recipientBlocked: false
+      };
     }
   };
 
@@ -212,7 +313,8 @@ function createService(
     { publicToken() { return { token: "t".repeat(43) }; } },
     renderer,
     { newId() { id += 1; return `delivery-${id}`; } },
-    "-1001234567890"
+    "-1001234567890",
+    continuation
   );
 }
 
@@ -309,6 +411,39 @@ const redeliveryJob = {
       orderId: ticketContext.orderId,
       ownerUserId: adminContext.userId,
       ticketIds: [ticketContext.tickets[0]?.id]
+    }
+  }
+};
+
+const scenarioSessionId = "019c0123-4567-789a-bcde-f01234567894";
+const scenarioEdgeId = "019c0123-4567-789a-bcde-f01234567895";
+
+const paymentConfirmedJob = {
+  jobType: "domain-event",
+  schemaVersion: 1,
+  correlationId: "019c0123-4567-789a-bcde-f01234567896",
+  createdAt: "2026-07-26T12:30:00.000Z",
+  event: {
+    type: "PaymentConfirmed",
+    schemaVersion: 1,
+    payload: { orderId: ticketContext.orderId }
+  }
+};
+
+const scenarioPresentationJob = {
+  jobType: "domain-event",
+  schemaVersion: 1,
+  correlationId: "019c0123-4567-789a-bcde-f01234567897",
+  event: {
+    type: "ScenarioPresentationRequested",
+    schemaVersion: 1,
+    payload: {
+      sessionId: scenarioSessionId,
+      userId: adminContext.userId,
+      presentations: [{
+        text: "Оплата подтверждена",
+        buttons: [{ text: "Завершить", edgeId: scenarioEdgeId }]
+      }]
     }
   }
 };

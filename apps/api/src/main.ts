@@ -2,9 +2,16 @@ import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
+  AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
   ConfirmPaymentService,
+  CreateAdminEventContentBlockService,
+  CreateAdminEventPricingRuleService,
+  CreateAdminEventProductService,
+  CreateAdminEventDraftService,
   CreateOrderService,
+  DeactivateAdminEventOfferService,
+  GetAdminEventService,
   GetReadinessService,
   GetAdminOrderService,
   GetAdminUserService,
@@ -17,18 +24,37 @@ import {
   InitializeTelegramTBankPaymentService,
   ListTelegramTicketsService,
   ListAdminOrdersService,
+  ListAdminEventsService,
   ListAdminUsersService,
+  PublishAdminEventOfferVersionService,
+  PublishAdminEventService,
+  PublishAdminEventScenarioVersionService,
   RequestTelegramTicketRedeliveryService,
+  ResumeTelegramScenarioAfterOfferService,
   RequestFullTBankRefundService,
+  SaveAdminEventScenarioDraftService,
+  StartTelegramScenarioService,
+  SubmitTelegramScenarioInputService,
+  UpdateAdminEventGeneralService,
+  UpdateAdminEventContentBlockService,
+  UpdateAdminEventPricingRuleService,
+  UpdateAdminEventProductService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadApiConfig } from "@ticket-platform/config";
 import {
   createOfferAcceptancePersistence,
+  createAdminEventContentManagementPersistence,
+  createAdminEventManagementPersistence,
+  createAdminEventOfferManagementPersistence,
+  createAdminEventScenarioManagementPersistence,
+  createAdminEventCatalogManagementPersistence,
+  createAdminEventsPersistence,
   createAdminOperationsPersistence,
   createNodePostgresPool,
   createPostgresHealthProbes,
   createPhonePersistence,
+  createScenarioRuntimePersistence,
   createPaymentConfirmationPersistence,
   createOrderSalesPersistence,
   createTelegramTicketAccessPersistence,
@@ -49,6 +75,10 @@ import { createLogger } from "@ticket-platform/observability";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
 import { createApiApplication } from "./app.js";
 import { SupabaseAdminAccessTokenVerifier } from "./supabase-admin-token-verifier.js";
+import {
+  DisabledOfferSnapshotStorage,
+  SupabaseOfferSnapshotStorage
+} from "./supabase-offer-storage.js";
 
 export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = loadApiConfig(env);
@@ -102,6 +132,77 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             getUser: new GetAdminUserService(repository),
             listOrders: new ListAdminOrdersService(repository),
             getOrder: new GetAdminOrderService(repository)
+          };
+        })()
+      : undefined;
+    const adminEvents = adminAuth
+      ? (() => {
+          const repository = createAdminEventsPersistence(pool);
+          const management = createAdminEventManagementPersistence(pool);
+          const catalog = createAdminEventCatalogManagementPersistence(pool);
+          const content = createAdminEventContentManagementPersistence(pool);
+          const offers = createAdminEventOfferManagementPersistence(pool);
+          const scenarios = createAdminEventScenarioManagementPersistence(pool);
+          const offerStorage = config.offerStorage.enabled
+            ? new SupabaseOfferSnapshotStorage(config.offerStorage)
+            : new DisabledOfferSnapshotStorage();
+          return {
+            listEvents: new ListAdminEventsService(repository),
+            getEvent: new GetAdminEventService(repository),
+            createEvent: new CreateAdminEventDraftService(
+              management,
+              idGenerator
+            ),
+            updateEventGeneral: new UpdateAdminEventGeneralService(
+              management,
+              idGenerator
+            ),
+            publishEvent: new PublishAdminEventService(
+              management,
+              idGenerator
+            ),
+            createContentBlock: new CreateAdminEventContentBlockService(
+              content,
+              idGenerator
+            ),
+            updateContentBlock: new UpdateAdminEventContentBlockService(
+              content,
+              idGenerator
+            ),
+            publishOfferVersion: new PublishAdminEventOfferVersionService(
+              offers,
+              offerStorage,
+              idGenerator
+            ),
+            deactivateOffer: new DeactivateAdminEventOfferService(
+              offers,
+              idGenerator
+            ),
+            saveScenarioDraft: new SaveAdminEventScenarioDraftService(
+              scenarios,
+              idGenerator
+            ),
+            publishScenarioVersion:
+              new PublishAdminEventScenarioVersionService(
+                scenarios,
+                idGenerator
+              ),
+            createProduct: new CreateAdminEventProductService(
+              catalog,
+              idGenerator
+            ),
+            updateProduct: new UpdateAdminEventProductService(
+              catalog,
+              idGenerator
+            ),
+            createPricingRule: new CreateAdminEventPricingRuleService(
+              catalog,
+              idGenerator
+            ),
+            updatePricingRule: new UpdateAdminEventPricingRuleService(
+              catalog,
+              idGenerator
+            )
           };
         })()
       : undefined;
@@ -190,6 +291,20 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       const startPersistence = createTelegramStartPersistence(pool, idGenerator);
       const phonePersistence = createPhonePersistence(pool, idGenerator);
       const offerPersistence = createOfferAcceptancePersistence(pool);
+      const scenarioPersistence = createScenarioRuntimePersistence(
+        pool,
+        idGenerator
+      );
+      const scenarioOrderCreator = new CreateOrderService(
+        scenarioPersistence.orderSalesRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator,
+        new HmacOrderReferenceGenerator(
+          config.orderTokenSecret,
+          config.orderNumberPrefix
+        )
+      );
       const ticketPersistence = createTelegramTicketAccessPersistence(pool);
       const startService = new HandleTelegramStartService(
         startPersistence.identityRepository,
@@ -224,6 +339,30 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
         ticketPersistence.unitOfWork,
         idGenerator
       );
+      const scenario = {
+        start: new StartTelegramScenarioService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          idGenerator,
+          undefined,
+          scenarioOrderCreator
+        ),
+        advance: new AdvanceTelegramScenarioService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          scenarioOrderCreator
+        ),
+        input: new SubmitTelegramScenarioInputService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          scenarioOrderCreator
+        ),
+        offerAccepted: new ResumeTelegramScenarioAfterOfferService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          scenarioOrderCreator
+        )
+      };
       const bot = createTelegramBot(
         config.telegramWebhook.botToken,
         new TelegramUpdateController(
@@ -232,7 +371,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           offerService,
           ticketListService,
           ticketRedeliveryService,
-          tbank?.initialization
+          tbank?.initialization,
+          scenario
         ),
         logger,
         { rethrowUpdateErrors: true }
@@ -255,6 +395,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(orders ? { orders } : {}),
       ...(manualPayments ? { manualPayments } : {}),
       ...(adminOperations ? { adminOperations } : {}),
+      ...(adminEvents ? { adminEvents } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

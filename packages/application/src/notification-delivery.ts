@@ -1,3 +1,4 @@
+import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
 
 export type NotificationDeliveryKind = "ticket_user" | "admin_purchase";
@@ -26,6 +27,11 @@ export interface AdminPurchaseContext {
   readonly externalKopecks: bigint;
 }
 
+export interface ScenarioDeliveryContext {
+  readonly recipientExternalUserId: string | null;
+  readonly recipientBlocked: boolean;
+}
+
 export interface NotificationContextRepository {
   getTicketDeliveryContext(
     orderId: string,
@@ -33,6 +39,7 @@ export interface NotificationContextRepository {
     ownerUserId: string | null
   ): Promise<TicketDeliveryContext | null>;
   getAdminPurchaseContext(orderId: string): Promise<AdminPurchaseContext | null>;
+  getScenarioDeliveryContext(userId: string): Promise<ScenarioDeliveryContext | null>;
 }
 
 export interface ClaimNotificationDeliveryInput {
@@ -93,6 +100,19 @@ export interface NotificationSender extends TextNotificationSender {
     fileName: string,
     caption: string
   ): Promise<{ readonly providerMessageId: string }>;
+  sendScenarioPresentation(
+    recipientId: string,
+    sessionId: string,
+    presentation: ScenarioPresentationModel
+  ): Promise<{ readonly providerMessageId: string }>;
+}
+
+export interface ScenarioPaymentContinuation {
+  execute(input: {
+    readonly orderId: string;
+    readonly sourceEventId: string;
+    readonly occurredAt: Date;
+  }): Promise<unknown>;
 }
 
 export interface TicketPublicTokenGenerator {
@@ -134,6 +154,19 @@ type NotificationEvent =
       readonly orderId: string;
     }
   | {
+      readonly eventType: "PaymentConfirmed";
+      readonly sourceEventId: string;
+      readonly orderId: string;
+      readonly occurredAt: Date;
+    }
+  | {
+      readonly eventType: "ScenarioPresentationRequested";
+      readonly sourceEventId: string;
+      readonly sessionId: string;
+      readonly userId: string;
+      readonly presentations: readonly ScenarioPresentationModel[];
+    }
+  | {
       readonly eventType: string;
       readonly sourceEventId: string;
       readonly ignored: true;
@@ -147,7 +180,8 @@ export class HandleNotificationJobService {
     private readonly ticketTokens: TicketPublicTokenGenerator,
     private readonly ticketRenderer: TicketPngRenderer,
     private readonly idGenerator: IdGenerator,
-    private readonly adminChatId: string
+    private readonly adminChatId: string,
+    private readonly scenarioPaymentContinuation?: ScenarioPaymentContinuation
   ) {
     if (!/^-?\d{1,20}$/.test(adminChatId)) {
       throw new Error("Administrator notification chat ID is invalid");
@@ -167,6 +201,30 @@ export class HandleNotificationJobService {
       };
     }
 
+    if (event.eventType === "PaymentConfirmed") {
+      if (!this.scenarioPaymentContinuation) {
+        return {
+          eventType: event.eventType,
+          delivered: 0,
+          duplicates: 0,
+          ignored: true
+        };
+      }
+      await this.scenarioPaymentContinuation.execute({
+        orderId: event.orderId,
+        sourceEventId: event.sourceEventId,
+        occurredAt: event.occurredAt
+      });
+      return {
+        eventType: event.eventType,
+        delivered: 0,
+        duplicates: 0,
+        ignored: false
+      };
+    }
+    if (event.eventType === "ScenarioPresentationRequested") {
+      return this.deliverScenarioPresentations(event, input);
+    }
     if (event.eventType === "TicketsIssued") {
       return this.deliverTickets(event, input);
     }
@@ -175,6 +233,48 @@ export class HandleNotificationJobService {
     }
 
     return this.deliverAdminPurchase(event, input);
+  }
+
+  private async deliverScenarioPresentations(
+    event: Extract<
+      NotificationEvent,
+      { readonly eventType: "ScenarioPresentationRequested" }
+    >,
+    input: HandleNotificationJobInput
+  ): Promise<HandleNotificationJobResult> {
+    const context = await this.contexts.getScenarioDeliveryContext(event.userId);
+    const recipientId = context?.recipientExternalUserId;
+    if (!context || !recipientId || context.recipientBlocked) {
+      throw new Error("Telegram scenario recipient is unavailable");
+    }
+
+    let delivered = 0;
+    let duplicates = 0;
+    for (const [index, presentation] of event.presentations.entries()) {
+      const result = await this.deliverOnce({
+        event,
+        input,
+        kind: "ticket_user",
+        aggregateId: event.sessionId,
+        recipientId,
+        idempotencyKey:
+          `telegram:scenario:${event.sourceEventId}:${index}`,
+        send: () => this.sender.sendScenarioPresentation(
+          recipientId,
+          event.sessionId,
+          presentation
+        )
+      });
+      delivered += result === "delivered" ? 1 : 0;
+      duplicates += result === "duplicate" ? 1 : 0;
+    }
+
+    return {
+      eventType: event.eventType,
+      delivered,
+      duplicates,
+      ignored: false
+    };
   }
 
   private async deliverTickets(
@@ -376,12 +476,33 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
     event.type !== "TicketsIssued"
     && event.type !== "TicketRedeliveryRequested"
     && event.type !== "AdminPurchaseNotificationRequested"
+    && event.type !== "PaymentConfirmed"
+    && event.type !== "ScenarioPresentationRequested"
   ) {
     return { eventType: event.type, sourceEventId, ignored: true };
   }
 
   const payload = asRecord(event.payload, "Notification event payload must be an object");
+  if (event.type === "ScenarioPresentationRequested") {
+    return {
+      eventType: event.type,
+      sourceEventId,
+      sessionId: uuid(payload.sessionId, "Scenario session ID is invalid"),
+      userId: uuid(payload.userId, "Scenario user ID is invalid"),
+      presentations: scenarioPresentations(payload.presentations)
+    };
+  }
+
   const orderId = uuid(payload.orderId, "Notification order ID is invalid");
+
+  if (event.type === "PaymentConfirmed") {
+    return {
+      eventType: event.type,
+      sourceEventId,
+      orderId,
+      occurredAt: date(job.createdAt, "Notification creation time is invalid")
+    };
+  }
 
   if (event.type === "AdminPurchaseNotificationRequested") {
     return { eventType: event.type, sourceEventId, orderId };
@@ -418,6 +539,76 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
     ticketIds,
     ownerUserId: null
   };
+}
+
+function scenarioPresentations(value: unknown): readonly ScenarioPresentationModel[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) {
+    throw new Error("Scenario presentations are invalid");
+  }
+  return value.map((item) => {
+    const presentation = asRecord(item, "Scenario presentation must be an object");
+    if (
+      typeof presentation.text !== "string"
+      || presentation.text.length < 1
+      || presentation.text.length > 4_096
+      || !Array.isArray(presentation.buttons)
+      || presentation.buttons.length > 20
+    ) {
+      throw new Error("Scenario presentation is invalid");
+    }
+    const buttons = presentation.buttons.map((item) => {
+      const button = asRecord(item, "Scenario button must be an object");
+      if (
+        typeof button.text !== "string"
+        || button.text.length < 1
+        || button.text.length > 64
+      ) {
+        throw new Error("Scenario button text is invalid");
+      }
+      const targets = ["edgeId", "callbackData", "url"].filter(
+        (key) => button[key] !== undefined
+      );
+      if (targets.length !== 1) {
+        throw new Error("Scenario button target is invalid");
+      }
+      if (targets[0] === "edgeId") {
+        return {
+          text: button.text,
+          edgeId: uuid(button.edgeId, "Scenario edge ID is invalid")
+        };
+      }
+      if (targets[0] === "callbackData") {
+        if (
+          typeof button.callbackData !== "string"
+          || Buffer.byteLength(button.callbackData, "utf8") > 64
+          || button.callbackData.length < 1
+        ) {
+          throw new Error("Scenario callback data is invalid");
+        }
+        return { text: button.text, callbackData: button.callbackData };
+      }
+      if (
+        typeof button.url !== "string"
+        || !button.url.startsWith("https://")
+        || button.url.length > 2_048
+      ) {
+        throw new Error("Scenario button URL is invalid");
+      }
+      return { text: button.text, url: button.url };
+    });
+    return { text: presentation.text, buttons };
+  });
+}
+
+function date(value: unknown, message: string): Date {
+  if (typeof value !== "string") {
+    throw new Error(message);
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new Error(message);
+  }
+  return parsed;
 }
 
 function validateExecutionInput(input: HandleNotificationJobInput): void {

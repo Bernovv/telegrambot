@@ -4,6 +4,7 @@ import type {
   ClaimNotificationDeliveryResult,
   NotificationContextRepository,
   NotificationDeliveryLedger,
+  ScenarioDeliveryContext,
   TicketDeliveryContext
 } from "@ticket-platform/application";
 import type {
@@ -39,6 +40,11 @@ interface AdminPurchaseContextRow {
 interface DeliveryStateRow {
   readonly id: string;
   readonly status: "pending" | "sending" | "sent" | "failed";
+}
+
+interface ScenarioDeliveryContextRow {
+  readonly recipient_external_user_id: string | null;
+  readonly recipient_blocked: boolean | null;
 }
 
 export class PostgresNotificationContextRepository
@@ -151,6 +157,35 @@ implements NotificationContextRepository {
       walletKopecks: BigInt(row.wallet_applied_kopecks),
       externalKopecks: BigInt(row.external_due_kopecks)
     };
+  }
+
+  async getScenarioDeliveryContext(
+    userId: string
+  ): Promise<ScenarioDeliveryContext | null> {
+    const result = await query<ScenarioDeliveryContextRow>(
+      this.pool,
+      `select
+         identity.external_user_id as recipient_external_user_id,
+         identity.is_bot_blocked as recipient_blocked
+       from public.users users
+       left join lateral (
+         select external_user_id, is_bot_blocked
+         from public.messenger_identities
+         where user_id = users.id
+           and channel = 'telegram'
+         order by last_seen_at desc, id
+         limit 1
+       ) identity on true
+       where users.id = $1`,
+      [userId]
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          recipientExternalUserId: row.recipient_external_user_id,
+          recipientBlocked: row.recipient_blocked ?? false
+        }
+      : null;
   }
 }
 

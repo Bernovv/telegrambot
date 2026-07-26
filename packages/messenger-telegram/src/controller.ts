@@ -1,6 +1,8 @@
 import type {
   AcceptTelegramOfferCommand,
   AcceptTelegramOfferResult,
+  AdvanceTelegramScenarioCommand,
+  AdvanceTelegramScenarioResult,
   HandleTelegramContactCommand,
   HandleTelegramContactResult,
   HandleTelegramStartCommand,
@@ -11,8 +13,16 @@ import type {
   ListTelegramTicketsResult,
   RequestTelegramTicketRedeliveryCommand,
   RequestTelegramTicketRedeliveryResult,
+  ResumeTelegramScenarioAfterOfferCommand,
+  ResumeTelegramScenarioAfterOfferResult,
+  ScenarioPresentationModel,
+  StartTelegramScenarioCommand,
+  StartTelegramScenarioResult,
+  SubmitTelegramScenarioInputCommand,
+  SubmitTelegramScenarioInputResult,
   TelegramTicketSummary
 } from "@ticket-platform/contracts";
+import { encodeScenarioCallback } from "./scenario-callback.js";
 
 export interface TelegramReplyModel {
   readonly text: string;
@@ -52,10 +62,47 @@ export interface TelegramPaymentInitializationUseCase {
   ): Promise<InitializeTelegramPaymentResult>;
 }
 
+export interface TelegramScenarioStartUseCase {
+  execute(
+    command: StartTelegramScenarioCommand
+  ): Promise<StartTelegramScenarioResult>;
+}
+
+export interface TelegramScenarioAdvanceUseCase {
+  execute(
+    command: AdvanceTelegramScenarioCommand
+  ): Promise<AdvanceTelegramScenarioResult>;
+}
+
+export interface TelegramScenarioInputUseCase {
+  execute(
+    command: SubmitTelegramScenarioInputCommand
+  ): Promise<SubmitTelegramScenarioInputResult>;
+}
+
+export interface TelegramScenarioOfferAcceptedUseCase {
+  execute(
+    command: ResumeTelegramScenarioAfterOfferCommand
+  ): Promise<ResumeTelegramScenarioAfterOfferResult>;
+}
+
+export interface TelegramScenarioUseCases {
+  readonly start: TelegramScenarioStartUseCase;
+  readonly advance: TelegramScenarioAdvanceUseCase;
+  readonly input: TelegramScenarioInputUseCase;
+  readonly offerAccepted?: TelegramScenarioOfferAcceptedUseCase;
+}
+
 export interface TelegramOfferAcceptanceView {
   readonly callbackText: string;
   readonly replacementText?: string;
   readonly inlineButtons?: readonly TelegramInlineButton[];
+  readonly replies?: readonly TelegramReplyModel[];
+}
+
+export interface TelegramScenarioTransitionView {
+  readonly callbackText: string;
+  readonly replies: readonly TelegramReplyModel[];
 }
 
 export class TelegramUpdateController {
@@ -65,11 +112,42 @@ export class TelegramUpdateController {
     private readonly acceptOffer: TelegramOfferAcceptanceUseCase,
     private readonly listTickets: TelegramTicketListUseCase,
     private readonly requestTicketRedelivery: TelegramTicketRedeliveryUseCase,
-    private readonly initializePayment?: TelegramPaymentInitializationUseCase
+    private readonly initializePayment?: TelegramPaymentInitializationUseCase,
+    private readonly scenario?: TelegramScenarioUseCases
   ) {}
 
   async onStart(command: HandleTelegramStartCommand): Promise<readonly TelegramReplyModel[]> {
     const result = await this.handleStart.execute(command);
+    if (this.scenario) {
+      const scenario = await this.scenario.start.execute({
+        userId: result.userId,
+        messengerIdentityId: result.messengerIdentityId,
+        eventSlug: result.selectedEventSlug,
+        updateId: command.updateId,
+        occurredAt: command.receivedAt
+      });
+      if (scenario.handled) {
+        if (scenario.duplicate) {
+          return [];
+        }
+        const scenarioMessages = scenarioReplies(
+          scenario.sessionId,
+          scenario.presentations
+        );
+        if (scenario.status === "blocked") {
+          scenarioMessages.push({
+            text: "Сценарий временно недоступен. Попробуйте начать заново позже."
+          });
+        }
+        if (result.phoneRequired) {
+          scenarioMessages.push({
+            text: "Чтобы закрепить заявку и не потерять билет, поделитесь номером телефона.",
+            keyboard: "request_contact"
+          });
+        }
+        return scenarioMessages;
+      }
+    }
     const replies: TelegramReplyModel[] = [
       {
         text: [
@@ -88,6 +166,57 @@ export class TelegramUpdateController {
       });
     }
 
+    return replies;
+  }
+
+  async onScenarioTransition(
+    command: AdvanceTelegramScenarioCommand
+  ): Promise<TelegramScenarioTransitionView> {
+    if (!this.scenario) {
+      return { callbackText: "Действие недоступно", replies: [] };
+    }
+    const result = await this.scenario.advance.execute(command);
+    if (!result.accepted) {
+      return { callbackText: "Действие устарело", replies: [] };
+    }
+    if (result.duplicate) {
+      return { callbackText: "Уже обработано", replies: [] };
+    }
+    const replies = scenarioReplies(result.sessionId, result.presentations);
+    if (result.status === "blocked") {
+      replies.push({
+        text: "Сценарий временно недоступен. Попробуйте начать заново позже."
+      });
+    }
+    return {
+      callbackText: result.status === "completed" ? "Готово" : "Выбрано",
+      replies
+    };
+  }
+
+  async onScenarioInput(
+    command: SubmitTelegramScenarioInputCommand
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.scenario) {
+      return [];
+    }
+    const result = await this.scenario.input.execute(command);
+    if (!result.handled) {
+      return result.reason === "input_ambiguous"
+        ? [{
+            text: "Открыто несколько диалогов. Запустите нужное мероприятие заново командой /start."
+          }]
+        : [];
+    }
+    if (result.duplicate) {
+      return [];
+    }
+    const replies = scenarioReplies(result.sessionId, result.presentations);
+    if (result.status === "blocked") {
+      replies.push({
+        text: "Сценарий временно недоступен. Попробуйте начать заново позже."
+      });
+    }
     return replies;
   }
 
@@ -171,9 +300,16 @@ export class TelegramUpdateController {
         callbackText: offerRejectionText(result.reason)
       };
     }
+    const scenarioRepliesAfterOffer = await this.resumeScenarioAfterOffer(
+      result.orderId,
+      command
+    );
     if (!result.newlyAccepted) {
       return {
-        callbackText: "Оферта уже принята"
+        callbackText: "Оферта уже принята",
+        ...(scenarioRepliesAfterOffer.length > 0
+          ? { replies: scenarioRepliesAfterOffer }
+          : {})
       };
     }
 
@@ -187,7 +323,12 @@ export class TelegramUpdateController {
         `Баланс: ${formatKopecks(result.walletAppliedKopecks)} ₽`,
         `К оплате: ${formatKopecks(result.externalDueKopecks)} ₽`
       ].join("\n"),
-      ...(this.initializePayment && BigInt(result.externalDueKopecks) > 0n
+      ...(scenarioRepliesAfterOffer.length > 0
+        ? { replies: scenarioRepliesAfterOffer }
+        : {}),
+      ...(scenarioRepliesAfterOffer.length === 0
+        && this.initializePayment
+        && BigInt(result.externalDueKopecks) > 0n
         ? {
             inlineButtons: [{
               text: "Оплатить",
@@ -196,6 +337,34 @@ export class TelegramUpdateController {
           }
         : {})
     };
+  }
+
+  private async resumeScenarioAfterOffer(
+    orderId: string,
+    command: AcceptTelegramOfferCommand
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.scenario?.offerAccepted) {
+      return [];
+    }
+    const resumed = await this.scenario.offerAccepted.execute({
+      orderId,
+      senderExternalUserId: command.senderExternalUserId,
+      updateId: command.updateId,
+      occurredAt: command.acceptedAt
+    });
+    if (!resumed.handled || resumed.duplicate) {
+      return [];
+    }
+    const replies = scenarioReplies(
+      resumed.sessionId,
+      resumed.presentations
+    );
+    if (resumed.status === "blocked") {
+      replies.push({
+        text: "Сценарий временно недоступен. Попробуйте начать заново позже."
+      });
+    }
+    return replies;
   }
 
   async onPaymentInitialization(
@@ -222,6 +391,28 @@ export class TelegramUpdateController {
       inlineButtons: [{ text: "Перейти к оплате", url: result.paymentUrl }]
     };
   }
+}
+
+function scenarioReplies(
+  sessionId: string,
+  presentations: readonly ScenarioPresentationModel[]
+): TelegramReplyModel[] {
+  return presentations.map((presentation) => ({
+    text: presentation.text,
+    ...(presentation.buttons.length > 0
+      ? {
+          inlineButtons: presentation.buttons.map((button) => {
+            if ("edgeId" in button) {
+              return {
+                text: button.text,
+                callbackData: encodeScenarioCallback(sessionId, button.edgeId)
+              };
+            }
+            return button;
+          })
+        }
+      : {})
+  }));
 }
 
 function formatTicketSummary(ticket: TelegramTicketSummary): string {

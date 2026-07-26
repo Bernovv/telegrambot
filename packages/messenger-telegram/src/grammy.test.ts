@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type {
   AcceptTelegramOfferCommand,
+  AdvanceTelegramScenarioCommand,
   HandleTelegramContactCommand,
   HandleTelegramStartCommand,
   ListTelegramTicketsCommand,
-  RequestTelegramTicketRedeliveryCommand
+  RequestTelegramTicketRedeliveryCommand,
+  SubmitTelegramScenarioInputCommand
 } from "@ticket-platform/contracts";
 import type { Logger } from "@ticket-platform/observability";
 import type { Bot } from "grammy";
@@ -13,11 +15,13 @@ import {
   TelegramUpdateController,
   type TelegramContactUseCase,
   type TelegramOfferAcceptanceUseCase,
+  type TelegramScenarioUseCases,
   type TelegramStartUseCase,
   type TelegramTicketListUseCase,
   type TelegramTicketRedeliveryUseCase
 } from "./controller.js";
 import { createTelegramBot } from "./grammy.js";
+import { encodeScenarioCallback } from "./scenario-callback.js";
 
 describe("grammY Telegram transport", () => {
   it("maps /start and owned contact fixtures into application commands", async () => {
@@ -213,6 +217,78 @@ describe("grammY Telegram transport", () => {
 
     await assert.rejects(() => bot.handleUpdate(startFixture()), /database unavailable/);
   });
+
+  it("maps compact scenario callbacks to an owner-bound command", async () => {
+    const commands: AdvanceTelegramScenarioCommand[] = [];
+    const inputCommands: SubmitTelegramScenarioInputCommand[] = [];
+    const scenario: TelegramScenarioUseCases = {
+      start: {
+        async execute() {
+          return { handled: false, reason: "event_not_found" };
+        }
+      },
+      advance: {
+        async execute(command) {
+          commands.push(command);
+          return {
+            accepted: true,
+            duplicate: false,
+            sessionId,
+            status: "completed",
+            presentations: []
+          };
+        }
+      },
+      input: {
+        async execute(command) {
+          inputCommands.push(command);
+          return {
+            handled: true,
+            accepted: true,
+            duplicate: false,
+            sessionId,
+            status: "waiting_input",
+            presentations: [{ text: "Input saved", buttons: [] }]
+          };
+        }
+      }
+    };
+    const apiCalls: string[] = [];
+    const bot = createTelegramBot(
+      "123456:test-token",
+      new TelegramUpdateController(
+        passiveStart(),
+        passiveContact(),
+        passiveOffer(),
+        emptyTickets(),
+        unavailableRedelivery(),
+        undefined,
+        scenario
+      ),
+      silentLogger()
+    );
+    bot.botInfo = testBotInfo();
+    bot.api.config.use(async (_previous, method) => {
+      apiCalls.push(method);
+      return { ok: true, result: true } as never;
+    });
+
+    await bot.handleUpdate(callbackFixture(
+      1007,
+      "callback-scenario",
+      encodeScenarioCallback(sessionId, scenarioEdgeId)
+    ));
+    await bot.handleUpdate(textFixture());
+
+    assert.equal(commands[0]?.sessionId, sessionId);
+    assert.equal(commands[0]?.edgeId, scenarioEdgeId);
+    assert.equal(commands[0]?.senderExternalUserId, "777");
+    assert.equal(commands[0]?.updateId, "1007");
+    assert.equal(inputCommands[0]?.senderExternalUserId, "777");
+    assert.equal(inputCommands[0]?.updateId, "1008");
+    assert.equal(inputCommands[0]?.text, "3");
+    assert.deepEqual(apiCalls, ["answerCallbackQuery", "sendMessage"]);
+  });
 });
 
 function startFixture(): Parameters<Bot["handleUpdate"]>[0] {
@@ -308,6 +384,19 @@ function callbackFixture(
   };
 }
 
+function textFixture(): Parameters<Bot["handleUpdate"]>[0] {
+  return {
+    update_id: 1008,
+    message: {
+      message_id: 8,
+      date: 1_753_171_460,
+      from: { id: 777, is_bot: false, first_name: "Oleg" },
+      chat: { id: 777, type: "private", first_name: "Oleg" },
+      text: "3"
+    }
+  };
+}
+
 function passiveStart(): TelegramStartUseCase {
   return {
     async execute() {
@@ -380,3 +469,5 @@ function testBotInfo(): NonNullable<Bot["botInfo"]> {
 }
 
 const ticketId = "019c0123-4567-789a-bcde-f0123456789a";
+const sessionId = "019c0123-4567-789a-bcde-f0123456789b";
+const scenarioEdgeId = "019c0123-4567-789a-bcde-f0123456789c";

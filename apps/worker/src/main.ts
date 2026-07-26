@@ -9,6 +9,7 @@ import {
   HmacTicketReferenceGenerator,
   ReconcileTBankPaymentsBatchService,
   ReconcileTBankRefundsBatchService,
+  ResumeTelegramScenarioAfterPaymentService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
@@ -18,6 +19,7 @@ import {
   createNodePostgresPool,
   createOrderExpiryPersistence,
   createPaymentConfirmationPersistence,
+  createScenarioRuntimePersistence,
   createTBankReconciliationPersistence,
   createTBankRefundPersistence,
   PostgresOutboxDispatchRepository,
@@ -176,6 +178,14 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     const notificationConfig = config.telegramNotifications;
     if (notificationConfig.enabled) {
       const notificationPersistence = createNotificationDeliveryPersistence(pool);
+      const scenarioPersistence = createScenarioRuntimePersistence(pool, idGenerator);
+      const scenarioPaymentContinuation =
+        new ResumeTelegramScenarioAfterPaymentService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          scenarioPersistence.outboxWriter,
+          idGenerator
+        );
       const notificationHandler = new HandleNotificationJobService(
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationLedger,
@@ -183,7 +193,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         new HmacTicketReferenceGenerator(notificationConfig.ticketTokenSecret),
         new QrTicketPngRenderer(),
         idGenerator,
-        notificationConfig.adminChatId
+        notificationConfig.adminChatId,
+        scenarioPaymentContinuation
       );
 
       await boss.work<DomainEventJobV1>(

@@ -32,6 +32,7 @@ interface EventContextRow {
   readonly phone_required_for_purchase: boolean;
   readonly offer_required: boolean;
   readonly active_offer_version_id: string | null;
+  readonly active_offer_public_url: string | null;
   readonly phone_status: OrderSalesContext["userPhoneStatus"];
   readonly wallet_available_kopecks: string;
 }
@@ -74,6 +75,7 @@ interface OrderRow {
   readonly external_due_kopecks: string;
   readonly expires_at: Date;
   readonly creation_request_hash: string;
+  readonly offer_public_url: string | null;
 }
 
 interface WalletAccountRow {
@@ -137,10 +139,13 @@ export class PostgresOrderSalesRepository implements OrderSalesRepository {
          e.phone_required_for_purchase,
          e.offer_required,
          e.active_offer_version_id,
+         ov.public_url as active_offer_public_url,
          u.phone_status,
          coalesce(wa.cached_available_kopecks, 0)::text as wallet_available_kopecks
        from public.events e
        join public.users u on u.id = $2
+       left join public.offer_versions ov
+         on ov.id = e.active_offer_version_id
        left join public.wallet_accounts wa
          on wa.user_id = u.id and wa.currency = $3 and wa.status = 'active'
        where e.id = $1`,
@@ -218,6 +223,7 @@ export class PostgresOrderSalesRepository implements OrderSalesRepository {
         phoneRequiredForPurchase: row.phone_required_for_purchase,
         offerRequired: row.offer_required,
         activeOfferVersionId: row.active_offer_version_id,
+        activeOfferPublicUrl: row.active_offer_public_url,
         reservationTtlMinutes: row.reservation_ttl_minutes
       },
       userPhoneStatus: row.phone_status,
@@ -343,7 +349,13 @@ export class PostgresOrderSalesRepository implements OrderSalesRepository {
       ]
     );
 
-    return { created: true, order: toPersistedOrder(createdOrder) };
+    return {
+      created: true,
+      order: {
+        ...toPersistedOrder(createdOrder),
+        offerPublicUrl: input.offerPublicUrl
+      }
+    };
   }
 
   private async createWalletHold(input: PersistOrderInput): Promise<void> {
@@ -573,7 +585,8 @@ function toPersistedOrder(row: OrderRow): PersistedOrder {
     walletApplied: BigInt(row.wallet_applied_kopecks),
     externalDue: BigInt(row.external_due_kopecks),
     expiresAt: row.expires_at,
-    creationRequestHash: row.creation_request_hash
+    creationRequestHash: row.creation_request_hash,
+    offerPublicUrl: row.offer_public_url ?? null
   };
 }
 
@@ -586,13 +599,16 @@ function safeInteger(value: string, label: string): number {
 }
 
 const orderSelect = `select
-  id,
-  number,
-  status,
-  currency,
-  total_kopecks::text,
-  wallet_applied_kopecks::text,
-  external_due_kopecks::text,
-  expires_at,
-  creation_request_hash
-from public.orders`;
+  orders.id,
+  orders.number,
+  orders.status,
+  orders.currency,
+  orders.total_kopecks::text,
+  orders.wallet_applied_kopecks::text,
+  orders.external_due_kopecks::text,
+  orders.expires_at,
+  orders.creation_request_hash,
+  offer_versions.public_url as offer_public_url
+from public.orders orders
+left join public.offer_versions
+  on offer_versions.id = orders.offer_version_id`;

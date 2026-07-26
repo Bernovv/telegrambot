@@ -6,6 +6,7 @@ import {
   type TelegramContactUseCase,
   type TelegramOfferAcceptanceUseCase,
   type TelegramPaymentInitializationUseCase,
+  type TelegramScenarioUseCases,
   type TelegramStartUseCase,
   type TelegramTicketListUseCase,
   type TelegramTicketRedeliveryUseCase
@@ -106,6 +107,75 @@ describe("TelegramUpdateController", () => {
       requestedAt: new Date("2026-07-24T14:00:00.000Z")
     }), { callbackText: "Билет отправляется" });
   });
+
+  it("renders scenario presentations and owner-bound transition callbacks", async () => {
+    const instance = controller({
+      phoneRequired: false,
+      scenarioEnabled: true
+    });
+
+    const replies = await instance.onStart(startCommand());
+    const button = replies[0]?.inlineButtons?.[0];
+    const callbackData = button && "callbackData" in button
+      ? button.callbackData
+      : "";
+    const transition = await instance.onScenarioTransition({
+      sessionId,
+      edgeId,
+      senderExternalUserId: "777",
+      updateId: "1005",
+      callbackQueryId: "callback-scenario",
+      occurredAt: new Date("2026-07-26T12:01:00.000Z")
+    });
+
+    assert.equal(replies[0]?.text, "Выберите действие");
+    assert.match(callbackData, /^scenario:/);
+    assert.ok(Buffer.byteLength(callbackData, "utf8") <= 64);
+    assert.equal(transition.callbackText, "Готово");
+    assert.deepEqual(transition.replies, [{ text: "Готово" }]);
+  });
+
+  it("renders validated scenario input and ignores text outside a scenario", async () => {
+    const enabled = controller({
+      phoneRequired: false,
+      scenarioEnabled: true
+    });
+    const disabled = controller({ phoneRequired: false });
+
+    const replies = await enabled.onScenarioInput({
+      senderExternalUserId: "777",
+      updateId: "1006",
+      text: "3",
+      occurredAt: new Date("2026-07-26T12:02:00.000Z")
+    });
+
+    assert.deepEqual(replies, [{ text: "Количество сохранено" }]);
+    assert.deepEqual(await disabled.onScenarioInput({
+      senderExternalUserId: "777",
+      updateId: "1007",
+      text: "hello",
+      occurredAt: new Date("2026-07-26T12:03:00.000Z")
+    }), []);
+  });
+
+  it("resumes the scenario after offer acceptance with a payment action", async () => {
+    const instance = controller({
+      phoneRequired: false,
+      scenarioEnabled: true,
+      paymentsEnabled: true
+    });
+
+    const view = await instance.onOfferAcceptance(offerCommand());
+
+    assert.deepEqual(view.replies, [{
+      text: "Заказ готов к оплате",
+      inlineButtons: [{
+        text: "Оплатить",
+        callbackData: `payment_init:${"a".repeat(43)}`
+      }]
+    }]);
+    assert.equal(view.inlineButtons, undefined);
+  });
 });
 
 function controller(options: {
@@ -113,6 +183,7 @@ function controller(options: {
   readonly bonusCredited?: boolean;
   readonly contactAccepted?: boolean;
   readonly paymentsEnabled?: boolean;
+  readonly scenarioEnabled?: boolean;
 }): TelegramUpdateController {
   const start: TelegramStartUseCase = {
     async execute() {
@@ -203,6 +274,62 @@ function controller(options: {
       };
     }
   };
+  const scenario: TelegramScenarioUseCases = {
+    start: {
+      async execute() {
+        return {
+          handled: true,
+          duplicate: false,
+          sessionId,
+          status: "waiting_input",
+          presentations: [{
+            text: "Выберите действие",
+            buttons: [{ text: "Завершить", edgeId }]
+          }]
+        };
+      }
+    },
+    advance: {
+      async execute() {
+        return {
+          accepted: true,
+          duplicate: false,
+          sessionId,
+          status: "completed",
+          presentations: [{ text: "Готово", buttons: [] }]
+        };
+      }
+    },
+    input: {
+      async execute() {
+        return {
+          handled: true,
+          accepted: true,
+          duplicate: false,
+          sessionId,
+          status: "waiting_input",
+          presentations: [{ text: "Количество сохранено", buttons: [] }]
+        };
+      }
+    },
+    offerAccepted: {
+      async execute() {
+        return {
+          handled: true,
+          duplicate: false,
+          sessionId,
+          status: "waiting_input",
+          presentations: [{
+            text: "Заказ готов к оплате",
+            buttons: [{
+              text: "Оплатить",
+              callbackData: `payment_init:${"a".repeat(43)}`
+            }]
+          }]
+        };
+      }
+    }
+  };
 
   return new TelegramUpdateController(
     start,
@@ -210,7 +337,8 @@ function controller(options: {
     offer,
     tickets,
     redelivery,
-    options.paymentsEnabled ? payment : undefined
+    options.paymentsEnabled ? payment : undefined,
+    options.scenarioEnabled ? scenario : undefined
   );
 }
 
@@ -242,3 +370,6 @@ function offerCommand() {
     acceptedAt: new Date("2026-07-24T12:05:00.000Z")
   };
 }
+
+const sessionId = "019c0123-4567-789a-bcde-f0123456789a";
+const edgeId = "019c0123-4567-789a-bcde-f0123456789b";

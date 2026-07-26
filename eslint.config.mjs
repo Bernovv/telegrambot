@@ -5,6 +5,7 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/.next/**",
       "**/node_modules/**",
       ".tools/**",
       "graphify-out/**"
@@ -13,7 +14,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts"],
+    files: ["apps/**/*.{ts,tsx}", "packages/**/*.ts", "scripts/**/*.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -70,7 +71,7 @@ export default tseslint.config(
   },
   {
     ...tseslint.configs.disableTypeChecked,
-    files: ["**/*.test.ts"],
+    files: ["**/*.test.{ts,tsx}"],
     rules: {
       ...tseslint.configs.disableTypeChecked.rules,
       "@typescript-eslint/no-unnecessary-type-assertion": "off",

@@ -29,6 +29,8 @@ export interface TelegramBotConfig extends AppConfig {
   readonly telegramDeliveryMode: TelegramDeliveryMode;
   readonly telegramDefaultCountry: string;
   readonly databasePoolMax: number;
+  readonly orderTokenSecret: string;
+  readonly orderNumberPrefix: string;
   readonly tbankPayments: TBankPaymentsConfig;
 }
 
@@ -49,6 +51,15 @@ export type AdminAuthConfig =
       readonly enabled: true;
       readonly issuer: string;
       readonly audience: string;
+    };
+
+export type OfferStorageConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly supabaseUrl: string;
+      readonly serviceRoleKey: string;
+      readonly bucket: string;
     };
 
 export type TBankReconciliationConfig =
@@ -79,6 +90,7 @@ export interface ApiConfig extends AppConfig {
   readonly outboxLagDegradedSeconds: number;
   readonly outboxLagFailedSeconds: number;
   readonly adminAuth: AdminAuthConfig;
+  readonly offerStorage: OfferStorageConfig;
   readonly telegramWebhook: TelegramWebhookConfig;
   readonly orderTokenSecret: string;
   readonly orderNumberPrefix: string;
@@ -123,6 +135,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
 export function loadTelegramBotConfig(env: NodeJS.ProcessEnv): TelegramBotConfig {
   const appConfig = loadAppConfig(env);
   const defaultMode = appConfig.appEnv === "production" ? "webhook" : "long-polling";
+  const localOrderTokenSecret = "local-only-order-token-secret-change-me";
 
   return {
     ...appConfig,
@@ -130,6 +143,12 @@ export function loadTelegramBotConfig(env: NodeJS.ProcessEnv): TelegramBotConfig
     telegramDeliveryMode: parseTelegramDeliveryMode(env.TELEGRAM_DELIVERY_MODE ?? defaultMode),
     telegramDefaultCountry: env.TELEGRAM_DEFAULT_COUNTRY ?? "RU",
     databasePoolMax: parsePositiveInteger(env.DATABASE_POOL_MAX ?? "10", "DATABASE_POOL_MAX"),
+    orderTokenSecret: parseSecret(
+      env.ORDER_TOKEN_SECRET
+        ?? (appConfig.appEnv === "production" ? undefined : localOrderTokenSecret),
+      "ORDER_TOKEN_SECRET"
+    ),
+    orderNumberPrefix: parseOrderNumberPrefix(env.ORDER_NUMBER_PREFIX ?? "BP"),
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
 }
@@ -201,6 +220,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
           audience: parseAudience(env.ADMIN_AUTH_AUDIENCE ?? "authenticated")
         }
       : { enabled: false },
+    offerStorage: loadOfferStorageConfig(env),
     telegramWebhook,
     orderTokenSecret: parseSecret(
       env.ORDER_TOKEN_SECRET
@@ -209,6 +229,32 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     ),
     orderNumberPrefix: parseOrderNumberPrefix(env.ORDER_NUMBER_PREFIX ?? "BP"),
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
+  };
+}
+
+function loadOfferStorageConfig(env: NodeJS.ProcessEnv): OfferStorageConfig {
+  const enabled = parseBoolean(
+    env.OFFER_STORAGE_ENABLED ?? "false",
+    "OFFER_STORAGE_ENABLED"
+  );
+  if (!enabled) {
+    return { enabled: false };
+  }
+  return {
+    enabled: true,
+    supabaseUrl: parseHttpsBaseUrl(
+      env.OFFER_STORAGE_SUPABASE_URL,
+      "OFFER_STORAGE_SUPABASE_URL"
+    ),
+    serviceRoleKey: parseBoundedValue(
+      env.OFFER_STORAGE_SERVICE_ROLE_KEY,
+      "OFFER_STORAGE_SERVICE_ROLE_KEY",
+      32,
+      4_096
+    ),
+    bucket: parseStorageBucket(
+      env.OFFER_STORAGE_BUCKET ?? "offer-snapshots"
+    )
   };
 }
 
@@ -408,6 +454,36 @@ function parseHttpsIssuer(value: string | undefined, name: string): string {
   }
 
   return url.toString().replace(/\/$/, "");
+}
+
+function parseHttpsBaseUrl(value: string | undefined, name: string): string {
+  const raw = required(value, name);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} must be a valid HTTPS base URL`);
+  }
+  if (
+    url.protocol !== "https:"
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || (url.pathname !== "/" && url.pathname !== "")
+  ) {
+    throw new Error(`${name} must be a valid HTTPS base URL`);
+  }
+  return url.origin;
+}
+
+function parseStorageBucket(value: string): string {
+  if (!/^[a-z0-9][a-z0-9._-]{1,62}$/.test(value)) {
+    throw new Error(
+      "OFFER_STORAGE_BUCKET must contain 2-63 lowercase safe characters"
+    );
+  }
+  return value;
 }
 
 function parseAudience(value: string): string {
