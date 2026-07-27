@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderActions } from "@/components/order-actions";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import { AdminApiError, getOrder } from "@/lib/admin-api";
@@ -100,6 +101,8 @@ export default function OrderDetailPage() {
           <strong>{formatDateTime(order.createdAt)}</strong>
         </div>
       </div>
+
+      <OrderActions order={order} onSettled={() => load()} />
 
       <section className="data-section">
         <div className="section-title-row">
