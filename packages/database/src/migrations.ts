@@ -99,5 +99,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260728140000_phone_bonus_campaign",
     description: "Activate the 100 RUB phone bonus campaign outside development seeds",
     destructive: false
+  },
+  {
+    id: "20260728160000_offer_version_pdf",
+    description: "Publish the signed offer PDF as the active immutable offer version",
+    destructive: false
   }
 ];
