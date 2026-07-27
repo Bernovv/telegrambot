@@ -40,3 +40,4 @@ export * from "./participant-questionnaire.js";
 export * from "./event-reminders.js";
 export * from "./participants-export.js";
 export * from "./admin-broadcast.js";
+export * from "./telegram-access.js";

@@ -57,6 +57,7 @@ import {
   orderOfferStepReply,
   partnerLinkReply,
   partnerProgramReply,
+  phoneRequiredReply,
   programAndPricingReply,
   questionnaireCompletedReply,
   questionnaireUnavailableReply
@@ -143,6 +144,10 @@ export interface TelegramPurchaseFlowUseCase {
   handleChildQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult>;
 }
 
+export interface TelegramPhoneAccessUseCase {
+  execute(query: { readonly externalUserId: string }): Promise<{ readonly unlocked: boolean }>;
+}
+
 export interface TelegramReferralBalanceUseCase {
   execute(query: { readonly externalUserId: string }): Promise<ReferralBalanceResult>;
 }
@@ -184,8 +189,25 @@ export class TelegramUpdateController {
     private readonly scenario?: TelegramScenarioUseCases,
     private readonly purchaseFlow?: TelegramPurchaseFlowUseCase,
     private readonly referralBalance?: TelegramReferralBalanceUseCase,
-    private readonly questionnaire?: TelegramQuestionnaireUseCase
+    private readonly questionnaire?: TelegramQuestionnaireUseCase,
+    private readonly phoneAccess?: TelegramPhoneAccessUseCase
   ) {}
+
+  /**
+   * Без телефона открыты только программа с тарифами и FAQ — так решил заказчик. Проверка
+   * стоит здесь, а не в обработчиках кнопок, чтобы правило было записано в одном месте и
+   * одинаково работало во всех точках входа.
+   *
+   * Если проверка не подключена (например, в тестах транспорта), раздел считается открытым:
+   * молча закрывать боту продажи из-за незаполненной зависимости — хуже, чем пустить.
+   */
+  private async isUnlocked(externalUserId: string): Promise<boolean> {
+    if (!this.phoneAccess) {
+      return true;
+    }
+    const result = await this.phoneAccess.execute({ externalUserId });
+    return result.unlocked;
+  }
 
   async onStart(command: HandleTelegramStartCommand): Promise<readonly TelegramReplyModel[]> {
     const result = await this.handleStart.execute(command);
@@ -306,27 +328,48 @@ export class TelegramUpdateController {
     return [faqReply()];
   }
 
-  onContactUs(): readonly TelegramReplyModel[] {
+  async onContactUs(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     return [contactUsReply()];
   }
 
-  onBuyTicket(): readonly TelegramReplyModel[] {
+  async onBuyTicket(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     return [chooseTicketReply()];
   }
 
-  onChooseFamilyTicket(): readonly TelegramReplyModel[] {
+  async onChooseFamilyTicket(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     return [chooseFamilyTicketReply()];
   }
 
-  onPartnerProgram(): readonly TelegramReplyModel[] {
+  async onPartnerProgram(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     return [partnerProgramReply()];
   }
 
-  onGetPartnerLink(externalUserId: string, botUsername: string | null): readonly TelegramReplyModel[] {
+  async onGetPartnerLink(
+    externalUserId: string,
+    botUsername: string | null
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     return [partnerLinkReply(externalUserId, botUsername)];
   }
 
   async onMyBonuses(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(externalUserId)) {
+      return [phoneRequiredReply()];
+    }
     if (!this.referralBalance) {
       return [myBonusesUnavailableReply()];
     }

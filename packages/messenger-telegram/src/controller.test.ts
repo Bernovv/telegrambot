@@ -9,7 +9,8 @@ import {
   type TelegramScenarioUseCases,
   type TelegramStartUseCase,
   type TelegramTicketListUseCase,
-  type TelegramTicketRedeliveryUseCase
+  type TelegramTicketRedeliveryUseCase,
+  type TelegramPhoneAccessUseCase
 } from "./controller.js";
 
 describe("TelegramUpdateController", () => {
@@ -370,6 +371,78 @@ function offerCommand() {
     acceptedAt: new Date("2026-07-24T12:05:00.000Z")
   };
 }
+
+describe("доступ к разделам без телефона", () => {
+  // Правило заказчика: без номера открыты «Программа и тарифы» и FAQ, остальное закрыто.
+  const locked = () => gated(false);
+  const unlocked = () => gated(true);
+
+  it("оставляет программу, тарифы и FAQ открытыми", async () => {
+    const bot = locked();
+
+    assert.notEqual(bot.onProgramAndPricing()[0]?.text, undefined);
+    assert.notEqual(bot.onFaq()[0]?.text, undefined);
+    assert.equal(bot.onProgramAndPricing()[0]?.keyboard, undefined);
+    assert.equal(bot.onFaq()[0]?.keyboard, undefined);
+  });
+
+  it("закрывает покупку, партнёрку, бонусы и связь с менеджером", async () => {
+    const bot = locked();
+
+    for (const replies of [
+      await bot.onBuyTicket("42"),
+      await bot.onChooseFamilyTicket("42"),
+      await bot.onPartnerProgram("42"),
+      await bot.onGetPartnerLink("42", "businessProriv_bot"),
+      await bot.onContactUs("42"),
+      await bot.onMyBonuses("42")
+    ]) {
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0]?.keyboard, "request_contact");
+      assert.match(replies[0]?.text ?? "", /поделитесь номером/);
+    }
+  });
+
+  it("пропускает всё, когда номер известен", async () => {
+    const bot = unlocked();
+
+    const buy = await bot.onBuyTicket("42");
+    const partner = await bot.onPartnerProgram("42");
+
+    assert.notEqual(buy[0]?.keyboard, "request_contact");
+    assert.notEqual(partner[0]?.keyboard, "request_contact");
+  });
+
+  it("не закрывает разделы, когда проверка не подключена", async () => {
+    // Незаполненная зависимость не должна молча останавливать продажи.
+    const bot = controller({ phoneRequired: false });
+
+    const buy = await bot.onBuyTicket("42");
+
+    assert.notEqual(buy[0]?.keyboard, "request_contact");
+  });
+
+  function gated(unlockedAccess: boolean): TelegramUpdateController {
+    const access: TelegramPhoneAccessUseCase = {
+      async execute() {
+        return { unlocked: unlockedAccess };
+      }
+    };
+    return new TelegramUpdateController(
+      { async execute() { throw new Error("не используется"); } } as unknown as TelegramStartUseCase,
+      { async execute() { throw new Error("не используется"); } } as unknown as TelegramContactUseCase,
+      { async execute() { throw new Error("не используется"); } } as unknown as TelegramOfferAcceptanceUseCase,
+      { async execute() { throw new Error("не используется"); } } as unknown as TelegramTicketListUseCase,
+      { async execute() { throw new Error("не используется"); } } as unknown as TelegramTicketRedeliveryUseCase,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      access
+    );
+  }
+});
 
 const sessionId = "019c0123-4567-789a-bcde-f0123456789a";
 const edgeId = "019c0123-4567-789a-bcde-f0123456789b";

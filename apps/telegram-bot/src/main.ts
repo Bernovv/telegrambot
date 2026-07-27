@@ -3,6 +3,7 @@ import {
   AcceptTelegramOfferService,
   AdvanceTelegramScenarioService,
   CreateOrderService,
+  CheckTelegramPhoneAccessService,
   GetTelegramReferralBalanceService,
   HandleTelegramContactService,
   HandleTelegramStartService,
@@ -25,6 +26,7 @@ import {
   createParticipantQuestionnairePersistence,
   createPhonePersistence,
   createReferralBalancePersistence,
+  createTelegramAccessPersistence,
   createScenarioRuntimePersistence,
   createTBankPaymentPersistence,
   createTelegramPurchaseFlowPersistence,
@@ -165,6 +167,9 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
   const referralBalanceService = new GetTelegramReferralBalanceService(
     createReferralBalancePersistence(pool).referralBalanceRepository
   );
+  const phoneAccessService = new CheckTelegramPhoneAccessService(
+    createTelegramAccessPersistence(pool).phoneStatusRepository
+  );
   const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
   const questionnaireService = new TelegramQuestionnaireService(
     questionnairePersistence.questionnaireDraftRepository,
@@ -181,7 +186,8 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     scenario,
     purchaseFlowService,
     referralBalanceService,
-    questionnaireService
+    questionnaireService,
+    phoneAccessService
   );
   const bot = createTelegramBot(config.telegramBotToken, controller, logger, {
     ...(config.telegramApiRoot ? { apiRoot: config.telegramApiRoot } : {})

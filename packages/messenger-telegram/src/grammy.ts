@@ -252,17 +252,29 @@ export function createTelegramBot(
 
   bot.callbackQuery("contact_us", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendReplies(ctx.reply.bind(ctx), controller.onContactUs());
+    if (!ctx.from) {
+      return;
+    }
+    await sendReplies(ctx.reply.bind(ctx), await controller.onContactUs(String(ctx.from.id)));
   });
 
   bot.callbackQuery("buy_ticket", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendReplies(ctx.reply.bind(ctx), controller.onBuyTicket());
+    if (!ctx.from) {
+      return;
+    }
+    await sendReplies(ctx.reply.bind(ctx), await controller.onBuyTicket(String(ctx.from.id)));
   });
 
   bot.callbackQuery("ticket_family", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendReplies(ctx.reply.bind(ctx), controller.onChooseFamilyTicket());
+    if (!ctx.from) {
+      return;
+    }
+    await sendReplies(
+      ctx.reply.bind(ctx),
+      await controller.onChooseFamilyTicket(String(ctx.from.id))
+    );
   });
 
   bot.callbackQuery(["ticket_vip", "ticket_standard"], async (ctx) => {
@@ -293,12 +305,21 @@ export function createTelegramBot(
 
   bot.callbackQuery("partner_program", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendReplies(ctx.reply.bind(ctx), controller.onPartnerProgram());
+    if (!ctx.from) {
+      return;
+    }
+    await sendReplies(
+      ctx.reply.bind(ctx),
+      await controller.onPartnerProgram(String(ctx.from.id))
+    );
   });
 
   bot.callbackQuery("get_partner_link", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const replies = controller.onGetPartnerLink(String(ctx.from.id), bot.botInfo?.username ?? null);
+    const replies = await controller.onGetPartnerLink(
+      String(ctx.from.id),
+      bot.botInfo?.username ?? null
+    );
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 

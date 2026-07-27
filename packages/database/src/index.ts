@@ -31,3 +31,4 @@ export * from "./participant-questionnaire-persistence.js";
 export * from "./event-reminder-persistence.js";
 export * from "./participants-export-persistence.js";
 export * from "./admin-broadcast-persistence.js";
+export * from "./telegram-access-persistence.js";
