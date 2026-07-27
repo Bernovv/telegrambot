@@ -2,6 +2,7 @@
 
 import { PageError, PageLoading } from "@/components/page-state";
 import { EventPublicationPanel } from "@/components/event-publication-panel";
+import { ParticipantsExportButton } from "@/components/participants-export-button";
 import { StatusPill } from "@/components/status-pill";
 import { AdminApiError, getEvent } from "@/lib/admin-api";
 import {
@@ -97,6 +98,10 @@ export default function EventDetailPage() {
         </div>
         {event.status === "draft" ? (
           <div className="heading-actions">
+            <ParticipantsExportButton
+              eventId={event.id}
+              eventSlug={event.slug}
+            />
             <Link className="secondary-button" href={`/events/${event.id}/scenario`}>
               <Workflow size={16} />
               Сценарий
@@ -119,7 +124,13 @@ export default function EventDetailPage() {
             </Link>
           </div>
         ) : (
-          <span className="readonly-badge">Только просмотр</span>
+          <div className="heading-actions">
+            <ParticipantsExportButton
+              eventId={event.id}
+              eventSlug={event.slug}
+            />
+            <span className="readonly-badge">Только просмотр</span>
+          </div>
         )}
       </div>
 
