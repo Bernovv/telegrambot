@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
   Module,
   PayloadTooLargeException,
   Post,
@@ -32,6 +33,8 @@ export interface TBankWebhookHandler {
 
 @Injectable()
 export class TBankWebhookService {
+  private readonly logger = new Logger(TBankWebhookService.name);
+
   constructor(
     @Inject(TBANK_WEBHOOK_CONFIG)
     private readonly config: TBankWebhookEndpointConfig,
@@ -50,7 +53,14 @@ export class TBankWebhookService {
     let event: VerifiedTBankWebhook;
     try {
       event = this.verifier.verifyWebhook(body);
-    } catch {
+    } catch (error) {
+      // Temporary diagnostic logging while validating the first live webhook in production.
+      // T-Bank webhook bodies never include full card numbers or CVV, only masked data, so this
+      // is safe to log. Remove once the launch-verification purchase succeeds end to end.
+      this.logger.error(
+        `tbank webhook rejected: ${error instanceof Error ? error.message : String(error)}`,
+        JSON.stringify(body)
+      );
       throw new UnauthorizedException();
     }
     await this.handler.execute(event, receivedAt);
