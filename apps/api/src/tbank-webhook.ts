@@ -13,10 +13,12 @@ import {
   UnauthorizedException
 } from "@nestjs/common";
 import type { VerifiedTBankWebhook } from "@ticket-platform/application";
+import type { Logger } from "@ticket-platform/observability";
 
 const TBANK_WEBHOOK_CONFIG = Symbol("TBANK_WEBHOOK_CONFIG");
 const TBANK_WEBHOOK_VERIFIER = Symbol("TBANK_WEBHOOK_VERIFIER");
 const TBANK_WEBHOOK_HANDLER = Symbol("TBANK_WEBHOOK_HANDLER");
+const TBANK_WEBHOOK_LOGGER = Symbol("TBANK_WEBHOOK_LOGGER");
 
 export interface TBankWebhookEndpointConfig {
   readonly bodyLimitBytes: number;
@@ -38,7 +40,9 @@ export class TBankWebhookService {
     @Inject(TBANK_WEBHOOK_VERIFIER)
     private readonly verifier: TBankWebhookVerifier,
     @Inject(TBANK_WEBHOOK_HANDLER)
-    private readonly handler: TBankWebhookHandler
+    private readonly handler: TBankWebhookHandler,
+    @Inject(TBANK_WEBHOOK_LOGGER)
+    private readonly logger: Logger
   ) {}
 
   async receive(body: unknown, receivedAt: Date): Promise<void> {
@@ -50,7 +54,14 @@ export class TBankWebhookService {
     let event: VerifiedTBankWebhook;
     try {
       event = this.verifier.verifyWebhook(body);
-    } catch {
+    } catch (error) {
+      // Temporary diagnostic logging while validating the first live webhook in production.
+      // T-Bank webhook bodies never include full card numbers or CVV, only masked data, so this
+      // is safe to log. Remove once the launch-verification purchase succeeds end to end.
+      this.logger.error("tbank webhook rejected", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        body
+      });
       throw new UnauthorizedException();
     }
     await this.handler.execute(event, receivedAt);
@@ -78,7 +89,8 @@ export class TBankWebhookModule {
   static register(
     config: TBankWebhookEndpointConfig,
     verifier: TBankWebhookVerifier,
-    handler: TBankWebhookHandler
+    handler: TBankWebhookHandler,
+    logger: Logger
   ): DynamicModule {
     return {
       module: TBankWebhookModule,
@@ -87,7 +99,8 @@ export class TBankWebhookModule {
         TBankWebhookService,
         { provide: TBANK_WEBHOOK_CONFIG, useValue: config },
         { provide: TBANK_WEBHOOK_VERIFIER, useValue: verifier },
-        { provide: TBANK_WEBHOOK_HANDLER, useValue: handler }
+        { provide: TBANK_WEBHOOK_HANDLER, useValue: handler },
+        { provide: TBANK_WEBHOOK_LOGGER, useValue: logger }
       ]
     };
   }
