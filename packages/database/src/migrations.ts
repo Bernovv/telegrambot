@@ -89,5 +89,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260728090000_participant_engagement",
     description: "Create participant questionnaire responses, reminder-cadence dedup, and admin broadcasts",
     destructive: false
+  },
+  {
+    id: "20260728120000_outbox_dispatch_retry_window",
+    description: "Widen the outbox dispatch retry window so a multi-hour Telegram outage cannot drop deliveries",
+    destructive: false
   }
 ];
