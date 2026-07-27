@@ -1,5 +1,6 @@
 "use client";
 
+import { loginErrorMessage } from "@/lib/login-error";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -31,7 +32,7 @@ export function LoginForm({ configured }: { readonly configured: boolean }) {
         password
       });
       if (signInError) {
-        setError("Не удалось войти. Проверьте данные и требования MFA.");
+        setError(loginErrorMessage(signInError));
         return;
       }
       router.replace("/mfa");
