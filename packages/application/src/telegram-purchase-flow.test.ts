@@ -196,7 +196,8 @@ function createFixture(overrides: { readonly catalog?: PublishedEventCatalog | n
     orderCreation,
     { async resolveUserId(externalUserId) { return `user-${externalUserId}`; } },
     { newId: () => `nonce-${nextId++}` },
-    "business-picnic-2026"
+    "business-picnic-2026",
+    { async transact(work) { return work(); } }
   );
 
   return { service, drafts, executedCommands };

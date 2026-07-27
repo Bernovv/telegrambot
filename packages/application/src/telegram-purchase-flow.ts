@@ -1,5 +1,5 @@
 import type { CreateOrderCommand, CreateOrderResult } from "@ticket-platform/contracts";
-import type { IdGenerator } from "./identity.js";
+import type { IdGenerator, UnitOfWork } from "./identity.js";
 import type { TelegramUserResolver } from "./phone.js";
 
 /**
@@ -86,7 +86,8 @@ export class TelegramPurchaseFlowService {
     private readonly orderCreation: OrderCreationPort,
     private readonly telegramUserResolver: TelegramUserResolver,
     private readonly idGenerator: IdGenerator,
-    private readonly eventSlug: string
+    private readonly eventSlug: string,
+    private readonly unitOfWork: UnitOfWork
   ) {}
 
   /** "Все включено" / "Стандартный" ask a quantity; family tariffs are a fixed 2 взрослых + ребёнок bundle. */
@@ -95,7 +96,9 @@ export class TelegramPurchaseFlowService {
     ticketType: PurchaseTicketType,
     now: Date
   ): Promise<PurchaseFlowResult> {
-    const userId = await this.telegramUserResolver.resolveUserId(externalUserId);
+    const userId = await this.unitOfWork.transact(
+      () => this.telegramUserResolver.resolveUserId(externalUserId)
+    );
     const draft: PurchaseDraft = {
       ticketType,
       step: "awaiting_quantity",
@@ -114,7 +117,9 @@ export class TelegramPurchaseFlowService {
   }
 
   async handleQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult> {
-    const userId = await this.telegramUserResolver.resolveUserId(externalUserId);
+    const userId = await this.unitOfWork.transact(
+      () => this.telegramUserResolver.resolveUserId(externalUserId)
+    );
     const draft = await this.draftRepository.getDraft(userId);
     if (!draft || draft.step !== "awaiting_quantity") {
       return { kind: "no_active_draft" };
@@ -132,7 +137,9 @@ export class TelegramPurchaseFlowService {
   }
 
   async promptChildQuantity(externalUserId: string): Promise<PurchaseFlowResult> {
-    const userId = await this.telegramUserResolver.resolveUserId(externalUserId);
+    const userId = await this.unitOfWork.transact(
+      () => this.telegramUserResolver.resolveUserId(externalUserId)
+    );
     const draft = await this.draftRepository.getDraft(userId);
     if (!draft || draft.step !== "awaiting_child_quantity" || draft.adultQuantity === null) {
       return { kind: "no_active_draft" };
@@ -141,7 +148,9 @@ export class TelegramPurchaseFlowService {
   }
 
   async skipChildTicket(externalUserId: string, now: Date): Promise<PurchaseFlowResult> {
-    const userId = await this.telegramUserResolver.resolveUserId(externalUserId);
+    const userId = await this.unitOfWork.transact(
+      () => this.telegramUserResolver.resolveUserId(externalUserId)
+    );
     const draft = await this.draftRepository.getDraft(userId);
     if (!draft || draft.adultQuantity === null) {
       return { kind: "no_active_draft" };
@@ -154,7 +163,9 @@ export class TelegramPurchaseFlowService {
     text: string,
     now: Date
   ): Promise<PurchaseFlowResult> {
-    const userId = await this.telegramUserResolver.resolveUserId(externalUserId);
+    const userId = await this.unitOfWork.transact(
+      () => this.telegramUserResolver.resolveUserId(externalUserId)
+    );
     const draft = await this.draftRepository.getDraft(userId);
     if (!draft || draft.step !== "awaiting_child_quantity" || draft.adultQuantity === null) {
       return { kind: "no_active_draft" };

@@ -159,7 +159,8 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     createOrderService,
     phonePersistence.telegramUserResolver,
     idGenerator,
-    config.purchaseEventSlug
+    config.purchaseEventSlug,
+    phonePersistence.unitOfWork
   );
   const referralBalanceService = new GetTelegramReferralBalanceService(
     createReferralBalancePersistence(pool).referralBalanceRepository

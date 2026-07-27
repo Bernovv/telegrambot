@@ -351,7 +351,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
         purchaseFlowOrderCreator,
         phonePersistence.telegramUserResolver,
         idGenerator,
-        config.purchaseEventSlug
+        config.purchaseEventSlug,
+        phonePersistence.unitOfWork
       );
       const referralBalanceService = new GetTelegramReferralBalanceService(
         createReferralBalancePersistence(pool).referralBalanceRepository
