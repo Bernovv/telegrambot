@@ -131,6 +131,7 @@ describe("PostgreSQL event catalog lookup", () => {
     assert.deepEqual(catalog, {
       eventId: "event-1",
       currency: "RUB",
+      offerUrl: null,
       products: {
         adult_standard: { id: "product-standard", maximumQuantityPerOrder: 50 },
         child: { id: "product-child", maximumQuantityPerOrder: 50 }

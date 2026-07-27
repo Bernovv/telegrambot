@@ -87,6 +87,7 @@ interface CatalogRow {
   readonly product_id: string;
   readonly product_type: string;
   readonly maximum_quantity_per_order: number;
+  readonly offer_url: string | null;
 }
 
 const CATALOG_PRODUCT_KEYS: readonly CatalogProductKey[] = [
@@ -105,9 +106,12 @@ export class PostgresEventCatalogRepository implements EventCatalogRepository {
     try {
       const result = await connection.query<CatalogRow>(
         `select e.id as event_id, p.currency, p.id as product_id, p.product_type,
-                p.maximum_quantity_per_order
+                p.maximum_quantity_per_order, offer.public_url as offer_url
          from public.events e
          join public.ticket_products p on p.event_id = e.id
+         left join public.offer_versions offer
+           on offer.id = e.active_offer_version_id
+          and offer.is_active = true
          where e.slug = $1
            and e.status = 'published'
            and p.is_active = true`,
@@ -130,6 +134,7 @@ export class PostgresEventCatalogRepository implements EventCatalogRepository {
       return {
         eventId: result.rows[0]?.event_id ?? "",
         currency: result.rows[0]?.currency ?? "RUB",
+        offerUrl: result.rows[0]?.offer_url ?? null,
         products
       };
     } finally {

@@ -154,6 +154,7 @@ function createFixture(overrides: { readonly catalog?: PublishedEventCatalog | n
     ? {
         eventId: "event-1",
         currency: "RUB",
+        offerUrl: "https://max-bot.biz-day.ru/offer/business-picnic-2026-v1.pdf",
         products: {
           adult_standard: { id: "adult_standard-id", maximumQuantityPerOrder: 50 },
           adult_vip: { id: "adult_vip-id", maximumQuantityPerOrder: 50 },

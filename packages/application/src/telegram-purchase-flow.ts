@@ -43,6 +43,8 @@ export type CatalogProductKey = PurchaseTicketType | "child";
 export interface PublishedEventCatalog {
   readonly eventId: string;
   readonly currency: string;
+  /** Ссылка на опубликованную версию оферты. null, если версия не заведена. */
+  readonly offerUrl: string | null;
   readonly products: Readonly<Partial<Record<CatalogProductKey, CatalogProduct>>>;
 }
 
@@ -70,6 +72,7 @@ export type PurchaseFlowResult =
       readonly totalKopecks: string;
       readonly walletAppliedKopecks: string;
       readonly externalDueKopecks: string;
+      readonly offerUrl: string | null;
     }
   | { readonly kind: "catalog_unavailable" }
   | { readonly kind: "no_active_draft" };
@@ -225,7 +228,8 @@ export class TelegramPurchaseFlowService {
       publicToken: result.publicToken,
       totalKopecks: result.totalKopecks,
       walletAppliedKopecks: result.walletAppliedKopecks,
-      externalDueKopecks: result.externalDueKopecks
+      externalDueKopecks: result.externalDueKopecks,
+      offerUrl: catalog.offerUrl
     };
   }
 }
