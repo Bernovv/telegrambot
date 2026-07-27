@@ -96,6 +96,8 @@ export interface ApiConfig extends AppConfig {
   readonly telegramWebhook: TelegramWebhookConfig;
   readonly orderTokenSecret: string;
   readonly orderNumberPrefix: string;
+  /** Single-event MVP: which published event's catalog "Купить билет" sells from in chat. */
+  readonly purchaseEventSlug: string;
   readonly tbankPayments: TBankPaymentsConfig;
 }
 
@@ -233,6 +235,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "ORDER_TOKEN_SECRET"
     ),
     orderNumberPrefix: parseOrderNumberPrefix(env.ORDER_NUMBER_PREFIX ?? "BP"),
+    purchaseEventSlug: env.TELEGRAM_PURCHASE_EVENT_SLUG ?? "business-picnic-2026",
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
 }

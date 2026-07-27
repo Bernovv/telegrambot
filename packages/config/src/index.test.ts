@@ -85,6 +85,7 @@ describe("loadApiConfig", () => {
     assert.equal(config.orderNumberPrefix, "BP");
     assert.match(config.orderTokenSecret, /^local-only/);
     assert.equal(config.tbankPayments.enabled, false);
+    assert.equal(config.purchaseEventSlug, "business-picnic-2026");
   });
 
   it("rejects unsafe T-Bank endpoints and incomplete credentials", () => {

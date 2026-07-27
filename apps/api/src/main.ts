@@ -17,6 +17,7 @@ import {
   GetReadinessService,
   GetAdminOrderService,
   GetAdminUserService,
+  GetTelegramReferralBalanceService,
   HandleTelegramContactService,
   HandleTelegramStartService,
   HmacOrderReferenceGenerator,
@@ -37,6 +38,8 @@ import {
   SaveAdminEventScenarioDraftService,
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
+  TelegramPurchaseFlowService,
+  TelegramQuestionnaireService,
   UpdateAdminEventGeneralService,
   UpdateAdminEventContentBlockService,
   UpdateAdminEventPricingRuleService,
@@ -55,12 +58,15 @@ import {
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
   createNodePostgresPool,
+  createParticipantQuestionnairePersistence,
   createParticipantsExportPersistence,
   createPostgresHealthProbes,
   createPhonePersistence,
+  createReferralBalancePersistence,
   createScenarioRuntimePersistence,
   createPaymentConfirmationPersistence,
   createOrderSalesPersistence,
+  createTelegramPurchaseFlowPersistence,
   createTelegramTicketAccessPersistence,
   createTelegramStartPersistence,
   createTBankPaymentPersistence,
@@ -327,6 +333,35 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           config.orderNumberPrefix
         )
       );
+      const purchaseFlowOrderSalesPersistence = createOrderSalesPersistence(pool, idGenerator);
+      const purchaseFlowOrderCreator = new CreateOrderService(
+        purchaseFlowOrderSalesPersistence.orderSalesRepository,
+        purchaseFlowOrderSalesPersistence.outboxWriter,
+        purchaseFlowOrderSalesPersistence.unitOfWork,
+        idGenerator,
+        new HmacOrderReferenceGenerator(
+          config.orderTokenSecret,
+          config.orderNumberPrefix
+        )
+      );
+      const purchaseFlowPersistence = createTelegramPurchaseFlowPersistence(pool);
+      const purchaseFlowService = new TelegramPurchaseFlowService(
+        purchaseFlowPersistence.purchaseDraftRepository,
+        purchaseFlowPersistence.eventCatalogRepository,
+        purchaseFlowOrderCreator,
+        phonePersistence.telegramUserResolver,
+        idGenerator,
+        config.purchaseEventSlug
+      );
+      const referralBalanceService = new GetTelegramReferralBalanceService(
+        createReferralBalancePersistence(pool).referralBalanceRepository
+      );
+      const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
+      const questionnaireService = new TelegramQuestionnaireService(
+        questionnairePersistence.questionnaireDraftRepository,
+        questionnairePersistence.questionnaireResponseRepository,
+        phonePersistence.telegramUserResolver
+      );
       const ticketPersistence = createTelegramTicketAccessPersistence(pool);
       const startService = new HandleTelegramStartService(
         startPersistence.identityRepository,
@@ -394,7 +429,10 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           ticketListService,
           ticketRedeliveryService,
           tbank?.initialization,
-          scenario
+          scenario,
+          purchaseFlowService,
+          referralBalanceService,
+          questionnaireService
         ),
         logger,
         { rethrowUpdateErrors: true }
