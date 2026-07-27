@@ -94,5 +94,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260728120000_outbox_dispatch_retry_window",
     description: "Widen the outbox dispatch retry window so a multi-hour Telegram outage cannot drop deliveries",
     destructive: false
+  },
+  {
+    id: "20260728140000_phone_bonus_campaign",
+    description: "Activate the 100 RUB phone bonus campaign outside development seeds",
+    destructive: false
   }
 ];
