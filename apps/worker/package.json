@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "node --import tsx --watch src/main.ts",
+    "dead-letter": "node --env-file=../../.env --import tsx src/dead-letter.ts",
+    "price": "node --env-file=../../.env --import tsx src/set-price.ts",
     "lint": "node ../../scripts/noop.mjs lint @ticket-platform/worker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/*.test.ts"

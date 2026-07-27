@@ -84,5 +84,14 @@ export default tseslint.config(
     rules: {
       "no-console": "off"
     }
+  },
+  {
+    // Служебные команды, которые запускают руками на сервере. У них нет ни логгера, ни места,
+    // куда писать: весь вывод предназначен человеку в терминале. В самих сервисах console
+    // по-прежнему запрещён.
+    files: ["apps/worker/src/dead-letter.ts", "apps/worker/src/set-price.ts"],
+    rules: {
+      "no-console": "off"
+    }
   }
 );
