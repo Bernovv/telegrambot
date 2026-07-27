@@ -60,6 +60,10 @@ export class PostgresFirstAdminBootstrapRepository implements FirstAdminBootstra
             record.reason
           ]
         );
+        // Идентификаторы подставляются дважды намеренно: `id` и `actor_admin_id` — uuid, а
+        // `request_id` и `target_id` — text. На одном параметре Postgres пытается вывести
+        // для него единый тип и отказывается ещё на разборе запроса, поэтому uuid-колонки и
+        // текстовые получают отдельные параметры.
         await connection.query(
           `insert into public.audit_log (
              id,
@@ -78,17 +82,19 @@ export class PostgresFirstAdminBootstrapRepository implements FirstAdminBootstra
              'super_admin',
              'admin.bootstrap',
              'admin_account',
-             $2,
              $3,
-             $4::jsonb,
-             $1,
-             $5
+             $4,
+             $5::jsonb,
+             $6,
+             $7
            )`,
           [
             record.auditId,
             record.adminId,
+            record.adminId,
             record.reason,
             JSON.stringify({ status: "active", roleCodes: ["super_admin"] }),
+            record.auditId,
             record.occurredAt
           ]
         );

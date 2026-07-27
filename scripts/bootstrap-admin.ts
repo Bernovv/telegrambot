@@ -56,8 +56,18 @@ function optional(name: string): string | null {
 }
 
 void main().catch((error: unknown) => {
+  // Скрипт запускают руками на сервере, и разбираться с ним будет человек, а не система
+  // логирования: одного имени класса ошибки для этого мало. Секретов в сообщениях драйвера
+  // Postgres нет — там имена таблиц и колонок, — а строку подключения мы не печатаем.
   console.error("Administrator bootstrap failed", {
-    errorType: error instanceof Error ? error.name : "UnknownError"
+    errorType: error instanceof Error ? error.name : "UnknownError",
+    message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && "code" in error
+      ? { code: (error as { readonly code?: unknown }).code }
+      : {}),
+    ...(error instanceof Error && "detail" in error
+      ? { detail: (error as { readonly detail?: unknown }).detail }
+      : {})
   });
   process.exitCode = 1;
 });

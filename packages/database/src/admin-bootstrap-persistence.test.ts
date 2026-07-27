@@ -25,6 +25,13 @@ describe("PostgresFirstAdminBootstrapRepository", () => {
     assert.match(connection.texts[3] ?? "", /insert into public\.admin_accounts/);
     assert.match(connection.texts[4] ?? "", /insert into public\.admin_role_grants/);
     assert.match(connection.texts[5] ?? "", /insert into public\.audit_log/);
+    // Ни один параметр не должен попадать одновременно в uuid-колонку и в текстовую:
+    // Postgres выводит для параметра единый тип и отвергает такой запрос целиком. Настоящая
+    // база в этих тестах не участвует, поэтому проверяем сам текст запроса.
+    const auditValues = connection.values[5] ?? [];
+    assert.equal(auditValues.length, 7);
+    assert.equal(auditValues[0], auditValues[5]);
+    assert.equal(auditValues[1], auditValues[2]);
     assert.equal(connection.released, true);
   });
 
@@ -52,6 +59,7 @@ describe("PostgresFirstAdminBootstrapRepository", () => {
 
 class RecordingConnection implements SqlConnection {
   readonly texts: string[] = [];
+  readonly values: (readonly unknown[])[] = [];
   released = false;
 
   constructor(
@@ -59,8 +67,12 @@ class RecordingConnection implements SqlConnection {
     private readonly failOn?: string
   ) {}
 
-  async query<TRow>(text: string): Promise<SqlQueryResult<TRow>> {
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
     this.texts.push(text);
+    this.values.push(values);
 
     if (this.failOn && text.includes(this.failOn)) {
       throw new Error("fixture failure");
