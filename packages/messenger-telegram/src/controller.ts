@@ -48,7 +48,6 @@ import {
   invalidChildQuantityReply,
   invalidQuantityReply,
   invalidQuestionnaireTextReply,
-  mainMenuButtons,
   menuReply,
   myBonusesReply,
   myBonusesUnavailableReply,
@@ -58,9 +57,11 @@ import {
   partnerLinkReply,
   partnerProgramReply,
   phoneRequiredReply,
+  requestPhoneReply,
   programAndPricingReply,
   questionnaireCompletedReply,
-  questionnaireUnavailableReply
+  questionnaireUnavailableReply,
+  welcomeReply
 } from "./scenario-content.js";
 
 export interface TelegramReplyModel {
@@ -241,24 +242,10 @@ export class TelegramUpdateController {
         return scenarioMessages;
       }
     }
-    const replies: TelegramReplyModel[] = [
-      {
-        text: [
-          "Привет! Это бот Бизнес-Прорыва.",
-          "",
-          "Здесь — закрытые мероприятия для предпринимателей и экспертов в Санкт-Петербурге.",
-          "",
-          "8-9 августа встречаемся на Бизнес-Пикнике на берегу Ладожского озера."
-        ].join("\n"),
-        inlineButtons: mainMenuButtons()
-      }
-    ];
+    const replies: TelegramReplyModel[] = [welcomeReply()];
 
     if (result.phoneRequired) {
-      replies.push({
-        text: "Чтобы закрепить заявку и не потерять билет, поделитесь номером телефона.",
-        keyboard: "request_contact"
-      });
+      replies.push(requestPhoneReply());
     }
 
     return replies;
@@ -705,7 +692,8 @@ function mapPurchaseFlowResult(result: PurchaseFlowResult): readonly TelegramRep
         adultQuantity: result.adultQuantity,
         childQuantity: result.childQuantity,
         totalKopecks: result.totalKopecks,
-        publicToken: result.publicToken
+        publicToken: result.publicToken,
+        offerUrl: result.offerUrl
       })];
     case "catalog_unavailable":
       return [catalogUnavailableReply()];

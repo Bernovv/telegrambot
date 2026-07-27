@@ -86,6 +86,20 @@ describe("scenario-content", () => {
     assert.deepEqual(reply.inlineButtons?.map((b) => b.text), ["Добавить детский билет", "Без детского билета"]);
   });
 
+  it("не подставляет ссылку, если версия оферты не опубликована", () => {
+    const reply = orderOfferStepReply({
+      ticketLabel: "Стандарт",
+      adultQuantity: 1,
+      childQuantity: 0,
+      totalKopecks: "249000",
+      publicToken: "token-abc",
+      offerUrl: null
+    });
+
+    assert.doesNotMatch(reply.text, /https:\/\//);
+    assert.match(reply.text, /условия оферты/);
+  });
+
   it("always offers a way to skip the child-ticket prompt", () => {
     assert.ok(enterChildQuantityReply().inlineButtons?.some((b) => b.text === "Без детского билета"));
   });
@@ -96,11 +110,12 @@ describe("scenario-content", () => {
       adultQuantity: 3,
       childQuantity: 2,
       totalKopecks: "597000",
-      publicToken: "token-abc"
+      publicToken: "token-abc",
+      offerUrl: "https://max-bot.biz-day.ru/offer/business-picnic-2026-v1.pdf"
     });
 
     assert.match(reply.text, /Сумма: 5970 ₽/);
-    assert.match(reply.text, /docs\.google\.com/);
+    assert.match(reply.text, /offer\/business-picnic-2026-v1\.pdf/);
     assert.deepEqual(reply.inlineButtons, [
       { text: "Я соглашаюсь с условиями оферты", callbackData: "offer_accept:token-abc" }
     ]);
@@ -114,7 +129,7 @@ describe("scenario-content", () => {
   it("builds a partner link from the referrer's own Telegram user ID, with no new storage", () => {
     const reply = partnerLinkReply("123456789", "business_proriv_bot");
 
-    assert.equal(reply.text, "Ваша партнёрская ссылка:\nhttps://t.me/business_proriv_bot?start=partner_123456789");
+    assert.equal(reply.text, "Ваша партнёрская ссылка 🔗\nhttps://t.me/business_proriv_bot?start=partner_123456789");
   });
 
   it("asks the user to try again later when the bot username is not yet known", () => {
