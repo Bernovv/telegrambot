@@ -342,7 +342,7 @@ export function verifyTBankPaymentWebhook(
   if (receivedTerminalKey !== terminalKey) {
     throw new Error("T-Bank webhook terminal is invalid");
   }
-  const providerPaymentId = digitsField(record, "PaymentId", 20);
+  const providerPaymentId = paymentIdField(record, "PaymentId", 20);
   const merchantOrderId = stringField(record, "OrderId", 50);
   if (!/^[A-Za-z0-9._-]{1,50}$/.test(merchantOrderId)) {
     throw new Error("T-Bank webhook merchant order ID is invalid");
@@ -395,7 +395,7 @@ function parseInitializationResponse(
     };
   }
 
-  const providerPaymentId = digitsField(record, "PaymentId", 20);
+  const providerPaymentId = paymentIdField(record, "PaymentId", 20);
   const paymentUrl = httpsUrlField(record, "PaymentURL", 2_048);
   return {
     initialized: true,
@@ -439,7 +439,7 @@ function parseCheckOrderResponse(
       ? "0"
       : String(integerField(payment, "ErrorCode", 9_999_999_999));
     return {
-      providerPaymentId: digitsField(payment, "PaymentId", 20),
+      providerPaymentId: paymentIdField(payment, "PaymentId", 20),
       amountKopecks: BigInt(integerField(payment, "Amount", 9_999_999_999)),
       status: parseStatus(payment.Status),
       success: successValue === "true",

@@ -60,6 +60,31 @@ describe("T-Bank token contract", () => {
       /verification failed/
     );
   });
+
+  it("accepts a real-world webhook where PaymentId is a JSON number", () => {
+    const payloadWithoutToken = {
+      TerminalKey: "1234567890DEMO",
+      OrderId: "tb_000000_1",
+      Success: true,
+      Status: "CONFIRMED",
+      PaymentId: 8934558028,
+      ErrorCode: "0",
+      Amount: 1000,
+      CardId: 692658954,
+      Pan: "220070******9183",
+      ExpDate: "0935"
+    };
+    const token = createTBankToken(payloadWithoutToken, "11111111111");
+
+    const event = verifyTBankPaymentWebhook(
+      { ...payloadWithoutToken, Token: token },
+      "1234567890DEMO",
+      "11111111111"
+    );
+
+    assert.equal(event.providerPaymentId, "8934558028");
+    assert.equal(event.status, "CONFIRMED");
+  });
 });
 
 describe("TBankPaymentProvider", () => {
