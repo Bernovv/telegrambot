@@ -2,6 +2,7 @@ export const ADMIN_PERMISSIONS = [
   "users.read",
   "users.write",
   "contacts.export",
+  "participants.export",
   "events.read",
   "events.write",
   "events.publish",

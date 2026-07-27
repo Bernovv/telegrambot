@@ -61,6 +61,11 @@ export const migrations: readonly MigrationDescriptor[] = [
     destructive: false
   },
   {
+    id: "20260726090000_business_picnic_2026_catalog_seed",
+    description: "Seed the Business Picnic 2026 event, ticket products, pricing rules, and offer version",
+    destructive: false
+  },
+  {
     id: "20260726120000_scenario_versions",
     description: "Create immutable versioned event scenarios, nodes, and edges",
     destructive: false
@@ -73,6 +78,16 @@ export const migrations: readonly MigrationDescriptor[] = [
   {
     id: "20260726200000_application_migration_checksums",
     description: "Create append-only SHA-256 evidence for applied application migrations",
+    destructive: false
+  },
+  {
+    id: "20260727090000_referral_program",
+    description: "Create referral tier configuration and attribution, seeded with the 7/10/15% default tiers",
+    destructive: false
+  },
+  {
+    id: "20260728090000_participant_engagement",
+    description: "Create participant questionnaire responses, reminder-cadence dedup, and admin broadcasts",
     destructive: false
   }
 ];

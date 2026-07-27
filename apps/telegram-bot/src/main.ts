@@ -3,6 +3,7 @@ import {
   AcceptTelegramOfferService,
   AdvanceTelegramScenarioService,
   CreateOrderService,
+  GetTelegramReferralBalanceService,
   HandleTelegramContactService,
   HandleTelegramStartService,
   InitializeTelegramTBankPaymentService,
@@ -11,6 +12,8 @@ import {
   ResumeTelegramScenarioAfterOfferService,
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
+  TelegramPurchaseFlowService,
+  TelegramQuestionnaireService,
   HmacOrderReferenceGenerator,
   type IdGenerator
 } from "@ticket-platform/application";
@@ -18,9 +21,13 @@ import { loadTelegramBotConfig } from "@ticket-platform/config";
 import {
   createOfferAcceptancePersistence,
   createNodePostgresPool,
+  createOrderSalesPersistence,
+  createParticipantQuestionnairePersistence,
   createPhonePersistence,
+  createReferralBalancePersistence,
   createScenarioRuntimePersistence,
   createTBankPaymentPersistence,
+  createTelegramPurchaseFlowPersistence,
   createTelegramTicketAccessPersistence,
   createTelegramStartPersistence
 } from "@ticket-platform/database";
@@ -137,6 +144,32 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
       scenarioOrderCreator
     )
   };
+  const orderSalesPersistence = createOrderSalesPersistence(pool, idGenerator);
+  const createOrderService = new CreateOrderService(
+    orderSalesPersistence.orderSalesRepository,
+    orderSalesPersistence.outboxWriter,
+    orderSalesPersistence.unitOfWork,
+    idGenerator,
+    new HmacOrderReferenceGenerator(config.orderTokenSecret, config.orderNumberPrefix)
+  );
+  const purchaseFlowPersistence = createTelegramPurchaseFlowPersistence(pool);
+  const purchaseFlowService = new TelegramPurchaseFlowService(
+    purchaseFlowPersistence.purchaseDraftRepository,
+    purchaseFlowPersistence.eventCatalogRepository,
+    createOrderService,
+    phonePersistence.telegramUserResolver,
+    idGenerator,
+    config.purchaseEventSlug
+  );
+  const referralBalanceService = new GetTelegramReferralBalanceService(
+    createReferralBalancePersistence(pool).referralBalanceRepository
+  );
+  const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
+  const questionnaireService = new TelegramQuestionnaireService(
+    questionnairePersistence.questionnaireDraftRepository,
+    questionnairePersistence.questionnaireResponseRepository,
+    phonePersistence.telegramUserResolver
+  );
   const controller = new TelegramUpdateController(
     startService,
     contactService,
@@ -144,7 +177,10 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     ticketListService,
     ticketRedeliveryService,
     paymentInitializationService,
-    scenario
+    scenario,
+    purchaseFlowService,
+    referralBalanceService,
+    questionnaireService
   );
   const bot = createTelegramBot(config.telegramBotToken, controller, logger);
   const stop = () => {

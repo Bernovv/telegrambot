@@ -31,6 +31,8 @@ export interface TelegramBotConfig extends AppConfig {
   readonly databasePoolMax: number;
   readonly orderTokenSecret: string;
   readonly orderNumberPrefix: string;
+  /** Single-event MVP: which published event's catalog "Купить билет" sells from in chat. */
+  readonly purchaseEventSlug: string;
   readonly tbankPayments: TBankPaymentsConfig;
 }
 
@@ -108,6 +110,8 @@ export interface WorkerConfig extends AppConfig {
   readonly workerHeartbeatIntervalMs: number;
   readonly orderExpiryBatchSize: number;
   readonly orderExpiryPollIntervalMs: number;
+  readonly reminderBatchSize: number;
+  readonly reminderPollIntervalMs: number;
   readonly tbankReconciliation: TBankReconciliationConfig;
   readonly telegramNotifications:
     | { readonly enabled: false }
@@ -149,6 +153,7 @@ export function loadTelegramBotConfig(env: NodeJS.ProcessEnv): TelegramBotConfig
       "ORDER_TOKEN_SECRET"
     ),
     orderNumberPrefix: parseOrderNumberPrefix(env.ORDER_NUMBER_PREFIX ?? "BP"),
+    purchaseEventSlug: env.TELEGRAM_PURCHASE_EVENT_SLUG ?? "business-picnic-2026",
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
 }
@@ -353,6 +358,18 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       "ORDER_EXPIRY_POLL_INTERVAL_MS",
       1_000,
       60_000
+    ),
+    reminderBatchSize: parseBoundedInteger(
+      env.EVENT_REMINDER_BATCH_SIZE ?? "50",
+      "EVENT_REMINDER_BATCH_SIZE",
+      1,
+      500
+    ),
+    reminderPollIntervalMs: parseBoundedInteger(
+      env.EVENT_REMINDER_POLL_INTERVAL_MS ?? "300000",
+      "EVENT_REMINDER_POLL_INTERVAL_MS",
+      60_000,
+      3_600_000
     ),
     tbankReconciliation,
     telegramNotifications

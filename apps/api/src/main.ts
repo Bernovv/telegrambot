@@ -5,12 +5,14 @@ import {
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
   ConfirmPaymentService,
+  CreateAdminBroadcastService,
   CreateAdminEventContentBlockService,
   CreateAdminEventPricingRuleService,
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
   CreateOrderService,
   DeactivateAdminEventOfferService,
+  ExportParticipantsCsvService,
   GetAdminEventService,
   GetReadinessService,
   GetAdminOrderService,
@@ -44,6 +46,7 @@ import {
 import { loadApiConfig } from "@ticket-platform/config";
 import {
   createOfferAcceptancePersistence,
+  createAdminBroadcastPersistence,
   createAdminEventContentManagementPersistence,
   createAdminEventManagementPersistence,
   createAdminEventOfferManagementPersistence,
@@ -52,6 +55,7 @@ import {
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
   createNodePostgresPool,
+  createParticipantsExportPersistence,
   createPostgresHealthProbes,
   createPhonePersistence,
   createScenarioRuntimePersistence,
@@ -206,6 +210,22 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           };
         })()
       : undefined;
+    const participantsExport = adminAuth
+      ? new ExportParticipantsCsvService(
+          createParticipantsExportPersistence(pool)
+        )
+      : undefined;
+    const adminBroadcast = adminAuth
+      ? (() => {
+          const persistence = createAdminBroadcastPersistence(pool);
+          return new CreateAdminBroadcastService(
+            persistence.adminBroadcastRepository,
+            persistence.outboxWriter,
+            persistence.unitOfWork,
+            idGenerator
+          );
+        })()
+      : undefined;
     const orders = adminAuth
       ? (() => {
           const persistence = createOrderSalesPersistence(pool, idGenerator);
@@ -229,7 +249,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             persistence.outboxWriter,
             persistence.unitOfWork,
             idGenerator,
-            new HmacTicketReferenceGenerator(config.orderTokenSecret)
+            new HmacTicketReferenceGenerator(config.orderTokenSecret),
+            persistence.referralCommissionRepository
           );
         })()
       : undefined;
@@ -252,7 +273,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             confirmationPersistence.outboxWriter,
             confirmationPersistence.unitOfWork,
             idGenerator,
-            new HmacTicketReferenceGenerator(config.orderTokenSecret)
+            new HmacTicketReferenceGenerator(config.orderTokenSecret),
+            confirmationPersistence.referralCommissionRepository
           );
           const refundWebhook = new HandleTBankRefundWebhookService(
             refundPersistence,
@@ -396,6 +418,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(manualPayments ? { manualPayments } : {}),
       ...(adminOperations ? { adminOperations } : {}),
       ...(adminEvents ? { adminEvents } : {}),
+      ...(participantsExport ? { participantsExport } : {}),
+      ...(adminBroadcast ? { adminBroadcast } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

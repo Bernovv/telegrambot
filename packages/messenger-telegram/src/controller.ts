@@ -23,6 +23,44 @@ import type {
   TelegramTicketSummary
 } from "@ticket-platform/contracts";
 import { encodeScenarioCallback } from "./scenario-callback.js";
+import type {
+  PurchaseFlowResult,
+  PurchaseTicketType,
+  QuestionnaireFlowResult,
+  QuestionnaireFocusArea,
+  QuestionnaireStage,
+  ReferralBalanceResult
+} from "@ticket-platform/application";
+import {
+  askCityReply,
+  askFocusAreaReply,
+  askJoinChatReply,
+  askNicheReply,
+  askStageReply,
+  askWishReply,
+  catalogUnavailableReply,
+  chooseFamilyTicketReply,
+  chooseTicketReply,
+  contactUsReply,
+  enterChildQuantityReply,
+  enterQuantityReply,
+  faqReply,
+  invalidChildQuantityReply,
+  invalidQuantityReply,
+  invalidQuestionnaireTextReply,
+  mainMenuButtons,
+  menuReply,
+  myBonusesReply,
+  myBonusesUnavailableReply,
+  noActiveDraftReply,
+  orderInterimSummaryReply,
+  orderOfferStepReply,
+  partnerLinkReply,
+  partnerProgramReply,
+  programAndPricingReply,
+  questionnaireCompletedReply,
+  questionnaireUnavailableReply
+} from "./scenario-content.js";
 
 export interface TelegramReplyModel {
   readonly text: string;
@@ -93,6 +131,36 @@ export interface TelegramScenarioUseCases {
   readonly offerAccepted?: TelegramScenarioOfferAcceptedUseCase;
 }
 
+export interface TelegramPurchaseFlowUseCase {
+  selectTicketType(
+    externalUserId: string,
+    ticketType: PurchaseTicketType,
+    now: Date
+  ): Promise<PurchaseFlowResult>;
+  handleQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult>;
+  promptChildQuantity(externalUserId: string): Promise<PurchaseFlowResult>;
+  skipChildTicket(externalUserId: string, now: Date): Promise<PurchaseFlowResult>;
+  handleChildQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult>;
+}
+
+export interface TelegramReferralBalanceUseCase {
+  execute(query: { readonly externalUserId: string }): Promise<ReferralBalanceResult>;
+}
+
+export interface TelegramQuestionnaireUseCase {
+  handleText(externalUserId: string, text: string, now: Date): Promise<QuestionnaireFlowResult>;
+  handleStageChoice(externalUserId: string, stage: QuestionnaireStage): Promise<QuestionnaireFlowResult>;
+  handleFocusAreaChoice(
+    externalUserId: string,
+    focusArea: QuestionnaireFocusArea
+  ): Promise<QuestionnaireFlowResult>;
+  handleJoinChatChoice(
+    externalUserId: string,
+    joinChat: boolean,
+    now: Date
+  ): Promise<QuestionnaireFlowResult>;
+}
+
 export interface TelegramOfferAcceptanceView {
   readonly callbackText: string;
   readonly replacementText?: string;
@@ -113,7 +181,10 @@ export class TelegramUpdateController {
     private readonly listTickets: TelegramTicketListUseCase,
     private readonly requestTicketRedelivery: TelegramTicketRedeliveryUseCase,
     private readonly initializePayment?: TelegramPaymentInitializationUseCase,
-    private readonly scenario?: TelegramScenarioUseCases
+    private readonly scenario?: TelegramScenarioUseCases,
+    private readonly purchaseFlow?: TelegramPurchaseFlowUseCase,
+    private readonly referralBalance?: TelegramReferralBalanceUseCase,
+    private readonly questionnaire?: TelegramQuestionnaireUseCase
   ) {}
 
   async onStart(command: HandleTelegramStartCommand): Promise<readonly TelegramReplyModel[]> {
@@ -151,11 +222,13 @@ export class TelegramUpdateController {
     const replies: TelegramReplyModel[] = [
       {
         text: [
-          "Привет! Это бот Бизнес-Прорыв.",
+          "Привет! Это бот Бизнес-Прорыва.",
           "",
-          "Здесь можно узнать о мероприятиях и приобрести билеты."
+          "Здесь — закрытые мероприятия для предпринимателей и экспертов в Санкт-Петербурге.",
+          "",
+          "8-9 августа встречаемся на Бизнес-Пикнике на берегу Ладожского озера."
         ].join("\n"),
-        inlineButtons: [{ text: "Мои билеты", callbackData: "my_tickets" }]
+        inlineButtons: mainMenuButtons()
       }
     ];
 
@@ -218,6 +291,162 @@ export class TelegramUpdateController {
       });
     }
     return replies;
+  }
+
+  /** "Назад" / повторный показ главного меню — без повторного обращения к идентити-сервису. */
+  onMenu(): readonly TelegramReplyModel[] {
+    return [menuReply()];
+  }
+
+  onProgramAndPricing(): readonly TelegramReplyModel[] {
+    return [programAndPricingReply()];
+  }
+
+  onFaq(): readonly TelegramReplyModel[] {
+    return [faqReply()];
+  }
+
+  onContactUs(): readonly TelegramReplyModel[] {
+    return [contactUsReply()];
+  }
+
+  onBuyTicket(): readonly TelegramReplyModel[] {
+    return [chooseTicketReply()];
+  }
+
+  onChooseFamilyTicket(): readonly TelegramReplyModel[] {
+    return [chooseFamilyTicketReply()];
+  }
+
+  onPartnerProgram(): readonly TelegramReplyModel[] {
+    return [partnerProgramReply()];
+  }
+
+  onGetPartnerLink(externalUserId: string, botUsername: string | null): readonly TelegramReplyModel[] {
+    return [partnerLinkReply(externalUserId, botUsername)];
+  }
+
+  async onMyBonuses(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!this.referralBalance) {
+      return [myBonusesUnavailableReply()];
+    }
+
+    const result = await this.referralBalance.execute({ externalUserId });
+    if (!result.identityFound) {
+      return [myBonusesUnavailableReply()];
+    }
+
+    return [myBonusesReply({
+      availableKopecks: result.availableKopecks,
+      qualifyingReferrals: result.qualifyingReferrals,
+      tierNumber: result.tierNumber,
+      percentBasisPoints: result.percentBasisPoints,
+      referralsToNextTier: result.referralsToNextTier
+    })];
+  }
+
+  async onSelectTicketType(
+    externalUserId: string,
+    ticketType: PurchaseTicketType,
+    now: Date
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.purchaseFlow) {
+      return [catalogUnavailableReply()];
+    }
+    return mapPurchaseFlowResult(await this.purchaseFlow.selectTicketType(externalUserId, ticketType, now));
+  }
+
+  /**
+   * Free-typed chat text also reaches every other feature (a future "Связаться с нами" question,
+   * for instance), so this stays silent (`[]`) when there is no purchase draft waiting on a
+   * number — only an explicit purchase-flow button click (onSelectTicketType, onSkipChildTicket,
+   * onAddChildTicketPrompt) shows an explicit "draft was lost" message.
+   */
+  async onQuantityText(externalUserId: string, text: string, now: Date): Promise<readonly TelegramReplyModel[]> {
+    if (!this.purchaseFlow) {
+      return [];
+    }
+    const result = await this.purchaseFlow.handleQuantityText(externalUserId, text, now);
+    return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
+  }
+
+  async onAddChildTicketPrompt(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+    if (!this.purchaseFlow) {
+      return [catalogUnavailableReply()];
+    }
+    return mapPurchaseFlowResult(await this.purchaseFlow.promptChildQuantity(externalUserId));
+  }
+
+  async onSkipChildTicket(externalUserId: string, now: Date): Promise<readonly TelegramReplyModel[]> {
+    if (!this.purchaseFlow) {
+      return [catalogUnavailableReply()];
+    }
+    return mapPurchaseFlowResult(await this.purchaseFlow.skipChildTicket(externalUserId, now));
+  }
+
+  async onChildQuantityText(
+    externalUserId: string,
+    text: string,
+    now: Date
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.purchaseFlow) {
+      return [];
+    }
+    const result = await this.purchaseFlow.handleChildQuantityText(externalUserId, text, now);
+    return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
+  }
+
+  /**
+   * Same silence convention as onQuantityText/onChildQuantityText: free text also reaches the
+   * questionnaire, so it stays silent (`[]`) when there's no in-progress questionnaire draft —
+   * only an explicit button tap (onQuestionnaireStageChoice etc.) shows a "draft unavailable" reply.
+   */
+  async onQuestionnaireText(
+    externalUserId: string,
+    text: string,
+    now: Date
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.questionnaire) {
+      return [];
+    }
+    const result = await this.questionnaire.handleText(externalUserId, text, now);
+    return result.kind === "no_active_draft" ? [] : mapQuestionnaireResult(result);
+  }
+
+  async onQuestionnaireStageChoice(
+    externalUserId: string,
+    stage: QuestionnaireStage
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.questionnaire) {
+      return [questionnaireUnavailableReply()];
+    }
+    return mapQuestionnaireResult(await this.questionnaire.handleStageChoice(externalUserId, stage));
+  }
+
+  async onQuestionnaireFocusAreaChoice(
+    externalUserId: string,
+    focusArea: QuestionnaireFocusArea
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.questionnaire) {
+      return [questionnaireUnavailableReply()];
+    }
+    return mapQuestionnaireResult(
+      await this.questionnaire.handleFocusAreaChoice(externalUserId, focusArea)
+    );
+  }
+
+  async onQuestionnaireJoinChatChoice(
+    externalUserId: string,
+    joinChat: boolean,
+    now: Date
+  ): Promise<readonly TelegramReplyModel[]> {
+    if (!this.questionnaire) {
+      return [questionnaireUnavailableReply()];
+    }
+    return mapQuestionnaireResult(
+      await this.questionnaire.handleJoinChatChoice(externalUserId, joinChat, now),
+      joinChat
+    );
   }
 
   async onContact(command: HandleTelegramContactCommand): Promise<readonly TelegramReplyModel[]> {
@@ -413,6 +642,62 @@ function scenarioReplies(
         }
       : {})
   }));
+}
+
+function mapPurchaseFlowResult(result: PurchaseFlowResult): readonly TelegramReplyModel[] {
+  switch (result.kind) {
+    case "ask_quantity":
+      return [enterQuantityReply(result.ticketLabel)];
+    case "invalid_quantity":
+      return [invalidQuantityReply()];
+    case "interim_summary":
+      return [orderInterimSummaryReply(result.ticketLabel, result.adultQuantity)];
+    case "ask_child_quantity":
+      return [enterChildQuantityReply()];
+    case "invalid_child_quantity":
+      return [invalidChildQuantityReply()];
+    case "order_created":
+      return [orderOfferStepReply({
+        ticketLabel: result.ticketLabel,
+        adultQuantity: result.adultQuantity,
+        childQuantity: result.childQuantity,
+        totalKopecks: result.totalKopecks,
+        publicToken: result.publicToken
+      })];
+    case "catalog_unavailable":
+      return [catalogUnavailableReply()];
+    case "no_active_draft":
+      return [noActiveDraftReply()];
+  }
+}
+
+function mapQuestionnaireResult(
+  result: QuestionnaireFlowResult,
+  joinChatForCompleted?: boolean
+): readonly TelegramReplyModel[] {
+  switch (result.kind) {
+    case "ask_name":
+      // Q1 is asked by the intro push message (notification-delivery.ts), never by this mapper.
+      return [];
+    case "ask_city":
+      return [askCityReply()];
+    case "ask_niche":
+      return [askNicheReply()];
+    case "ask_stage":
+      return [askStageReply()];
+    case "ask_wish":
+      return [askWishReply()];
+    case "ask_focus_area":
+      return [askFocusAreaReply()];
+    case "ask_join_chat":
+      return [askJoinChatReply()];
+    case "invalid_text":
+      return [invalidQuestionnaireTextReply()];
+    case "completed":
+      return [questionnaireCompletedReply(joinChatForCompleted ?? false)];
+    case "no_active_draft":
+      return [questionnaireUnavailableReply()];
+  }
 }
 
 function formatTicketSummary(ticket: TelegramTicketSummary): string {

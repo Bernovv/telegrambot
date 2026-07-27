@@ -10,14 +10,17 @@ import {
   ReconcileTBankPaymentsBatchService,
   ReconcileTBankRefundsBatchService,
   ResumeTelegramScenarioAfterPaymentService,
+  SendEventRemindersBatchService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
 import type { DomainEventJobV1 } from "@ticket-platform/contracts";
 import {
+  createEventReminderPersistence,
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
   createOrderExpiryPersistence,
+  createParticipantQuestionnairePersistence,
   createPaymentConfirmationPersistence,
   createScenarioRuntimePersistence,
   createTBankReconciliationPersistence,
@@ -75,6 +78,13 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     new PostgresOutboxDispatchRepository(pool),
     new PgBossOutboxPublisher(boss)
   );
+  const reminderPersistence = createEventReminderPersistence(pool, idGenerator);
+  const sendReminders = new SendEventRemindersBatchService(
+    reminderPersistence.eventReminderRepository,
+    reminderPersistence.outboxWriter,
+    reminderPersistence.unitOfWork,
+    idGenerator
+  );
   const tbankReconciliation = config.tbankReconciliation.enabled
     ? (() => {
         const provider = new TBankPaymentProvider({
@@ -94,7 +104,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           idGenerator,
           new HmacTicketReferenceGenerator(
             config.tbankReconciliation.ticketTokenSecret
-          )
+          ),
+          confirmationPersistence.referralCommissionRepository
         );
         return {
           payments: new ReconcileTBankPaymentsBatchService(
@@ -115,14 +126,18 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let currentJobId: string | null = null;
   let heartbeatInFlight = false;
   let nextOrderExpirySweepAt = 0;
+  let nextReminderSweepAt = 0;
   let nextTBankReconciliationSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
+  let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
+  const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
+    reminderWorkload,
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -155,6 +170,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           runtime: "node",
           queueDriver: "pg-boss",
           lastOrderExpirySweepAt,
+          lastReminderSweepAt,
           lastTBankReconciliationSweepAt
         }
       });
@@ -178,6 +194,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     const notificationConfig = config.telegramNotifications;
     if (notificationConfig.enabled) {
       const notificationPersistence = createNotificationDeliveryPersistence(pool);
+      const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
       const scenarioPersistence = createScenarioRuntimePersistence(pool, idGenerator);
       const scenarioPaymentContinuation =
         new ResumeTelegramScenarioAfterPaymentService(
@@ -194,7 +211,11 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         new QrTicketPngRenderer(),
         idGenerator,
         notificationConfig.adminChatId,
-        scenarioPaymentContinuation
+        scenarioPaymentContinuation,
+        notificationPersistence.notificationContexts,
+        questionnairePersistence.questionnaireDraftRepository,
+        notificationPersistence.notificationContexts,
+        notificationPersistence.notificationContexts
       );
 
       await boss.work<DomainEventJobV1>(
@@ -294,6 +315,31 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextOrderExpirySweepAt = Date.now() + config.orderExpiryPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextReminderSweepAt) {
+        currentJobId = reminderWorkload;
+
+        try {
+          const result = await sendReminders.execute({
+            at: new Date(),
+            batchSize: config.reminderBatchSize
+          });
+          lastReminderSweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("event reminder batch processed", {
+              claimed: result.claimed
+            });
+          }
+        } catch (error) {
+          logger.error("event reminder batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextReminderSweepAt = Date.now() + config.reminderPollIntervalMs;
         }
       }
 

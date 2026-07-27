@@ -94,17 +94,54 @@ export function createTelegramBot(
     }
   });
 
+  /**
+   * Scenario-driven dialogs (per-event, admin-published) take priority when configured; otherwise
+   * falls back to the hardcoded purchase flow (headcount, then optional child headcount) and then
+   * the participant questionnaire (name/city/niche/wish). Silent when none has an active draft
+   * waiting -- see onScenarioInput/onQuantityText/onChildQuantityText/onQuestionnaireText.
+   */
   bot.on("message:text", async (ctx) => {
     if (!ctx.from || ctx.chat.type !== "private") {
       return;
     }
-    const replies = await controller.onScenarioInput({
-      senderExternalUserId: String(ctx.from.id),
+
+    const externalUserId = String(ctx.from.id);
+
+    const scenarioReplies = await controller.onScenarioInput({
+      senderExternalUserId: externalUserId,
       updateId: String(ctx.update.update_id),
       text: ctx.message.text,
       occurredAt: new Date(ctx.message.date * 1_000)
     });
-    await sendReplies(ctx.reply.bind(ctx), replies);
+    if (scenarioReplies.length > 0) {
+      await sendReplies(ctx.reply.bind(ctx), scenarioReplies);
+      return;
+    }
+
+    const quantityReplies = await controller.onQuantityText(externalUserId, ctx.message.text, new Date());
+    if (quantityReplies.length > 0) {
+      await sendReplies(ctx.reply.bind(ctx), quantityReplies);
+      return;
+    }
+
+    const childQuantityReplies = await controller.onChildQuantityText(
+      externalUserId,
+      ctx.message.text,
+      new Date()
+    );
+    if (childQuantityReplies.length > 0) {
+      await sendReplies(ctx.reply.bind(ctx), childQuantityReplies);
+      return;
+    }
+
+    const questionnaireReplies = await controller.onQuestionnaireText(
+      externalUserId,
+      ctx.message.text,
+      new Date()
+    );
+    if (questionnaireReplies.length > 0) {
+      await sendReplies(ctx.reply.bind(ctx), questionnaireReplies);
+    }
   });
 
   bot.callbackQuery(/^offer_accept:([A-Za-z0-9_-]{43})$/, async (ctx) => {
@@ -196,6 +233,120 @@ export function createTelegramBot(
       await sendReplies(ctx.reply.bind(ctx), view.replies);
     }
   );
+
+  bot.callbackQuery(["program", "pricing"], async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onProgramAndPricing());
+  });
+
+  bot.callbackQuery("faq", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onFaq());
+  });
+
+  bot.callbackQuery("contact_us", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onContactUs());
+  });
+
+  bot.callbackQuery("buy_ticket", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onBuyTicket());
+  });
+
+  bot.callbackQuery("ticket_family", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onChooseFamilyTicket());
+  });
+
+  bot.callbackQuery(["ticket_vip", "ticket_standard"], async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const ticketType = ctx.callbackQuery.data === "ticket_vip" ? "adult_vip" : "adult_standard";
+    const replies = await controller.onSelectTicketType(String(ctx.from.id), ticketType, new Date());
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery(["ticket_family_vip", "ticket_family_standard"], async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const ticketType = ctx.callbackQuery.data === "ticket_family_vip" ? "family_vip" : "family_standard";
+    const replies = await controller.onSelectTicketType(String(ctx.from.id), ticketType, new Date());
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery("add_child_ticket", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const replies = await controller.onAddChildTicketPrompt(String(ctx.from.id));
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery("skip_child_ticket", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const replies = await controller.onSkipChildTicket(String(ctx.from.id), new Date());
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery("partner_program", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onPartnerProgram());
+  });
+
+  bot.callbackQuery("get_partner_link", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const replies = controller.onGetPartnerLink(String(ctx.from.id), bot.botInfo?.username ?? null);
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery("my_bonuses", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const replies = await controller.onMyBonuses(String(ctx.from.id));
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery(
+    /^anketa_stage:(only_building_product|have_product_or_service|have_clients_want_structure|want_more_sales|want_environment_reset)$/,
+    async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const stage = ctx.match[1] as
+        | "only_building_product"
+        | "have_product_or_service"
+        | "have_clients_want_structure"
+        | "want_more_sales"
+        | "want_environment_reset";
+      const replies = await controller.onQuestionnaireStageChoice(String(ctx.from.id), stage);
+      await sendReplies(ctx.reply.bind(ctx), replies);
+    }
+  );
+
+  bot.callbackQuery(
+    /^anketa_focus:(packaging|content|sales|positioning|energy_resource|environment)$/,
+    async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const focusArea = ctx.match[1] as
+        | "packaging"
+        | "content"
+        | "sales"
+        | "positioning"
+        | "energy_resource"
+        | "environment";
+      const replies = await controller.onQuestionnaireFocusAreaChoice(String(ctx.from.id), focusArea);
+      await sendReplies(ctx.reply.bind(ctx), replies);
+    }
+  );
+
+  bot.callbackQuery(/^anketa_join_chat:(yes|no)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const replies = await controller.onQuestionnaireJoinChatChoice(
+      String(ctx.from.id),
+      ctx.match[1] === "yes",
+      new Date()
+    );
+    await sendReplies(ctx.reply.bind(ctx), replies);
+  });
+
+  bot.callbackQuery(["start", "back_to_program"], async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendReplies(ctx.reply.bind(ctx), controller.onMenu());
+  });
 
   bot.callbackQuery("my_tickets", async (ctx) => {
     if (

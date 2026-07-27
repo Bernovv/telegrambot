@@ -1,7 +1,13 @@
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
+import { startQuestionnaireDraft, type QuestionnaireDraftRepository } from "./participant-questionnaire.js";
 
-export type NotificationDeliveryKind = "ticket_user" | "admin_purchase";
+export type NotificationDeliveryKind =
+  | "ticket_user"
+  | "admin_purchase"
+  | "questionnaire_prompt"
+  | "event_reminder"
+  | "admin_broadcast";
 
 export interface TicketDeliveryContext {
   readonly orderId: string;
@@ -30,6 +36,47 @@ export interface AdminPurchaseContext {
 export interface ScenarioDeliveryContext {
   readonly recipientExternalUserId: string | null;
   readonly recipientBlocked: boolean;
+}
+
+export interface QuestionnaireIntroContext {
+  readonly recipientExternalUserId: string | null;
+  readonly recipientBlocked: boolean;
+  readonly eventTitle: string;
+}
+
+export interface QuestionnaireIntroContextRepository {
+  getQuestionnaireIntroContext(orderId: string): Promise<QuestionnaireIntroContext | null>;
+}
+
+export interface ReminderRecipientContext {
+  readonly recipientExternalUserId: string | null;
+  readonly recipientBlocked: boolean;
+  readonly eventTitle: string;
+}
+
+export interface ReminderContextRepository {
+  getReminderContext(userId: string, eventId: string): Promise<ReminderRecipientContext | null>;
+}
+
+export interface BroadcastRecipient {
+  readonly userId: string;
+  readonly recipientExternalUserId: string;
+}
+
+export interface BroadcastContext {
+  readonly messageText: string;
+  readonly recipients: readonly BroadcastRecipient[];
+}
+
+export interface BroadcastContextRepository {
+  getBroadcastContext(broadcastId: string): Promise<BroadcastContext | null>;
+  markBroadcastSending(broadcastId: string, startedAt: Date): Promise<void>;
+  markBroadcastCompleted(
+    broadcastId: string,
+    sentCount: number,
+    failedCount: number,
+    completedAt: Date
+  ): Promise<void>;
 }
 
 export interface NotificationContextRepository {
@@ -167,6 +214,26 @@ type NotificationEvent =
       readonly presentations: readonly ScenarioPresentationModel[];
     }
   | {
+      readonly eventType: "ParticipantQuestionnaireRequested";
+      readonly sourceEventId: string;
+      readonly orderId: string;
+      readonly userId: string;
+      readonly eventId: string;
+    }
+  | {
+      readonly eventType: "EventReminderDue";
+      readonly sourceEventId: string;
+      readonly orderId: string;
+      readonly userId: string;
+      readonly eventId: string;
+      readonly cadenceStep: string;
+    }
+  | {
+      readonly eventType: "AdminBroadcastRequested";
+      readonly sourceEventId: string;
+      readonly broadcastId: string;
+    }
+  | {
       readonly eventType: string;
       readonly sourceEventId: string;
       readonly ignored: true;
@@ -181,7 +248,11 @@ export class HandleNotificationJobService {
     private readonly ticketRenderer: TicketPngRenderer,
     private readonly idGenerator: IdGenerator,
     private readonly adminChatId: string,
-    private readonly scenarioPaymentContinuation?: ScenarioPaymentContinuation
+    private readonly scenarioPaymentContinuation?: ScenarioPaymentContinuation,
+    private readonly questionnaireContexts?: QuestionnaireIntroContextRepository,
+    private readonly questionnaireDrafts?: QuestionnaireDraftRepository,
+    private readonly reminderContexts?: ReminderContextRepository,
+    private readonly broadcastContexts?: BroadcastContextRepository
   ) {
     if (!/^-?\d{1,20}$/.test(adminChatId)) {
       throw new Error("Administrator notification chat ID is invalid");
@@ -230,6 +301,15 @@ export class HandleNotificationJobService {
     }
     if (event.eventType === "TicketRedeliveryRequested") {
       return this.deliverTickets(event, input);
+    }
+    if (event.eventType === "ParticipantQuestionnaireRequested") {
+      return this.deliverQuestionnairePrompt(event, input);
+    }
+    if (event.eventType === "EventReminderDue") {
+      return this.deliverEventReminder(event, input);
+    }
+    if (event.eventType === "AdminBroadcastRequested") {
+      return this.deliverAdminBroadcast(event, input);
     }
 
     return this.deliverAdminPurchase(event, input);
@@ -373,6 +453,144 @@ export class HandleNotificationJobService {
     };
   }
 
+  private async deliverQuestionnairePrompt(
+    event: Extract<NotificationEvent, { readonly eventType: "ParticipantQuestionnaireRequested" }>,
+    input: HandleNotificationJobInput
+  ): Promise<HandleNotificationJobResult> {
+    if (!this.questionnaireContexts || !this.questionnaireDrafts) {
+      return { eventType: event.eventType, delivered: 0, duplicates: 0, ignored: true };
+    }
+
+    const context = await this.questionnaireContexts.getQuestionnaireIntroContext(event.orderId);
+    if (!context) {
+      throw new Error("Questionnaire intro context was not found");
+    }
+    const recipientId = context.recipientExternalUserId;
+    if (!recipientId || context.recipientBlocked) {
+      throw new Error("Telegram questionnaire recipient is unavailable");
+    }
+    const draftRepository = this.questionnaireDrafts;
+
+    const result = await this.deliverOnce({
+      event,
+      input,
+      kind: "questionnaire_prompt",
+      aggregateId: event.orderId,
+      recipientId,
+      idempotencyKey: `telegram:questionnaire:${event.orderId}`,
+      send: async () => {
+        const { alreadyStarted } = await startQuestionnaireDraft(draftRepository, {
+          orderId: event.orderId,
+          userId: event.userId,
+          eventId: event.eventId,
+          now: input.handledAt
+        });
+        if (alreadyStarted) {
+          return { providerMessageId: "already-started" };
+        }
+        return this.sender.sendText(recipientId, formatQuestionnaireIntroMessage(context.eventTitle));
+      }
+    });
+
+    return {
+      eventType: event.eventType,
+      delivered: result === "delivered" ? 1 : 0,
+      duplicates: result === "duplicate" ? 1 : 0,
+      ignored: false
+    };
+  }
+
+  private async deliverEventReminder(
+    event: Extract<NotificationEvent, { readonly eventType: "EventReminderDue" }>,
+    input: HandleNotificationJobInput
+  ): Promise<HandleNotificationJobResult> {
+    if (!this.reminderContexts || !isReminderCadenceStep(event.cadenceStep)) {
+      return { eventType: event.eventType, delivered: 0, duplicates: 0, ignored: true };
+    }
+
+    const context = await this.reminderContexts.getReminderContext(event.userId, event.eventId);
+    if (!context) {
+      throw new Error("Event reminder context was not found");
+    }
+    const recipientId = context.recipientExternalUserId;
+    if (!recipientId || context.recipientBlocked) {
+      throw new Error("Telegram event reminder recipient is unavailable");
+    }
+    const cadenceStep = event.cadenceStep;
+
+    const result = await this.deliverOnce({
+      event,
+      input,
+      kind: "event_reminder",
+      aggregateId: event.orderId,
+      recipientId,
+      idempotencyKey: `telegram:reminder:${event.orderId}:${cadenceStep}`,
+      send: () => this.sender.sendText(
+        recipientId,
+        formatEventReminderMessage(cadenceStep, context.eventTitle)
+      )
+    });
+
+    return {
+      eventType: event.eventType,
+      delivered: result === "delivered" ? 1 : 0,
+      duplicates: result === "duplicate" ? 1 : 0,
+      ignored: false
+    };
+  }
+
+  private async deliverAdminBroadcast(
+    event: Extract<NotificationEvent, { readonly eventType: "AdminBroadcastRequested" }>,
+    input: HandleNotificationJobInput
+  ): Promise<HandleNotificationJobResult> {
+    if (!this.broadcastContexts) {
+      return { eventType: event.eventType, delivered: 0, duplicates: 0, ignored: true };
+    }
+    const broadcasts = this.broadcastContexts;
+
+    const context = await broadcasts.getBroadcastContext(event.broadcastId);
+    if (!context) {
+      throw new Error("Admin broadcast context was not found");
+    }
+    validateBroadcastMessage(context.messageText);
+
+    await broadcasts.markBroadcastSending(event.broadcastId, input.handledAt);
+
+    let delivered = 0;
+    let duplicates = 0;
+    for (const recipient of context.recipients) {
+      const result = await this.deliverOnce({
+        event,
+        input,
+        kind: "admin_broadcast",
+        aggregateId: event.broadcastId,
+        recipientId: recipient.recipientExternalUserId,
+        idempotencyKey: `telegram:broadcast:${event.broadcastId}:${recipient.userId}`,
+        send: () => this.sender.sendText(recipient.recipientExternalUserId, context.messageText)
+      });
+      delivered += result === "delivered" ? 1 : 0;
+      duplicates += result === "duplicate" ? 1 : 0;
+    }
+
+    // Reached only once every recipient in this attempt succeeded (or was already sent by a
+    // prior attempt) -- a mid-loop failure throws and aborts before this point, leaving the
+    // campaign in 'sending' so a retried job resumes: already-sent recipients are skipped by
+    // the ledger's idempotency key, so no one is messaged twice.
+    await broadcasts.markBroadcastCompleted(
+      event.broadcastId,
+      delivered + duplicates,
+      0,
+      input.handledAt
+    );
+
+    return {
+      eventType: event.eventType,
+      delivered,
+      duplicates,
+      ignored: false
+    };
+  }
+
   private async deliverOnce(options: {
     readonly event: { readonly sourceEventId: string };
     readonly input: HandleNotificationJobInput;
@@ -478,6 +696,9 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
     && event.type !== "AdminPurchaseNotificationRequested"
     && event.type !== "PaymentConfirmed"
     && event.type !== "ScenarioPresentationRequested"
+    && event.type !== "ParticipantQuestionnaireRequested"
+    && event.type !== "EventReminderDue"
+    && event.type !== "AdminBroadcastRequested"
   ) {
     return { eventType: event.type, sourceEventId, ignored: true };
   }
@@ -490,6 +711,13 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
       sessionId: uuid(payload.sessionId, "Scenario session ID is invalid"),
       userId: uuid(payload.userId, "Scenario user ID is invalid"),
       presentations: scenarioPresentations(payload.presentations)
+    };
+  }
+  if (event.type === "AdminBroadcastRequested") {
+    return {
+      eventType: event.type,
+      sourceEventId,
+      broadcastId: uuid(payload.broadcastId, "Notification broadcast ID is invalid")
     };
   }
 
@@ -506,6 +734,30 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
 
   if (event.type === "AdminPurchaseNotificationRequested") {
     return { eventType: event.type, sourceEventId, orderId };
+  }
+
+  if (event.type === "ParticipantQuestionnaireRequested") {
+    return {
+      eventType: event.type,
+      sourceEventId,
+      orderId,
+      userId: uuid(payload.userId, "Notification user ID is invalid"),
+      eventId: uuid(payload.eventId, "Notification event ID is invalid")
+    };
+  }
+
+  if (event.type === "EventReminderDue") {
+    if (typeof payload.cadenceStep !== "string" || payload.cadenceStep.length > 20) {
+      throw new Error("Notification reminder cadence step is invalid");
+    }
+    return {
+      eventType: event.type,
+      sourceEventId,
+      orderId,
+      userId: uuid(payload.userId, "Notification user ID is invalid"),
+      eventId: uuid(payload.eventId, "Notification event ID is invalid"),
+      cadenceStep: payload.cadenceStep
+    };
   }
 
   if (
@@ -671,6 +923,67 @@ function formatAdminPurchaseMessage(context: AdminPurchaseContext): string {
     `Заказ: ${singleLine(context.orderNumber, 60)}`,
     `Баланс: ${formatKopecks(context.walletKopecks)}`,
     `Внешняя оплата: ${formatKopecks(context.externalKopecks)}`
+  ].join("\n");
+}
+
+const REMINDER_CADENCE_STEPS = ["10d", "7d", "3d", "1d", "day_of"] as const;
+type ReminderCadenceStep = typeof REMINDER_CADENCE_STEPS[number];
+
+function isReminderCadenceStep(value: string): value is ReminderCadenceStep {
+  return (REMINDER_CADENCE_STEPS as readonly string[]).includes(value);
+}
+
+function formatEventReminderMessage(cadenceStep: ReminderCadenceStep, eventTitle: string): string {
+  const title = singleLine(eventTitle, 200);
+
+  switch (cadenceStep) {
+    case "10d":
+      return [
+        `До «${title}» осталось 10 дней.`,
+        "",
+        "Начинаем собирать программу — расскажем, что будет в эти два дня и как лучше подготовиться."
+      ].join("\n");
+    case "7d":
+      return [
+        `До «${title}» осталось 7 дней.`,
+        "",
+        "Что взять с собой: удобную одежду по погоде, вещи для бани, блокнот для заметок и хорошее настроение."
+      ].join("\n");
+    case "3d":
+      return [
+        `До «${title}» осталось 3 дня.`,
+        "",
+        "Ближе к делу — сориентируем по логистике и расписанию, как добраться и во сколько лучше приехать."
+      ].join("\n");
+    case "1d":
+      return [
+        `Завтра «${title}»!`,
+        "",
+        "Последнее напоминание: проверьте билет в разделе «Мои билеты» и соберите вещи."
+      ].join("\n");
+    case "day_of":
+      return [
+        `Доброе утро! Сегодня «${title}».`,
+        "",
+        "Ждём вас — до встречи на месте!"
+      ].join("\n");
+  }
+}
+
+function validateBroadcastMessage(messageText: string): void {
+  const length = messageText.trim().length;
+  if (length < 1 || length > 3_500) {
+    throw new Error("Admin broadcast message is invalid");
+  }
+}
+
+function formatQuestionnaireIntroMessage(eventTitle: string): string {
+  return [
+    `Место на «${singleLine(eventTitle, 200)}» за вами!`,
+    "",
+    "Заполним короткую анкету участника — пара минут, поможет собрать программу под вас.",
+    "",
+    "Как вас зовут?"
   ].join("\n");
 }
 

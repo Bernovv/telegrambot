@@ -67,6 +67,102 @@ describe("PostgreSQL notification delivery persistence", () => {
     );
   });
 
+  it("loads the questionnaire intro context for a paid order, or null when the order is not paid", async () => {
+    const found = new FakeConnection(() => rows([{
+      event_title: "Business Picnic",
+      recipient_external_user_id: "123456789",
+      recipient_blocked: false
+    }]));
+    const repository = new PostgresNotificationContextRepository(new FakePool(found));
+
+    const context = await repository.getQuestionnaireIntroContext(orderId);
+
+    assert.deepEqual(context, {
+      eventTitle: "Business Picnic",
+      recipientExternalUserId: "123456789",
+      recipientBlocked: false
+    });
+    assert.match(
+      findQuery(found, "from public.orders orders").text,
+      /orders\.status in \('paid', 'partially_refunded'\)/
+    );
+
+    const notFound = new FakeConnection(() => rows([]));
+    const missingRepository = new PostgresNotificationContextRepository(new FakePool(notFound));
+    assert.equal(await missingRepository.getQuestionnaireIntroContext(orderId), null);
+  });
+
+  it("loads the reminder recipient context by user and event, or null when the event is unknown", async () => {
+    const found = new FakeConnection(() => rows([{
+      event_title: "Business Picnic",
+      recipient_external_user_id: "123456789",
+      recipient_blocked: false
+    }]));
+    const repository = new PostgresNotificationContextRepository(new FakePool(found));
+
+    const context = await repository.getReminderContext(ownerUserId, "event-1");
+
+    assert.deepEqual(context, {
+      eventTitle: "Business Picnic",
+      recipientExternalUserId: "123456789",
+      recipientBlocked: false
+    });
+    assert.match(findQuery(found, "from public.events e").text, /left join lateral/);
+
+    const notFound = new FakeConnection(() => rows([]));
+    const missingRepository = new PostgresNotificationContextRepository(new FakePool(notFound));
+    assert.equal(await missingRepository.getReminderContext(ownerUserId, "unknown-event"), null);
+  });
+
+  it("loads a broadcast's message and its distinct reachable recipients, or null when unknown", async () => {
+    const found = new FakeConnection((text) => {
+      if (text.includes("from public.admin_broadcasts")) {
+        return rows([{ message_text: "Скоро старт!" }]);
+      }
+      return rows([
+        { user_id: "user-1", recipient_external_user_id: "201" },
+        { user_id: "user-2", recipient_external_user_id: "202" }
+      ]);
+    });
+    const repository = new PostgresNotificationContextRepository(new FakePool(found));
+
+    const context = await repository.getBroadcastContext(broadcastId);
+
+    assert.deepEqual(context, {
+      messageText: "Скоро старт!",
+      recipients: [
+        { userId: "user-1", recipientExternalUserId: "201" },
+        { userId: "user-2", recipientExternalUserId: "202" }
+      ]
+    });
+    assert.match(findQuery(found, "from public.orders o").text, /is_bot_blocked = false/);
+    assert.match(
+      findQuery(found, "from public.orders o").text,
+      /target_event_id is null or o\.event_id = b\.target_event_id/
+    );
+
+    const notFound = new FakeConnection(() => rows([]));
+    const missingRepository = new PostgresNotificationContextRepository(new FakePool(notFound));
+    assert.equal(await missingRepository.getBroadcastContext(broadcastId), null);
+  });
+
+  it("transitions a broadcast from pending to sending, then to completed with final counts", async () => {
+    const connection = new FakeConnection(() => affected());
+    const repository = new PostgresNotificationContextRepository(new FakePool(connection));
+    const at = new Date("2026-07-27T10:05:00.000Z");
+
+    await repository.markBroadcastSending(broadcastId, at);
+    await repository.markBroadcastCompleted(broadcastId, 2, 0, at);
+
+    const sendingUpdate = findQuery(connection, "status = 'sending', started_at");
+    assert.match(sendingUpdate.text, /where id = \$1 and status = 'pending'/);
+    assert.deepEqual(sendingUpdate.values, [broadcastId, at]);
+
+    const completedUpdate = findQuery(connection, "status = 'completed'");
+    assert.match(completedUpdate.text, /where id = \$1 and status = 'sending'/);
+    assert.deepEqual(completedUpdate.values, [broadcastId, 2, 0, at]);
+  });
+
   it("claims with a lease and marks sent only for the lease owner", async () => {
     const connection = new FakeConnection((text) => {
       if (
@@ -156,6 +252,7 @@ function findQuery(connection: FakeConnection, fragment: string): RecordedQuery 
 
 const orderId = "019c0123-4567-789a-bcde-f0123456789a";
 const ownerUserId = "019c0123-4567-789a-bcde-f0123456789d";
+const broadcastId = "019c0123-4567-789a-bcde-f0123456789e";
 
 const ticketOrderContextRow = {
   order_id: orderId,

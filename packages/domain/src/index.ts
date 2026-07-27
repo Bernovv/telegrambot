@@ -22,3 +22,4 @@ export * from "./messenger.js";
 export * from "./wallet.js";
 export * from "./pricing.js";
 export * from "./order.js";
+export * from "./referral.js";

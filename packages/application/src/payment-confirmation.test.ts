@@ -7,7 +7,10 @@ import {
   type ConfirmedPaymentRecord,
   type ConfirmPaymentCommand,
   type PaymentConfirmationRepository,
-  type PersistPaymentConfirmationInput
+  type PersistPaymentConfirmationInput,
+  type ReferralCommissionSettlement,
+  type ReferralCommissionSettlementRepository,
+  type SettleReferralCommissionInput
 } from "./payment-confirmation.js";
 
 const confirmedAt = new Date("2026-07-24T12:20:00.000Z");
@@ -45,7 +48,12 @@ describe("ConfirmPaymentService", () => {
     assert.equal(repository.persisted[0]?.tickets.length, 2);
     assert.deepEqual(
       events.map((event) => event.eventType),
-      ["PaymentConfirmed", "TicketsIssued", "AdminPurchaseNotificationRequested"]
+      [
+        "PaymentConfirmed",
+        "TicketsIssued",
+        "AdminPurchaseNotificationRequested",
+        "ParticipantQuestionnaireRequested"
+      ]
     );
     assert.equal(events[0]?.payload.walletCapturedKopecks, "10000");
   });
@@ -129,6 +137,79 @@ describe("ConfirmPaymentService", () => {
   });
 });
 
+describe("ConfirmPaymentService referral commission settlement", () => {
+  it("does nothing when no referral collaborator is configured", async () => {
+    const repository = new RecordingRepository(order);
+    const result = await createService(repository, []).execute(command);
+    assert.equal(result.status, "paid");
+  });
+
+  it("settles referral commission once, after the order is persisted, with the order's own values", async () => {
+    const repository = new RecordingRepository(order);
+    const calls: SettleReferralCommissionInput[] = [];
+    const log: string[] = [];
+    const originalPersist = repository.persistConfirmation.bind(repository);
+    repository.persistConfirmation = async (input) => {
+      log.push("persisted");
+      return originalPersist(input);
+    };
+    const referral: ReferralCommissionSettlementRepository = {
+      async settleForOrder(input) {
+        log.push("settled");
+        calls.push(input);
+        return { settled: false };
+      }
+    };
+
+    const service = createService(repository, [], referral);
+    await service.execute(command);
+
+    assert.deepEqual(log, ["persisted", "settled"]);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], {
+      orderId: "order-1",
+      buyerUserId: "user-1",
+      totalKopecks: 249_000n,
+      currency: "RUB",
+      confirmedAt
+    });
+  });
+
+  it("does not settle referral commission again on an idempotent retry", async () => {
+    const repository = new RecordingRepository(order);
+    const calls: SettleReferralCommissionInput[] = [];
+    const referral: ReferralCommissionSettlementRepository = {
+      async settleForOrder(input) {
+        calls.push(input);
+        return { settled: false };
+      }
+    };
+    const service = createService(repository, [], referral);
+    const manualEvidence = command.manualEvidence;
+    assert.ok(manualEvidence);
+
+    await service.execute(command);
+    await service.execute({
+      ...command,
+      manualEvidence: { ...manualEvidence, requestId: "request-2" }
+    });
+
+    assert.equal(calls.length, 1);
+  });
+
+  it("propagates a referral settlement failure so the whole confirmation is rejected", async () => {
+    const repository = new RecordingRepository(order);
+    const referral: ReferralCommissionSettlementRepository = {
+      async settleForOrder(): Promise<ReferralCommissionSettlement> {
+        throw new Error("wallet account is blocked");
+      }
+    };
+    const service = createService(repository, [], referral);
+
+    await assert.rejects(service.execute(command), /wallet account is blocked/);
+  });
+});
+
 class RecordingRepository implements PaymentConfirmationRepository {
   readonly persisted: PersistPaymentConfirmationInput[] = [];
   private existing: ConfirmedPaymentRecord | null = null;
@@ -164,7 +245,8 @@ class RecordingRepository implements PaymentConfirmationRepository {
 
 function createService(
   repository: PaymentConfirmationRepository,
-  events: DomainEvent[]
+  events: DomainEvent[],
+  referralCommission?: ReferralCommissionSettlementRepository
 ): ConfirmPaymentService {
   let id = 0;
 
@@ -180,7 +262,8 @@ function createService(
       publicToken(ticketId) {
         return { token: `token-${ticketId}`, sha256: "a".repeat(64) };
       }
-    }
+    },
+    referralCommission
   );
 }
 

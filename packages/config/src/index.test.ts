@@ -27,6 +27,24 @@ describe("loadTelegramBotConfig", () => {
     assert.equal(config.telegramDeliveryMode, "webhook");
   });
 
+  it("shares the order token secret and prefix with the API, and defaults the purchase event slug", () => {
+    const config = loadTelegramBotConfig(validEnvironment());
+
+    assert.equal(config.orderTokenSecret, "local-only-order-token-secret-change-me");
+    assert.equal(config.orderNumberPrefix, "BP");
+    assert.equal(config.purchaseEventSlug, "business-picnic-2026");
+  });
+
+  it("requires an explicit order token secret in production", () => {
+    assert.throws(
+      () => loadTelegramBotConfig(validEnvironment({
+        APP_ENV: "production",
+        TBANK_API_BASE_URL: "https://securepay.tinkoff.ru/v2"
+      })),
+      /ORDER_TOKEN_SECRET/
+    );
+  });
+
   it("rejects invalid delivery mode and pool size", () => {
     assert.throws(
       () => loadTelegramBotConfig(validEnvironment({ TELEGRAM_DELIVERY_MODE: "automatic" })),
@@ -199,6 +217,8 @@ describe("loadWorkerConfig", () => {
     assert.equal(config.workerHeartbeatIntervalMs, 10_000);
     assert.equal(config.orderExpiryBatchSize, 50);
     assert.equal(config.orderExpiryPollIntervalMs, 5_000);
+    assert.equal(config.reminderBatchSize, 50);
+    assert.equal(config.reminderPollIntervalMs, 300_000);
     assert.deepEqual(config.tbankReconciliation, { enabled: false });
     assert.deepEqual(config.telegramNotifications, { enabled: false });
   });

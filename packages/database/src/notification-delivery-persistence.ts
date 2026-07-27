@@ -1,9 +1,15 @@
 import type {
   AdminPurchaseContext,
+  BroadcastContext,
+  BroadcastContextRepository,
   ClaimNotificationDeliveryInput,
   ClaimNotificationDeliveryResult,
   NotificationContextRepository,
   NotificationDeliveryLedger,
+  QuestionnaireIntroContext,
+  QuestionnaireIntroContextRepository,
+  ReminderContextRepository,
+  ReminderRecipientContext,
   ScenarioDeliveryContext,
   TicketDeliveryContext
 } from "@ticket-platform/application";
@@ -47,8 +53,27 @@ interface ScenarioDeliveryContextRow {
   readonly recipient_blocked: boolean | null;
 }
 
+interface QuestionnaireIntroContextRow {
+  readonly event_title: string;
+  readonly recipient_external_user_id: string | null;
+  readonly recipient_blocked: boolean | null;
+}
+
+interface BroadcastRow {
+  readonly message_text: string;
+}
+
+interface BroadcastRecipientRow {
+  readonly user_id: string;
+  readonly recipient_external_user_id: string;
+}
+
 export class PostgresNotificationContextRepository
-implements NotificationContextRepository {
+implements
+  NotificationContextRepository,
+  QuestionnaireIntroContextRepository,
+  ReminderContextRepository,
+  BroadcastContextRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
 
   async getTicketDeliveryContext(
@@ -186,6 +211,146 @@ implements NotificationContextRepository {
           recipientBlocked: row.recipient_blocked ?? false
         }
       : null;
+  }
+
+  async getQuestionnaireIntroContext(orderId: string): Promise<QuestionnaireIntroContext | null> {
+    const result = await query<QuestionnaireIntroContextRow>(
+      this.pool,
+      `select
+         coalesce(nullif(orders.event_snapshot ->> 'title', ''), events.title) as event_title,
+         identity.external_user_id as recipient_external_user_id,
+         identity.is_bot_blocked as recipient_blocked
+       from public.orders orders
+       join public.events events on events.id = orders.event_id
+       left join lateral (
+         select external_user_id, is_bot_blocked
+         from public.messenger_identities
+         where user_id = orders.user_id
+           and channel = 'telegram'
+         order by last_seen_at desc, id
+         limit 1
+       ) identity on true
+       where orders.id = $1
+         and orders.status in ('paid', 'partially_refunded')`,
+      [orderId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      eventTitle: row.event_title,
+      recipientExternalUserId: row.recipient_external_user_id,
+      recipientBlocked: row.recipient_blocked ?? false
+    };
+  }
+
+  async getReminderContext(userId: string, eventId: string): Promise<ReminderRecipientContext | null> {
+    const result = await query<QuestionnaireIntroContextRow>(
+      this.pool,
+      `select
+         e.title as event_title,
+         identity.external_user_id as recipient_external_user_id,
+         identity.is_bot_blocked as recipient_blocked
+       from public.events e
+       left join lateral (
+         select external_user_id, is_bot_blocked
+         from public.messenger_identities
+         where user_id = $1
+           and channel = 'telegram'
+         order by last_seen_at desc, id
+         limit 1
+       ) identity on true
+       where e.id = $2`,
+      [userId, eventId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      eventTitle: row.event_title,
+      recipientExternalUserId: row.recipient_external_user_id,
+      recipientBlocked: row.recipient_blocked ?? false
+    };
+  }
+
+  async getBroadcastContext(broadcastId: string): Promise<BroadcastContext | null> {
+    const broadcastResult = await query<BroadcastRow>(
+      this.pool,
+      `select message_text
+       from public.admin_broadcasts
+       where id = $1`,
+      [broadcastId]
+    );
+    const broadcast = broadcastResult.rows[0];
+    if (!broadcast) {
+      return null;
+    }
+
+    // Only distinct, reachable (non-blocked, telegram-linked) users are returned -- a recipient
+    // with no telegram identity or a blocked bot simply cannot be messaged, so they are excluded
+    // here rather than surfaced as a per-recipient delivery failure.
+    const recipientResult = await query<BroadcastRecipientRow>(
+      this.pool,
+      `select distinct on (o.user_id)
+         o.user_id,
+         identity.external_user_id as recipient_external_user_id
+       from public.orders o
+       join lateral (
+         select external_user_id, is_bot_blocked
+         from public.messenger_identities
+         where user_id = o.user_id and channel = 'telegram'
+         order by last_seen_at desc, id
+         limit 1
+       ) identity on true
+       join public.admin_broadcasts b on b.id = $1
+       where identity.is_bot_blocked = false
+         and (b.target_event_id is null or o.event_id = b.target_event_id)
+         and (b.target_order_status is null or o.status = b.target_order_status)
+       order by o.user_id
+       limit 5000`,
+      [broadcastId]
+    );
+
+    return {
+      messageText: broadcast.message_text,
+      recipients: recipientResult.rows.map((row) => ({
+        userId: row.user_id,
+        recipientExternalUserId: row.recipient_external_user_id
+      }))
+    };
+  }
+
+  async markBroadcastSending(broadcastId: string, startedAt: Date): Promise<void> {
+    await query(
+      this.pool,
+      `update public.admin_broadcasts
+       set status = 'sending', started_at = $2
+       where id = $1 and status = 'pending'`,
+      [broadcastId, startedAt]
+    );
+  }
+
+  async markBroadcastCompleted(
+    broadcastId: string,
+    sentCount: number,
+    failedCount: number,
+    completedAt: Date
+  ): Promise<void> {
+    await query(
+      this.pool,
+      `update public.admin_broadcasts
+       set status = 'completed',
+           sent_count = $2,
+           failed_count = $3,
+           recipient_count = $2 + $3,
+           completed_at = $4
+       where id = $1 and status = 'sending'`,
+      [broadcastId, sentCount, failedCount, completedAt]
+    );
   }
 }
 

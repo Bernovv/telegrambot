@@ -8,6 +8,7 @@ import type {
 import {
   PostgresOutboxWriter
 } from "./telegram-start-persistence.js";
+import { PostgresReferralCommissionRepository } from "./referral-persistence.js";
 import {
   PostgresUnitOfWork,
   TransactionSession,
@@ -596,6 +597,10 @@ export function createPaymentConfirmationPersistence(
 
   return {
     paymentConfirmationRepository: new PostgresPaymentConfirmationRepository(
+      session,
+      idGenerator
+    ),
+    referralCommissionRepository: new PostgresReferralCommissionRepository(
       session,
       idGenerator
     ),

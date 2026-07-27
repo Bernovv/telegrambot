@@ -3,14 +3,21 @@ import { describe, it } from "node:test";
 import {
   HandleNotificationJobService,
   type AdminPurchaseContext,
+  type BroadcastContext,
+  type BroadcastContextRepository,
   type ClaimNotificationDeliveryInput,
   type NotificationSender,
   type NotificationContextRepository,
   type NotificationDeliveryLedger,
+  type QuestionnaireIntroContext,
+  type QuestionnaireIntroContextRepository,
+  type ReminderContextRepository,
+  type ReminderRecipientContext,
   type ScenarioPaymentContinuation,
   type TicketPngRenderer,
   type TicketDeliveryContext
 } from "./notification-delivery.js";
+import type { QuestionnaireDraft, QuestionnaireDraftRepository } from "./participant-questionnaire.js";
 
 describe("HandleNotificationJobService", () => {
   it("delivers every ticket once and skips a completed retry", async () => {
@@ -167,7 +174,251 @@ describe("HandleNotificationJobService", () => {
     );
     assert.equal(sender.messages.length, 0);
   });
+
+  it("is ignored when no questionnaire collaborators are configured", async () => {
+    const service = createService(new MemoryLedger(), new RecordingSender());
+
+    const result = await service.execute(execution(questionnaireJob));
+
+    assert.deepEqual(result, {
+      eventType: "ParticipantQuestionnaireRequested",
+      delivered: 0,
+      duplicates: 0,
+      ignored: true
+    });
+  });
+
+  it("sends the first question once and initializes the draft, deduplicating a retry", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const drafts = new Map<string, QuestionnaireDraft>();
+    const service = createService(ledger, sender, new RecordingRenderer(), undefined, {
+      async getQuestionnaireIntroContext() {
+        return questionnaireContext;
+      }
+    }, fakeQuestionnaireDrafts(drafts));
+
+    const first = await service.execute(execution(questionnaireJob));
+    const second = await service.execute(execution(questionnaireJob));
+
+    assert.deepEqual(first, {
+      eventType: "ParticipantQuestionnaireRequested",
+      delivered: 1,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.deepEqual(second, {
+      eventType: "ParticipantQuestionnaireRequested",
+      delivered: 0,
+      duplicates: 1,
+      ignored: false
+    });
+    assert.equal(sender.messages.length, 1);
+    assert.match(sender.messages[0]?.text ?? "", /Как вас зовут\?/);
+    assert.deepEqual(drafts.get(adminContext.userId)?.step, "awaiting_name");
+  });
+
+  it("is ignored for an event reminder when no reminder context repository is configured", async () => {
+    const service = createService(new MemoryLedger(), new RecordingSender());
+
+    const result = await service.execute(execution(reminderJob("10d")));
+
+    assert.deepEqual(result, {
+      eventType: "EventReminderDue",
+      delivered: 0,
+      duplicates: 0,
+      ignored: true
+    });
+  });
+
+  it("sends the right copy for each cadence step and deduplicates a retry", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const service = createService(ledger, sender, new RecordingRenderer(), undefined, undefined, undefined, {
+      async getReminderContext() {
+        return reminderContext;
+      }
+    });
+
+    const first = await service.execute(execution(reminderJob("day_of")));
+    const retry = await service.execute(execution(reminderJob("day_of")));
+
+    assert.deepEqual(first, {
+      eventType: "EventReminderDue",
+      delivered: 1,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.deepEqual(retry, {
+      eventType: "EventReminderDue",
+      delivered: 0,
+      duplicates: 1,
+      ignored: false
+    });
+    assert.equal(sender.messages.length, 1);
+    assert.match(sender.messages[0]?.text ?? "", /Доброе утро!/);
+
+    const step10d = await service.execute(
+      execution(reminderJob("10d", "019c0123-4567-789a-bcde-f01234567899"))
+    );
+    assert.equal(step10d.delivered, 1);
+    assert.match(sender.messages[1]?.text ?? "", /осталось 10 дней/);
+  });
+
+  it("rejects an unrecognized cadence step instead of guessing a message", async () => {
+    const service = createService(
+      new MemoryLedger(),
+      new RecordingSender(),
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      {
+        async getReminderContext() {
+          return reminderContext;
+        }
+      }
+    );
+
+    const result = await service.execute(execution(reminderJob("2d")));
+    assert.deepEqual(result, {
+      eventType: "EventReminderDue",
+      delivered: 0,
+      duplicates: 0,
+      ignored: true
+    });
+  });
+
+  it("is ignored for an admin broadcast when no broadcast context repository is configured", async () => {
+    const service = createService(new MemoryLedger(), new RecordingSender());
+
+    const result = await service.execute(execution(broadcastJob));
+
+    assert.deepEqual(result, {
+      eventType: "AdminBroadcastRequested",
+      delivered: 0,
+      duplicates: 0,
+      ignored: true
+    });
+  });
+
+  it("fans a broadcast out to every recipient once, marks sending then completed, and deduplicates a retry", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const service = createService(
+      ledger,
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts
+    );
+
+    const first = await service.execute(execution(broadcastJob));
+    const retry = await service.execute(execution(broadcastJob));
+
+    assert.deepEqual(first, {
+      eventType: "AdminBroadcastRequested",
+      delivered: 2,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.deepEqual(retry, {
+      eventType: "AdminBroadcastRequested",
+      delivered: 0,
+      duplicates: 2,
+      ignored: false
+    });
+    assert.equal(sender.messages.length, 2);
+    assert.ok(sender.messages.every((message) => message.text === broadcastContext.messageText));
+    assert.deepEqual(broadcasts.sendingCalls, [broadcastId, broadcastId]);
+    assert.equal(broadcasts.completedCalls.length, 2);
+    assert.deepEqual(broadcasts.completedCalls[0], [broadcastId, 2, 0]);
+    assert.deepEqual(broadcasts.completedCalls[1], [broadcastId, 2, 0]);
+  });
+
+  it("resumes a broadcast after a partial failure without repeating an already-sent recipient", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new FailOnceForRecipientSender("202");
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const service = createService(
+      ledger,
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts
+    );
+
+    await assert.rejects(service.execute(execution(broadcastJob)), /Telegram send failed/);
+    const retry = await service.execute(execution(broadcastJob));
+
+    assert.deepEqual(retry, {
+      eventType: "AdminBroadcastRequested",
+      delivered: 1,
+      duplicates: 1,
+      ignored: false
+    });
+    assert.equal(sender.messages.filter((message) => message.recipientId === "201").length, 1);
+    assert.equal(sender.messages.filter((message) => message.recipientId === "202").length, 2);
+    assert.equal(broadcasts.completedCalls.length, 1);
+    assert.deepEqual(broadcasts.completedCalls[0], [broadcastId, 2, 0]);
+  });
 });
+
+class FailOnceForRecipientSender implements NotificationSender {
+  readonly messages: { readonly recipientId: string; readonly text: string }[] = [];
+  private failed = false;
+
+  constructor(private readonly failOnceForRecipientId: string) {}
+
+  async sendText(recipientId: string, text: string) {
+    this.messages.push({ recipientId, text });
+    if (recipientId === this.failOnceForRecipientId && !this.failed) {
+      this.failed = true;
+      const error = new Error("Telegram send failed");
+      error.name = "Telegram API/429";
+      throw error;
+    }
+    return { providerMessageId: String(this.messages.length) };
+  }
+
+  async sendImage(recipientId: string, _image: unknown, _fileName: string, caption: string) {
+    return this.sendText(recipientId, caption);
+  }
+
+  async sendScenarioPresentation(recipientId: string, _sessionId: string, presentation: { readonly text: string }) {
+    return this.sendText(recipientId, presentation.text);
+  }
+}
+
+class FakeBroadcasts implements BroadcastContextRepository {
+  readonly sendingCalls: string[] = [];
+  readonly completedCalls: [string, number, number][] = [];
+
+  constructor(private readonly context: BroadcastContext) {}
+
+  async getBroadcastContext(broadcastId: string) {
+    return broadcastId === "019c0123-4567-789a-bcde-f01234567998" ? this.context : null;
+  }
+
+  async markBroadcastSending(broadcastId: string) {
+    this.sendingCalls.push(broadcastId);
+  }
+
+  async markBroadcastCompleted(
+    broadcastId: string,
+    sentCount: number,
+    failedCount: number
+  ) {
+    this.completedCalls.push([broadcastId, sentCount, failedCount]);
+  }
+}
 
 class MemoryLedger implements NotificationDeliveryLedger {
   readonly failureCodes: string[] = [];
@@ -285,7 +536,11 @@ function createService(
   ledger: NotificationDeliveryLedger,
   sender: NotificationSender,
   renderer: TicketPngRenderer = new RecordingRenderer(),
-  continuation?: ScenarioPaymentContinuation
+  continuation?: ScenarioPaymentContinuation,
+  questionnaireContexts?: QuestionnaireIntroContextRepository,
+  questionnaireDrafts?: QuestionnaireDraftRepository,
+  reminderContexts?: ReminderContextRepository,
+  broadcastContexts?: BroadcastContextRepository
 ): HandleNotificationJobService {
   let id = 0;
   const contexts: NotificationContextRepository = {
@@ -314,8 +569,26 @@ function createService(
     renderer,
     { newId() { id += 1; return `delivery-${id}`; } },
     "-1001234567890",
-    continuation
+    continuation,
+    questionnaireContexts,
+    questionnaireDrafts,
+    reminderContexts,
+    broadcastContexts
   );
+}
+
+function fakeQuestionnaireDrafts(store: Map<string, QuestionnaireDraft>): QuestionnaireDraftRepository {
+  return {
+    async getDraft(userId) {
+      return store.get(userId) ?? null;
+    },
+    async setDraft(userId, draft) {
+      store.set(userId, draft);
+    },
+    async clearDraft(userId) {
+      store.delete(userId);
+    }
+  };
 }
 
 class RecordingRenderer implements TicketPngRenderer {
@@ -445,5 +718,71 @@ const scenarioPresentationJob = {
         buttons: [{ text: "Завершить", edgeId: scenarioEdgeId }]
       }]
     }
+  }
+};
+
+const questionnaireContext: QuestionnaireIntroContext = {
+  recipientExternalUserId: "123456789",
+  recipientBlocked: false,
+  eventTitle: "Business Picnic"
+};
+
+const questionnaireJob = {
+  jobType: "domain-event",
+  schemaVersion: 1,
+  correlationId: "019c0123-4567-789a-bcde-f01234567994",
+  event: {
+    type: "ParticipantQuestionnaireRequested",
+    schemaVersion: 1,
+    payload: {
+      orderId: ticketContext.orderId,
+      userId: adminContext.userId,
+      eventId: "019c0123-4567-789a-bcde-f01234567995"
+    }
+  }
+};
+
+const reminderContext: ReminderRecipientContext = {
+  recipientExternalUserId: "123456789",
+  recipientBlocked: false,
+  eventTitle: "Business Picnic"
+};
+
+function reminderJob(cadenceStep: string, orderId: string = ticketContext.orderId) {
+  return {
+    jobType: "domain-event",
+    schemaVersion: 1,
+    correlationId: "019c0123-4567-789a-bcde-f01234567996",
+    event: {
+      type: "EventReminderDue",
+      schemaVersion: 1,
+      payload: {
+        orderId,
+        userId: adminContext.userId,
+        eventId: "019c0123-4567-789a-bcde-f01234567997",
+        cadenceStep
+      }
+    }
+  };
+}
+
+const broadcastId = "019c0123-4567-789a-bcde-f01234567998";
+
+const broadcastContext: BroadcastContext = {
+  messageText: "Скоро старт! Не забудьте паспорт.",
+  recipients: [
+    { userId: "019c0123-4567-789a-bcde-f0123456799e", recipientExternalUserId: "201" },
+    { userId: "019c0123-4567-789a-bcde-f0123456799f", recipientExternalUserId: "202" }
+  ]
+};
+
+const broadcastJob = {
+  jobType: "domain-event",
+  schemaVersion: 1,
+  correlationId: "019c0123-4567-789a-bcde-f01234567999",
+  event: {
+    type: "AdminBroadcastRequested",
+    schemaVersion: 1,
+    payload: { broadcastId }
   }
 };

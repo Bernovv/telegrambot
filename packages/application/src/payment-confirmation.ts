@@ -128,13 +128,42 @@ export interface ConfirmPaymentResult {
   readonly created: boolean;
 }
 
+export interface SettleReferralCommissionInput {
+  readonly orderId: string;
+  readonly buyerUserId: string;
+  readonly totalKopecks: MoneyKopecks;
+  readonly currency: string;
+  readonly confirmedAt: Date;
+}
+
+export type ReferralCommissionSettlement =
+  | { readonly settled: false }
+  | {
+      readonly settled: true;
+      readonly referrerUserId: string;
+      readonly tierNumber: number;
+      readonly percentBasisPoints: number;
+      readonly commissionKopecks: MoneyKopecks;
+    };
+
+/**
+ * Optional collaborator: credits the referrer's wallet (bucket 'referral') when a paid order
+ * belongs to a user who was attributed to a referrer. A no-op (never constructed, or returning
+ * `{ settled: false }`) leaves payment confirmation exactly as it was before Phase 3 — this keeps
+ * the referral program strictly additive to the existing, already-shipped confirmation flow.
+ */
+export interface ReferralCommissionSettlementRepository {
+  settleForOrder(input: SettleReferralCommissionInput): Promise<ReferralCommissionSettlement>;
+}
+
 export class ConfirmPaymentService {
   constructor(
     private readonly repository: PaymentConfirmationRepository,
     private readonly outboxWriter: OutboxWriter,
     private readonly unitOfWork: UnitOfWork,
     private readonly idGenerator: IdGenerator,
-    private readonly ticketReferences: TicketReferenceGenerator
+    private readonly ticketReferences: TicketReferenceGenerator,
+    private readonly referralCommission?: ReferralCommissionSettlementRepository
   ) {}
 
   execute(command: ConfirmPaymentCommand): Promise<ConfirmPaymentResult> {
@@ -175,6 +204,16 @@ export class ConfirmPaymentService {
         order,
         tickets
       });
+
+      if (this.referralCommission) {
+        await this.referralCommission.settleForOrder({
+          orderId: order.id,
+          buyerUserId: order.userId,
+          totalKopecks: order.total,
+          currency: order.currency,
+          confirmedAt: command.confirmedAt
+        });
+      }
 
       const record: ConfirmedPaymentRecord = {
         paymentAttemptId,
@@ -401,6 +440,15 @@ function paymentEvents(
       aggregateType: "order",
       aggregateId: order.id,
       eventType: "AdminPurchaseNotificationRequested",
+      schemaVersion: 1,
+      payload: basePayload,
+      occurredAt: command.confirmedAt
+    },
+    {
+      eventId: idGenerator.newId(),
+      aggregateType: "order",
+      aggregateId: order.id,
+      eventType: "ParticipantQuestionnaireRequested",
       schemaVersion: 1,
       payload: basePayload,
       occurredAt: command.confirmedAt
