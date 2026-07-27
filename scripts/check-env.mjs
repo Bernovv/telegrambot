@@ -1,0 +1,155 @@
+// Проверяет, что в .env заполнено всё, без чего продакшн работает неправильно — но молча.
+//
+// Повод. 27 июля локальную копию .env скопировали на сервер, а в ней не было адреса
+// Cloudflare-прокси: он задавался только на сервере. Значение затёрлось пустым, обращения к
+// Telegram пошли напрямую и начали отваливаться. Ни один процесс при этом не упал и не
+// пожаловался: переменная объявлена необязательной, а без неё код просто идёт по другому пути.
+// Ошибку нашли через два часа по косвенным признакам.
+//
+//   pnpm env:check              — проверить ./.env
+//   pnpm env:check путь/к/.env  — проверить конкретный файл
+//
+// Проверка намеренно тупая: она ничего не знает про правильные значения, только про то, что
+// переменная не должна быть пустой и должна выглядеть как обещано.
+
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+const REQUIRED = [
+  {
+    name: "TELEGRAM_BOT_TOKEN",
+    hint: "токен бота из BotFather",
+    pattern: /^\d+:[A-Za-z0-9_-]{30,}$/
+  },
+  {
+    name: "TELEGRAM_API_ROOT",
+    hint: "адрес Cloudflare-прокси; без него бот пойдёт напрямую в Telegram, "
+      + "а с российского сервера это не работает",
+    pattern: /^https:\/\/[^/]+$/,
+    patternHint: "https://... без слэша на конце"
+  },
+  {
+    name: "DATABASE_URL",
+    hint: "строка подключения к базе",
+    pattern: /^postgres(ql)?:\/\/.+@.+\/.+$/
+  },
+  {
+    name: "DATABASE_DIRECT_URL",
+    hint: "строка подключения для миграций и скриптов",
+    pattern: /^postgres(ql)?:\/\/.+@.+\/.+$/
+  },
+  { name: "TBANK_TERMINAL_KEY", hint: "терминал Т-Банка" },
+  { name: "TBANK_PASSWORD", hint: "пароль терминала Т-Банка" },
+  {
+    name: "TBANK_NOTIFICATION_URL",
+    hint: "адрес, куда Т-Банк шлёт уведомления об оплате",
+    pattern: /^https:\/\/.+/
+  },
+  { name: "ORDER_TOKEN_SECRET", hint: "секрет для ссылок на заказы" },
+  // ENCRYPTION_KEY и SENTRY_DSN в шаблоне есть, но в коде не используются — это задел на
+  // будущее. В список не добавлены намеренно: проверка, которая ругается без последствий,
+  // быстро становится шумом, и настоящую находку в этом шуме пропустят.
+  {
+    name: "ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID",
+    hint: "кому бот пишет о покупках",
+    pattern: /^-?\d+(,-?\d+)*$/,
+    patternHint: "числовые chat_id через запятую"
+  }
+];
+
+// Эти включаются вместе: панель без любой из них соберётся и запустится, но войти будет нельзя.
+const ADMIN_PANEL = [
+  {
+    name: "ADMIN_AUTH_ISSUER",
+    pattern: /^https:\/\/.+\/auth\/v1$/,
+    patternHint: "адрес проекта Supabase С хвостом /auth/v1"
+  },
+  {
+    name: "NEXT_PUBLIC_SUPABASE_URL",
+    pattern: /^https:\/\/[^/]+$/,
+    patternHint: "адрес проекта Supabase БЕЗ /auth/v1 и без слэша"
+  },
+  { name: "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" },
+  {
+    name: "ADMIN_API_BASE_URL",
+    pattern: /^https?:\/\/[^/]+$/,
+    patternHint: "адрес API без слэша на конце"
+  }
+];
+
+const path = resolve(process.argv[2] ?? ".env");
+const values = parseEnvFile(await readFile(path, "utf8"));
+const problems = [];
+
+for (const variable of REQUIRED) {
+  problems.push(...inspect(variable, { required: true }));
+}
+
+if (values.get("ADMIN_AUTH_ENABLED") === "true") {
+  for (const variable of ADMIN_PANEL) {
+    problems.push(...inspect(variable, { required: true, context: "админ-панель включена" }));
+  }
+}
+
+if (problems.length > 0) {
+  console.error(`Проблемы в ${path}:`);
+  for (const problem of problems) {
+    console.error(`- ${problem}`);
+  }
+  console.error(
+    "\nЧаще всего это следствие копирования .env поверх серверного: значения, которые"
+    + " задавались только на сервере, затираются пустыми."
+  );
+  process.exit(1);
+}
+
+console.log(`${path}: обязательные переменные заполнены.`);
+
+function inspect(variable, { required, context }) {
+  const value = values.get(variable.name);
+  const where = context ? ` (${context})` : "";
+
+  if (value === undefined) {
+    return required ? [`${variable.name} — строки нет вовсе${where}${describe(variable)}`] : [];
+  }
+  if (value === "") {
+    return required ? [`${variable.name} — пустое значение${where}${describe(variable)}`] : [];
+  }
+  if (variable.pattern && !variable.pattern.test(value)) {
+    return [
+      `${variable.name} — значение не похоже на ожидаемое${where}`
+      + (variable.patternHint ? `: ожидается ${variable.patternHint}` : "")
+    ];
+  }
+  return [];
+}
+
+function describe(variable) {
+  return variable.hint ? `: ${variable.hint}` : "";
+}
+
+function parseEnvFile(content) {
+  const values = new Map();
+
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const separator = line.indexOf("=");
+    if (separator === -1) {
+      continue;
+    }
+    const name = line.slice(0, separator).trim();
+    let value = line.slice(separator + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length > 1)
+      || (value.startsWith("'") && value.endsWith("'") && value.length > 1)
+    ) {
+      value = value.slice(1, -1);
+    }
+    values.set(name, value);
+  }
+
+  return values;
+}
