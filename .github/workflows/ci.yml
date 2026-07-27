@@ -53,6 +53,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Check migration sources
         run: pnpm db:migrations:check
+      - name: Check SQL parameter types
+        run: pnpm db:sql:check
       - name: Check CI policy
         run: pnpm ci:check
       - name: Lint

@@ -16,6 +16,7 @@
     "test": "pnpm -r test",
     "test:migrations": "pnpm --filter @ticket-platform/database test:migrations",
     "db:migrations:check": "node scripts/check-migrations.mjs && node scripts/generate-pgboss-migration.mjs --check",
+    "db:sql:check": "node scripts/check-sql-parameter-types.mjs",
     "db:pgboss:generate": "node scripts/generate-pgboss-migration.mjs",
     "db:pgboss:check": "node scripts/generate-pgboss-migration.mjs --check",
     "admin:bootstrap": "node --import tsx scripts/bootstrap-admin.ts",
