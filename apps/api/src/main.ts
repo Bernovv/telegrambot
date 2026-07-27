@@ -470,7 +470,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
                 bodyLimitBytes: config.tbankPayments.bodyLimitBytes
               },
               verifier: tbank.provider,
-              handler: tbank.webhook
+              handler: tbank.webhook,
+              logger
             }
           }
         : {}),

@@ -98,7 +98,8 @@ async function testApplication(
     tbankWebhook: {
       config: { bodyLimitBytes },
       verifier: { verifyWebhook: dependencies.verifyWebhook },
-      handler: { execute: dependencies.execute }
+      handler: { execute: dependencies.execute },
+      logger: { info() {}, error() {} }
     }
   });
   await app.init();

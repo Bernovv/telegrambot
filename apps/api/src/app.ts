@@ -18,6 +18,7 @@ import {
   type ReadinessCheck
 } from "@ticket-platform/application";
 import type { TelegramUpdateProcessor } from "@ticket-platform/messenger-telegram";
+import type { Logger } from "@ticket-platform/observability";
 import type { FastifyReply } from "fastify";
 import {
   AdminAuthorizationModule,
@@ -129,6 +130,7 @@ export interface ApiApplicationOptions {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
     readonly handler: TBankWebhookHandler;
+    readonly logger: Logger;
   };
   readonly webhook?: {
     readonly config: TelegramWebhookEndpointConfig;
@@ -171,7 +173,8 @@ class ApiModule {
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
               options.tbankWebhook.verifier,
-              options.tbankWebhook.handler
+              options.tbankWebhook.handler,
+              options.tbankWebhook.logger
             )]
           : [])
       ],
