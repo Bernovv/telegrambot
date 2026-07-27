@@ -396,7 +396,8 @@ export function createTelegramBot(
   bot.catch((error) => {
     logger.error("telegram update failed", {
       updateId: String(error.ctx.update.update_id),
-      errorType: error.error instanceof Error ? error.error.name : "UnknownError"
+      errorType: error.error instanceof Error ? error.error.name : "UnknownError",
+      errorMessage: error.error instanceof Error ? error.error.message : String(error.error)
     });
 
     if (options.rethrowUpdateErrors) {
