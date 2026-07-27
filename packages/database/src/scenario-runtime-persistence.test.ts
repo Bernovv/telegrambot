@@ -433,10 +433,16 @@ describe("PostgreSQL scenario runtime persistence", () => {
 
     assert.equal(result.handled, true);
     const lock = findQuery(connection, "join public.orders orders");
-    assert.deepEqual(lock.values, [orderId, occurredAt]);
+    assert.deepEqual(lock.values, [orderId, orderId, occurredAt]);
     assert.match(lock.text, /orders\.user_id = sessions\.user_id/);
     assert.match(lock.text, /orders\.event_id = sessions\.event_id/);
     assert.match(lock.text, /orders\.status in \('paid', 'partially_refunded'\)/);
+    // Заказ подставляется дважды не по недосмотру: на одном параметре Postgres выводит для
+    // него тип uuid по сравнению с orders.id и падает на сравнении с текстом из context
+    // (`operator does not exist: text = uuid`). Здесь это ловится, потому что настоящая
+    // база в этих тестах не участвует — запросы разбирает подставной коннектор.
+    assert.match(lock.text, /orders\.id = \$1/);
+    assert.match(lock.text, /context #>> '\{order,orderId\}' = \$2/);
     const update = findQuery(connection, "lock_version = $2");
     assert.deepEqual(
       update.values.slice(0, 4),

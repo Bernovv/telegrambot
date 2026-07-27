@@ -330,6 +330,11 @@ implements ScenarioRuntimeRepository {
     readonly orderId: string;
     readonly occurredAt: Date;
   }) {
+    // Заказ подставляется двумя отдельными параметрами намеренно. `orders.id` — uuid, а
+    // `context #>> '{order,orderId}'` возвращает text; на одном параметре Postgres выводит
+    // для него тип uuid по первому сравнению и падает на втором с
+    // `operator does not exist: text = uuid`. Соседний lockForTelegramOrderAction работал
+    // только потому, что там параметр встречается единственный раз — в текстовом сравнении.
     const result = await this.session.query<SessionRow>(
       `select sessions.id, sessions.user_id, sessions.event_id,
               sessions.scenario_version_id, sessions.current_node_id,
@@ -343,15 +348,15 @@ implements ScenarioRuntimeRepository {
        join public.scenario_nodes node
          on node.scenario_version_id = sessions.scenario_version_id
         and node.id = sessions.current_node_id
-       where sessions.context #>> '{order,orderId}' = $1
+       where sessions.context #>> '{order,orderId}' = $2
          and sessions.channel = 'telegram'
          and sessions.status = 'waiting_input'
          and node.node_type = 'payment_start'
-         and sessions.expires_at > $2
+         and sessions.expires_at > $3
        order by sessions.updated_at desc, sessions.id
        limit 2
        for update of sessions`,
-      [input.orderId, input.occurredAt]
+      [input.orderId, input.orderId, input.occurredAt]
     );
     if (result.rowCount === 0) {
       return { status: "action_not_expected" as const };
