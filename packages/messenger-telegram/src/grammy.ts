@@ -16,6 +16,9 @@ export interface TelegramUpdateProcessor {
 
 export interface TelegramBotOptions {
   readonly rethrowUpdateErrors?: boolean;
+  /** Optional reverse-proxy base URL in front of api.telegram.org (e.g. a
+   * Cloudflare Worker), used where Telegram's API is blocked by the network. */
+  readonly apiRoot?: string;
 }
 
 export function createTelegramBot(
@@ -24,7 +27,10 @@ export function createTelegramBot(
   logger: Logger,
   options: TelegramBotOptions = {}
 ): Bot {
-  const bot = new Bot(token);
+  const bot = new Bot(
+    token,
+    options.apiRoot ? { client: { apiRoot: options.apiRoot } } : undefined
+  );
 
   bot.command("start", async (ctx) => {
     const message = ctx.message;

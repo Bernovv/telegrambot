@@ -26,6 +26,9 @@ export type TBankPaymentsConfig =
 
 export interface TelegramBotConfig extends AppConfig {
   readonly telegramBotToken: string;
+  /** Optional reverse-proxy base URL in front of api.telegram.org (e.g. a Cloudflare
+   * Worker), used where Telegram's API is blocked by the network. */
+  readonly telegramApiRoot?: string;
   readonly telegramDeliveryMode: TelegramDeliveryMode;
   readonly telegramDefaultCountry: string;
   readonly databasePoolMax: number;
@@ -42,6 +45,7 @@ export type TelegramWebhookConfig =
       readonly enabled: true;
       readonly bodyLimitBytes: number;
       readonly botToken: string;
+      readonly apiRoot?: string;
       readonly pathSecret: string;
       readonly headerSecret: string;
       readonly defaultCountry: string;
@@ -120,6 +124,7 @@ export interface WorkerConfig extends AppConfig {
     | {
         readonly enabled: true;
         readonly botToken: string;
+        readonly apiRoot?: string;
         readonly adminChatIds: readonly string[];
         readonly ticketTokenSecret: string;
         readonly leaseSeconds: number;
@@ -142,10 +147,12 @@ export function loadTelegramBotConfig(env: NodeJS.ProcessEnv): TelegramBotConfig
   const appConfig = loadAppConfig(env);
   const defaultMode = appConfig.appEnv === "production" ? "webhook" : "long-polling";
   const localOrderTokenSecret = "local-only-order-token-secret-change-me";
+  const telegramApiRoot = parseOptionalApiRoot(env.TELEGRAM_API_ROOT);
 
   return {
     ...appConfig,
     telegramBotToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
+    ...(telegramApiRoot ? { telegramApiRoot } : {}),
     telegramDeliveryMode: parseTelegramDeliveryMode(env.TELEGRAM_DELIVERY_MODE ?? defaultMode),
     telegramDefaultCountry: env.TELEGRAM_DEFAULT_COUNTRY ?? "RU",
     databasePoolMax: parsePositiveInteger(env.DATABASE_POOL_MAX ?? "10", "DATABASE_POOL_MAX"),
@@ -189,11 +196,13 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     1_024,
     1_048_576
   );
+  const webhookApiRoot = parseOptionalApiRoot(env.TELEGRAM_API_ROOT);
   const telegramWebhook: TelegramWebhookConfig = webhookEnabled
     ? {
         enabled: true,
         bodyLimitBytes,
         botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
+        ...(webhookApiRoot ? { apiRoot: webhookApiRoot } : {}),
         pathSecret: parseSecret(env.TELEGRAM_WEBHOOK_PATH_SECRET, "TELEGRAM_WEBHOOK_PATH_SECRET"),
         headerSecret: parseSecret(env.TELEGRAM_WEBHOOK_SECRET, "TELEGRAM_WEBHOOK_SECRET"),
         defaultCountry: env.TELEGRAM_DEFAULT_COUNTRY ?? "RU"
@@ -273,10 +282,12 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     env.TELEGRAM_NOTIFICATIONS_ENABLED ?? "false",
     "TELEGRAM_NOTIFICATIONS_ENABLED"
   );
+  const notificationsApiRoot = parseOptionalApiRoot(env.TELEGRAM_API_ROOT);
   const telegramNotifications: WorkerConfig["telegramNotifications"] = notificationsEnabled
     ? {
         enabled: true,
         botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
+        ...(notificationsApiRoot ? { apiRoot: notificationsApiRoot } : {}),
         adminChatIds: parseTelegramChatIds(
           env.ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID,
           "ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID"
@@ -520,6 +531,19 @@ function parseOrderNumberPrefix(value: string): string {
   }
 
   return value;
+}
+
+/** Optional https:// base URL of a proxy standing in for api.telegram.org. */
+function parseOptionalApiRoot(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (!/^https:\/\/.+[^/]$/.test(trimmed)) {
+    throw new Error("TELEGRAM_API_ROOT must be an https:// URL without a trailing slash");
+  }
+
+  return trimmed;
 }
 
 /** Accepts one chat ID, or several separated by commas (e.g. "111,222"). */

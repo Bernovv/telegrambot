@@ -206,7 +206,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
       const notificationHandler = new HandleNotificationJobService(
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationLedger,
-        createTelegramNotificationSender(notificationConfig.botToken),
+        createTelegramNotificationSender(notificationConfig.botToken, notificationConfig.apiRoot),
         new HmacTicketReferenceGenerator(notificationConfig.ticketTokenSecret),
         new QrTicketPngRenderer(),
         idGenerator,

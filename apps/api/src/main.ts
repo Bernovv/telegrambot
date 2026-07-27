@@ -435,7 +435,10 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           questionnaireService
         ),
         logger,
-        { rethrowUpdateErrors: true }
+        {
+          rethrowUpdateErrors: true,
+          ...(config.telegramWebhook.apiRoot ? { apiRoot: config.telegramWebhook.apiRoot } : {})
+        }
       );
 
       await pool.ping();

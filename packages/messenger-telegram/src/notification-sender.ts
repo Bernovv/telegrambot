@@ -121,13 +121,16 @@ export class GrammyTextNotificationSender {
 }
 
 export function createTelegramNotificationSender(
-  token: string
+  token: string,
+  apiRoot?: string
 ): GrammyTextNotificationSender {
   if (!token) {
     throw new Error("Telegram bot token is required for notifications");
   }
 
-  return new GrammyTextNotificationSender(new Api(token));
+  return new GrammyTextNotificationSender(
+    new Api(token, apiRoot ? { apiRoot } : undefined)
+  );
 }
 
 function validateRecipient(recipientId: string): void {

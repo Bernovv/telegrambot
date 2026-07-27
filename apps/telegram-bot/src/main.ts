@@ -182,7 +182,9 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     referralBalanceService,
     questionnaireService
   );
-  const bot = createTelegramBot(config.telegramBotToken, controller, logger);
+  const bot = createTelegramBot(config.telegramBotToken, controller, logger, {
+    ...(config.telegramApiRoot ? { apiRoot: config.telegramApiRoot } : {})
+  });
   const stop = () => {
     void bot.stop().catch((error: unknown) => {
       logger.error("telegram-bot stop failed", {
