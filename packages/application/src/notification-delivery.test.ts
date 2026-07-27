@@ -81,6 +81,42 @@ describe("HandleNotificationJobService", () => {
     assert.match(sender.messages[0]?.text ?? "", /Внешняя оплата: 2390,00 ₽/);
   });
 
+  it("sends an administrator purchase notification to every configured chat ID", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const service = createService(
+      ledger,
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ["376802789", "5596675886"]
+    );
+
+    const first = await service.execute(execution(adminJob));
+    const retry = await service.execute(execution(adminJob));
+
+    assert.deepEqual(first, {
+      eventType: "AdminPurchaseNotificationRequested",
+      delivered: 2,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.deepEqual(retry, {
+      eventType: "AdminPurchaseNotificationRequested",
+      delivered: 0,
+      duplicates: 2,
+      ignored: false
+    });
+    assert.deepEqual(
+      sender.messages.map((message) => message.recipientId).sort(),
+      ["376802789", "5596675886"]
+    );
+  });
+
   it("allows a new owner-bound redelivery request but deduplicates its retry", async () => {
     const ledger = new MemoryLedger();
     const sender = new RecordingSender();
@@ -540,7 +576,8 @@ function createService(
   questionnaireContexts?: QuestionnaireIntroContextRepository,
   questionnaireDrafts?: QuestionnaireDraftRepository,
   reminderContexts?: ReminderContextRepository,
-  broadcastContexts?: BroadcastContextRepository
+  broadcastContexts?: BroadcastContextRepository,
+  adminChatIds: readonly string[] = ["-1001234567890"]
 ): HandleNotificationJobService {
   let id = 0;
   const contexts: NotificationContextRepository = {
@@ -568,7 +605,7 @@ function createService(
     { publicToken() { return { token: "t".repeat(43) }; } },
     renderer,
     { newId() { id += 1; return `delivery-${id}`; } },
-    "-1001234567890",
+    adminChatIds,
     continuation,
     questionnaireContexts,
     questionnaireDrafts,

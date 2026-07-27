@@ -210,7 +210,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         new HmacTicketReferenceGenerator(notificationConfig.ticketTokenSecret),
         new QrTicketPngRenderer(),
         idGenerator,
-        notificationConfig.adminChatId,
+        notificationConfig.adminChatIds,
         scenarioPaymentContinuation,
         notificationPersistence.notificationContexts,
         questionnairePersistence.questionnaireDraftRepository,

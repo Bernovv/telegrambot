@@ -247,15 +247,20 @@ export class HandleNotificationJobService {
     private readonly ticketTokens: TicketPublicTokenGenerator,
     private readonly ticketRenderer: TicketPngRenderer,
     private readonly idGenerator: IdGenerator,
-    private readonly adminChatId: string,
+    private readonly adminChatIds: readonly string[],
     private readonly scenarioPaymentContinuation?: ScenarioPaymentContinuation,
     private readonly questionnaireContexts?: QuestionnaireIntroContextRepository,
     private readonly questionnaireDrafts?: QuestionnaireDraftRepository,
     private readonly reminderContexts?: ReminderContextRepository,
     private readonly broadcastContexts?: BroadcastContextRepository
   ) {
-    if (!/^-?\d{1,20}$/.test(adminChatId)) {
+    if (adminChatIds.length === 0) {
       throw new Error("Administrator notification chat ID is invalid");
+    }
+    for (const chatId of adminChatIds) {
+      if (!/^-?\d{1,20}$/.test(chatId)) {
+        throw new Error("Administrator notification chat ID is invalid");
+      }
     }
   }
 
@@ -432,23 +437,29 @@ export class HandleNotificationJobService {
       throw new Error("Administrator purchase context was not found");
     }
 
-    const result = await this.deliverOnce({
-      event,
-      input,
-      kind: "admin_purchase",
-      aggregateId: event.orderId,
-      recipientId: this.adminChatId,
-      idempotencyKey: `telegram:admin-purchase:${event.sourceEventId}:${this.adminChatId}`,
-      send: () => this.sender.sendText(
-        this.adminChatId,
-        formatAdminPurchaseMessage(context)
-      )
-    });
+    let delivered = 0;
+    let duplicates = 0;
+    for (const chatId of this.adminChatIds) {
+      const result = await this.deliverOnce({
+        event,
+        input,
+        kind: "admin_purchase",
+        aggregateId: event.orderId,
+        recipientId: chatId,
+        idempotencyKey: `telegram:admin-purchase:${event.sourceEventId}:${chatId}`,
+        send: () => this.sender.sendText(
+          chatId,
+          formatAdminPurchaseMessage(context)
+        )
+      });
+      delivered += result === "delivered" ? 1 : 0;
+      duplicates += result === "duplicate" ? 1 : 0;
+    }
 
     return {
       eventType: event.eventType,
-      delivered: result === "delivered" ? 1 : 0,
-      duplicates: result === "duplicate" ? 1 : 0,
+      delivered,
+      duplicates,
       ignored: false
     };
   }

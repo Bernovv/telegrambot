@@ -120,7 +120,7 @@ export interface WorkerConfig extends AppConfig {
     | {
         readonly enabled: true;
         readonly botToken: string;
-        readonly adminChatId: string;
+        readonly adminChatIds: readonly string[];
         readonly ticketTokenSecret: string;
         readonly leaseSeconds: number;
         readonly localConcurrency: number;
@@ -277,7 +277,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     ? {
         enabled: true,
         botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
-        adminChatId: parseTelegramChatId(
+        adminChatIds: parseTelegramChatIds(
           env.ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID,
           "ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID"
         ),
@@ -522,13 +522,25 @@ function parseOrderNumberPrefix(value: string): string {
   return value;
 }
 
-function parseTelegramChatId(value: string | undefined, name: string): string {
-  const chatId = required(value, name);
-  if (!/^-?\d{1,20}$/.test(chatId)) {
-    throw new Error(`${name} must be a numeric Telegram chat ID`);
+/** Accepts one chat ID, or several separated by commas (e.g. "111,222"). */
+function parseTelegramChatIds(value: string | undefined, name: string): readonly string[] {
+  const raw = required(value, name);
+  const chatIds = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (chatIds.length === 0) {
+    throw new Error(`${name} must contain at least one numeric Telegram chat ID`);
   }
 
-  return chatId;
+  for (const chatId of chatIds) {
+    if (!/^-?\d{1,20}$/.test(chatId)) {
+      throw new Error(`${name} must contain only numeric Telegram chat IDs`);
+    }
+  }
+
+  return chatIds;
 }
 
 function loadTBankPaymentsConfig(

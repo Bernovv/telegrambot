@@ -7,7 +7,7 @@ Apply all migrations, then configure the worker:
 ```text
 TELEGRAM_NOTIFICATIONS_ENABLED=true
 TELEGRAM_BOT_TOKEN=<secret>
-ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID=<numeric-chat-id>
+ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID=<numeric-chat-id>[,<numeric-chat-id>...]
 ORDER_TOKEN_SECRET=<same-secret-as-api>
 NOTIFICATION_DELIVERY_LEASE_SECONDS=60
 NOTIFICATION_WORKER_CONCURRENCY=2

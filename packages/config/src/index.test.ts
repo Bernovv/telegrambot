@@ -258,11 +258,25 @@ describe("loadWorkerConfig", () => {
     assert.deepEqual(config.telegramNotifications, {
       enabled: true,
       botToken: "test-token",
-      adminChatId: "-1001234567890",
+      adminChatIds: ["-1001234567890"],
       ticketTokenSecret: "s".repeat(32),
       leaseSeconds: 60,
       localConcurrency: 2
     });
+  });
+
+  it("loads multiple comma-separated administrator chat IDs", () => {
+    const config = loadWorkerConfig(validEnvironment({
+      TELEGRAM_NOTIFICATIONS_ENABLED: "true",
+      ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID: "376802789, 5596675886",
+      ORDER_TOKEN_SECRET: "s".repeat(32)
+    }));
+
+    assert.equal(config.telegramNotifications.enabled, true);
+    assert.deepEqual(
+      config.telegramNotifications.enabled ? config.telegramNotifications.adminChatIds : [],
+      ["376802789", "5596675886"]
+    );
   });
 
   it("rejects runtime queue migrations and invalid bounds", () => {
