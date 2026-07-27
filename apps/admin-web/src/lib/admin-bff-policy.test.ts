@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
-  isTrustedMutationOrigin
+  isFileDownloadPath,
+  isTrustedMutationOrigin,
+  isValidIdempotencyKey,
+  requiresIdempotencyKey
 } from "./admin-bff-policy";
 
 test("allowlists only implemented administrator API methods and paths", () => {
@@ -88,6 +91,86 @@ test("allowlists only implemented administrator API methods and paths", () => {
   );
   assert.equal(isAllowedAdminApiPath("POST", "orders"), false);
   assert.equal(isAllowedAdminApiPath("PATCH", "events/all/general"), false);
+});
+
+test("allowlists the operational endpoints backing the administrator screens", () => {
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000501/manual-payment"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000501/refunds/full"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "broadcasts"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/participants/export"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath("POST", "orders/all/manual-payment"),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000501/refunds/partial"
+    ),
+    false
+  );
+  assert.equal(isAllowedAdminApiPath("PATCH", "broadcasts"), false);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/participants"
+    ),
+    false
+  );
+});
+
+test("demands a forwardable idempotency key for money-moving requests only", () => {
+  assert.equal(
+    requiresIdempotencyKey(
+      "orders/00000000-0000-4000-8000-000000000501/manual-payment"
+    ),
+    true
+  );
+  assert.equal(
+    requiresIdempotencyKey(
+      "orders/00000000-0000-4000-8000-000000000501/refunds/full"
+    ),
+    true
+  );
+  assert.equal(requiresIdempotencyKey("broadcasts"), false);
+  assert.equal(requiresIdempotencyKey("events"), false);
+
+  assert.equal(isValidIdempotencyKey("manual-payment:2026-08-01:abc123"), true);
+  assert.equal(isValidIdempotencyKey("short"), false);
+  assert.equal(isValidIdempotencyKey("has spaces in it"), false);
+  assert.equal(isValidIdempotencyKey("a".repeat(201)), false);
+  assert.equal(isValidIdempotencyKey(null), false);
+});
+
+test("marks only the participants export as a file download", () => {
+  assert.equal(
+    isFileDownloadPath(
+      "events/00000000-0000-4000-8000-000000000101/participants/export"
+    ),
+    true
+  );
+  assert.equal(
+    isFileDownloadPath("events/00000000-0000-4000-8000-000000000101"),
+    false
+  );
 });
 
 test("allows a larger body only for bounded document and graph payloads", () => {
