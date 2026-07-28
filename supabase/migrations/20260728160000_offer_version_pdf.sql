@@ -13,6 +13,13 @@
 -- ВАЖНО: миграция бессмысленна, пока файл не выложен на сервер. Порядок — сначала файл и
 -- nginx, потом миграция, иначе бот будет давать ссылку в никуда.
 
+-- Сначала снимаем активность со старой версии, только потом вставляем новую. Частичный
+-- уникальный индекс offer_versions_one_active_per_document_idx разрешает ровно одну активную
+-- версию на документ, и обратный порядок падает на вставке.
+update public.offer_versions
+set is_active = false
+where id = '019c7a20-0000-7000-8000-000000000011';
+
 insert into public.offer_versions (
   id, offer_document_id, version_number, public_url, storage_path, content_type,
   sha256, published_at, is_active, display_text_snapshot
@@ -365,11 +372,6 @@ businessdayspb@yandex.ru, в соответствии с Законодател�
 Федерации и условиями настоящей Оферты.'
 )
 on conflict (id) do nothing;
-
--- Версия 1 больше не действует: активной может быть только одна.
-update public.offer_versions
-set is_active = false
-where id = '019c7a20-0000-7000-8000-000000000011';
 
 update public.offer_documents
 set source_type = 'upload',
