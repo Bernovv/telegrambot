@@ -149,8 +149,7 @@ describe("scenario-content", () => {
 
     assert.ok(managerButton && "url" in managerButton);
     assert.equal(managerButton.url, "https://t.me/liubovpashian");
-    // Запасной путь в тексте остаётся в любом случае: человек может не захотеть писать в личку.
-    assert.match(reply.text, /прямо здесь/);
+    assert.equal(reply.text, "Ответим на все вопросы 💬");
   });
 
   it("states the actual 7/10/15% referral tiers and offers a bonus-balance screen", () => {

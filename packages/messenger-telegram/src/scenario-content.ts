@@ -176,11 +176,7 @@ export function phoneRequiredReply(): TelegramReplyModel {
 
 export function contactUsReply(): TelegramReplyModel {
   return {
-    text: [
-      "Напишите нашему менеджеру напрямую — ответим быстро 💬",
-      "",
-      "Если кнопка почему-то не откроется, задайте вопрос прямо здесь: мы читаем этот чат."
-    ].join("\n"),
+    text: "Ответим на все вопросы 💬",
     inlineButtons: [
       { text: "Написать менеджеру", url: MANAGER_CHAT_URL },
       { text: "Назад", callbackData: "start" }
