@@ -78,6 +78,8 @@ describe("HandleNotificationJobService", () => {
     assert.equal(result.delivered, 1);
     assert.equal(sender.messages[0]?.recipientId, "-1001234567890");
     assert.match(sender.messages[0]?.text ?? "", /@buyer купил 2 билет/);
+    // По нику человека не найти в списке участников и нельзя позвонить — телефон обязателен.
+    assert.match(sender.messages[0]?.text ?? "", /Телефон: \+79990000000/);
     assert.match(sender.messages[0]?.text ?? "", /2490,00 ₽/);
     assert.match(sender.messages[0]?.text ?? "", /Баланс: 100,00 ₽/);
     assert.match(sender.messages[0]?.text ?? "", /Внешняя оплата: 2390,00 ₽/);
@@ -681,6 +683,7 @@ const adminContext: AdminPurchaseContext = {
   userId: "019c0123-4567-789a-bcde-f0123456789d",
   eventTitle: ticketContext.eventTitle,
   username: "buyer",
+  phone: "+79990000000",
   ticketCount: 2,
   totalKopecks: 249_000n,
   walletKopecks: 10_000n,

@@ -41,6 +41,7 @@ interface AdminPurchaseContextRow {
   readonly total_kopecks: string;
   readonly wallet_applied_kopecks: string;
   readonly external_due_kopecks: string;
+  readonly phone: string | null;
 }
 
 interface DeliveryStateRow {
@@ -99,6 +100,15 @@ implements
          order by last_seen_at desc, id
          limit 1
        ) identity on true
+       left join lateral (
+         select value_normalized
+         from public.user_contacts
+         where user_id = orders.user_id
+           and contact_type = 'phone'
+           and verification_status in ('verified', 'imported')
+         order by is_primary desc, verified_at desc nulls last, created_at desc
+         limit 1
+       ) contact on true
        where orders.id = $1
          and orders.status in ('paid', 'partially_refunded')
          and ($2::uuid is null or orders.user_id = $2)`,
@@ -143,6 +153,7 @@ implements
          orders.user_id,
          coalesce(nullif(orders.event_snapshot ->> 'title', ''), events.title) as event_title,
          identity.username,
+         contact.value_normalized as phone,
          (select count(*)::text from public.tickets where order_id = orders.id) as ticket_count,
          orders.total_kopecks::text,
          orders.wallet_applied_kopecks::text,
@@ -157,6 +168,15 @@ implements
          order by last_seen_at desc, id
          limit 1
        ) identity on true
+       left join lateral (
+         select value_normalized
+         from public.user_contacts
+         where user_id = orders.user_id
+           and contact_type = 'phone'
+           and verification_status in ('verified', 'imported')
+         order by is_primary desc, verified_at desc nulls last, created_at desc
+         limit 1
+       ) contact on true
        where orders.id = $1
          and orders.status = 'paid'`,
       [orderId]
@@ -177,6 +197,7 @@ implements
       userId: row.user_id,
       eventTitle: row.event_title,
       username: row.username,
+      phone: row.phone,
       ticketCount,
       totalKopecks: BigInt(row.total_kopecks),
       walletKopecks: BigInt(row.wallet_applied_kopecks),
@@ -230,6 +251,15 @@ implements
          order by last_seen_at desc, id
          limit 1
        ) identity on true
+       left join lateral (
+         select value_normalized
+         from public.user_contacts
+         where user_id = orders.user_id
+           and contact_type = 'phone'
+           and verification_status in ('verified', 'imported')
+         order by is_primary desc, verified_at desc nulls last, created_at desc
+         limit 1
+       ) contact on true
        where orders.id = $1
          and orders.status in ('paid', 'partially_refunded')`,
       [orderId]

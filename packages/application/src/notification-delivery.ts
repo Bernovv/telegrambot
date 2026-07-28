@@ -27,6 +27,7 @@ export interface AdminPurchaseContext {
   readonly userId: string;
   readonly eventTitle: string;
   readonly username: string | null;
+  readonly phone: string | null;
   readonly ticketCount: number;
   readonly totalKopecks: bigint;
   readonly walletKopecks: bigint;
@@ -885,6 +886,9 @@ function formatAdminPurchaseMessage(context: AdminPurchaseContext): string {
 
   return [
     `${buyer} купил ${context.ticketCount} билет(а) на сумму ${formatKopecks(context.totalKopecks)}.`,
+    // Телефон важнее ника: по нику человека не найти в списке участников и ему нельзя
+    // позвонить, а ник вдобавок может быть не задан или смениться в любой момент.
+    `Телефон: ${context.phone ? singleLine(context.phone, 32) : "не указан"}`,
     `Мероприятие: ${singleLine(context.eventTitle, 200)}`,
     `Заказ: ${singleLine(context.orderNumber, 60)}`,
     `Баланс: ${formatKopecks(context.walletKopecks)}`,
