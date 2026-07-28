@@ -143,6 +143,17 @@ describe("scenario-content", () => {
     assert.ok(contactUsReply().inlineButtons?.length);
   });
 
+  it("ведёт к менеджеру ссылкой и оставляет запасной путь текстом", () => {
+    const reply = contactUsReply();
+    const managerButton = reply.inlineButtons?.find((button) => button.text === "Написать менеджеру");
+
+    assert.ok(managerButton && "url" in managerButton);
+    assert.equal(managerButton.url, "tg://user?id=7490389949");
+    // Ссылка по числовому ID срабатывает не у всех — настройки приватности адресата могут её
+    // запретить. Поэтому в тексте обязательно остаётся вариант «спросить прямо здесь».
+    assert.match(reply.text, /прямо здесь/);
+  });
+
   it("states the actual 7/10/15% referral tiers and offers a bonus-balance screen", () => {
     const reply = partnerProgramReply();
     assert.match(reply.text, /7%/);

@@ -28,6 +28,13 @@ const CHILD_TICKET_PRICE = 490;
 const FAMILY_STANDARD_PRICE = 3990;
 const FAMILY_VIP_PRICE = 6490;
 
+// Ссылка на менеджера по числовому Telegram ID. Bot API официально поддерживает такие ссылки в
+// кнопках, но с оговоркой: они срабатывают, если это разрешено настройками приватности адресата —
+// обычно достаточно, чтобы менеджер хоть раз написал боту. Ссылка вида https://t.me/username
+// работает без всяких условий, так что при появлении username это место стоит поменять: замена
+// одной строки.
+const MANAGER_CHAT_URL = "tg://user?id=7490389949";
+
 export function mainMenuButtons(): readonly TelegramInlineButton[] {
   return [
     { text: "Программа", callbackData: "program" },
@@ -170,8 +177,15 @@ export function phoneRequiredReply(): TelegramReplyModel {
 
 export function contactUsReply(): TelegramReplyModel {
   return {
-    text: "Напишите вопрос одним сообщением — мы читаем этот чат и ответим здесь как можно быстрее.",
-    inlineButtons: [{ text: "Назад", callbackData: "start" }]
+    text: [
+      "Напишите нашему менеджеру напрямую — ответим быстро 💬",
+      "",
+      "Если кнопка почему-то не откроется, задайте вопрос прямо здесь: мы читаем этот чат."
+    ].join("\n"),
+    inlineButtons: [
+      { text: "Написать менеджеру", url: MANAGER_CHAT_URL },
+      { text: "Назад", callbackData: "start" }
+    ]
   };
 }
 
