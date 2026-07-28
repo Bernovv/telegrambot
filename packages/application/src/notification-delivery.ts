@@ -383,39 +383,33 @@ export class HandleNotificationJobService {
     }
     assertTicketSet(event.ticketIds, context.tickets);
 
-    let delivered = 0;
-    let duplicates = 0;
-    for (const ticket of context.tickets) {
-      const token = this.ticketTokens.publicToken(ticket.id).token;
-      const caption = formatTicketMessage(
-        context,
-        ticket,
-        token,
-        event.eventType === "TicketRedeliveryRequested"
-      );
-      const result = await this.deliverOnce({
-        event,
-        input,
-        kind: "ticket_user",
-        aggregateId: ticket.id,
-        recipientId,
-        idempotencyKey: event.eventType === "TicketsIssued"
-          ? `telegram:ticket:${ticket.id}`
-          : `telegram:ticket-redelivery:${event.sourceEventId}:${ticket.id}`,
-        send: async () => {
-          const image = await this.ticketRenderer.renderPng(token);
-          validateTicketPng(image);
-          return this.sender.sendImage(
-            recipientId,
-            image,
-            `${ticket.ticketNumber}.png`,
-            caption
-          );
-        }
-      });
-      delivered += result === "delivered" ? 1 : 0;
-      duplicates += result === "duplicate" ? 1 : 0;
+    // Одно сообщение на заказ, а не по одному на каждое место: человеку нужно подтверждение
+    // оплаты, а не N одинаковых писем. QR-картинку не отправляем — по решению заказчика
+    // Telegram ведёт себя так же, как MAX, где билетов-картинок нет. Записи билетов в базе
+    // остаются: по ним строятся списки участников и выгрузка.
+    const first = context.tickets[0];
+    if (!first) {
+      throw new Error("Ticket delivery context has no tickets");
     }
+    const result = await this.deliverOnce({
+      event,
+      input,
+      kind: "ticket_user",
+      aggregateId: first.id,
+      recipientId,
+      idempotencyKey: event.eventType === "TicketsIssued"
+        ? `telegram:order-paid:${event.orderId}`
+        : `telegram:order-paid-redelivery:${event.sourceEventId}:${event.orderId}`,
+      send: async () => this.sender.sendText(
+        recipientId,
+        formatPaymentConfirmedMessage(
+          context,
+          event.eventType === "TicketRedeliveryRequested"
+        )
+      )
+    });
+    const delivered = result === "delivered" ? 1 : 0;
+    const duplicates = result === "duplicate" ? 1 : 0;
 
     return {
       eventType: event.eventType,
@@ -651,44 +645,9 @@ export class HandleNotificationJobService {
   }
 }
 
-function validateTicketPng(image: TicketPng): void {
-  if (
-    image.mimeType !== "image/png"
-    || !(image.bytes instanceof Uint8Array)
-    || image.bytes.byteLength < 100
-    || image.bytes.byteLength > 10 * 1_024 * 1_024
-    || !Number.isSafeInteger(image.width)
-    || !Number.isSafeInteger(image.height)
-    || image.width < 256
-    || image.width > 2_048
-    || image.height !== image.width
-  ) {
-    throw new Error("Rendered ticket PNG is invalid");
-  }
-  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-  if (signature.some((byte, index) => image.bytes[index] !== byte)) {
-    throw new Error("Rendered ticket PNG signature is invalid");
-  }
-  if (
-    image.bytes[12] !== 73
-    || image.bytes[13] !== 72
-    || image.bytes[14] !== 68
-    || image.bytes[15] !== 82
-    || readPngUint32(image.bytes, 16) !== image.width
-    || readPngUint32(image.bytes, 20) !== image.height
-  ) {
-    throw new Error("Rendered ticket PNG dimensions are invalid");
-  }
-}
 
-function readPngUint32(bytes: Uint8Array, offset: number): number {
-  return (
-    (bytes[offset] ?? 0) * 0x1000000
-    + (bytes[offset + 1] ?? 0) * 0x10000
-    + (bytes[offset + 2] ?? 0) * 0x100
-    + (bytes[offset + 3] ?? 0)
-  );
-}
+
+
 
 function parseNotificationEvent(input: unknown): NotificationEvent {
   const job = asRecord(input, "Notification job must be an object");
@@ -902,26 +861,22 @@ function assertTicketSet(
   }
 }
 
-function formatTicketMessage(
+function formatPaymentConfirmedMessage(
   context: TicketDeliveryContext,
-  ticket: TicketDeliveryContext["tickets"][number],
-  token: string,
   redelivery: boolean
 ): string {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
-    throw new Error("Ticket public token is invalid");
+  if (redelivery) {
+    return [
+      "Повторная отправка подтверждения.",
+      `Мероприятие: ${singleLine(context.eventTitle, 200)}`,
+      `Заказ: ${singleLine(context.orderNumber, 60)}`
+    ].join("\n");
   }
 
-  return [
-    redelivery ? "Повторная отправка билета." : "Оплата подтверждена.",
-    `Мероприятие: ${singleLine(context.eventTitle, 200)}`,
-    `Заказ: ${singleLine(context.orderNumber, 60)}`,
-    `Билет: ${singleLine(ticket.ticketNumber, 60)}`,
-    `Код билета: ${token}`,
-    "",
-    "Сохраните это сообщение. Билет можно повторно получить в разделе «Мои билеты»."
-  ].join("\n");
+  // Формулировка согласована с заказчиком и совпадает с MAX-ботом.
+  return "Оплата прошла ✅ Билет за вами! До встречи на Бизнес-Пикнике 🏕";
 }
+
 
 function formatAdminPurchaseMessage(context: AdminPurchaseContext): string {
   const buyer = context.username

@@ -119,7 +119,10 @@ describe("grammY Telegram transport", () => {
     assert.equal(apiCalls.filter((call) => call.method === "editMessageText").length, 1);
   });
 
-  it("maps ticket commands and owner-bound redelivery callbacks", async () => {
+  // Команда /tickets и кнопка «Мои билеты» убраны из бота: билеты-картинки больше не
+  // выдаются, показывать в этом разделе нечего. Повторная отправка подтверждения по
+  // ticket_redeliver осталась — ею пользуется поддержка.
+  it("maps the owner-bound redelivery callback", async () => {
     const listCommands: ListTelegramTicketsCommand[] = [];
     const redeliveryCommands: RequestTelegramTicketRedeliveryCommand[] = [];
     const tickets: TelegramTicketListUseCase = {
@@ -180,15 +183,12 @@ describe("grammY Telegram transport", () => {
     await bot.handleUpdate(myTicketsFixture());
     await bot.handleUpdate(ticketRedeliveryFixture());
 
-    assert.deepEqual(listCommands, [
-      { senderExternalUserId: "777" },
-      { senderExternalUserId: "777" }
-    ]);
+    // Ни команда, ни кнопка больше не обрабатываются — список билетов не запрашивается.
+    assert.deepEqual(listCommands, []);
     assert.equal(redeliveryCommands[0]?.ticketId, ticketId);
     assert.equal(redeliveryCommands[0]?.senderExternalUserId, "777");
     assert.equal(redeliveryCommands[0]?.updateId, "1006");
-    assert.equal(apiCalls.filter((method) => method === "sendMessage").length, 2);
-    assert.equal(apiCalls.filter((method) => method === "answerCallbackQuery").length, 2);
+    assert.equal(apiCalls.filter((method) => method === "answerCallbackQuery").length, 1);
   });
 
   it("rethrows handler failures for retryable webhook delivery", async () => {

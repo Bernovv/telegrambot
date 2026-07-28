@@ -56,18 +56,6 @@ export function createTelegramBot(
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
-  bot.command("tickets", async (ctx) => {
-    if (!ctx.from || ctx.chat.type !== "private") {
-      await ctx.reply("Билеты доступны только в личном чате с ботом.");
-      return;
-    }
-
-    const replies = await controller.onTickets({
-      senderExternalUserId: String(ctx.from.id)
-    });
-    await sendReplies(ctx.reply.bind(ctx), replies);
-  });
-
   bot.on("message:contact", async (ctx) => {
     if (!ctx.from || ctx.chat.type !== "private") {
       await ctx.reply("Номер телефона можно отправить только в личном чате с ботом.");
@@ -373,22 +361,6 @@ export function createTelegramBot(
   bot.callbackQuery(["start", "back_to_program"], async (ctx) => {
     await ctx.answerCallbackQuery();
     await sendReplies(ctx.reply.bind(ctx), controller.onMenu());
-  });
-
-  bot.callbackQuery("my_tickets", async (ctx) => {
-    if (
-      !ctx.callbackQuery.message
-      || ctx.callbackQuery.message.chat.type !== "private"
-    ) {
-      await ctx.answerCallbackQuery({ text: "Откройте личный чат с ботом" });
-      return;
-    }
-
-    const replies = await controller.onTickets({
-      senderExternalUserId: String(ctx.from.id)
-    });
-    await ctx.answerCallbackQuery();
-    await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
   bot.callbackQuery(

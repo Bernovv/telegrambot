@@ -20,7 +20,7 @@ import {
 import type { QuestionnaireDraft, QuestionnaireDraftRepository } from "./participant-questionnaire.js";
 
 describe("HandleNotificationJobService", () => {
-  it("delivers every ticket once and skips a completed retry", async () => {
+  it("шлёт одно подтверждение на заказ, а не по одному на место, и не повторяется", async () => {
     const ledger = new MemoryLedger();
     const sender = new RecordingSender();
     const renderer = new RecordingRenderer();
@@ -31,25 +31,29 @@ describe("HandleNotificationJobService", () => {
 
     assert.deepEqual(first, {
       eventType: "TicketsIssued",
-      delivered: 2,
+      delivered: 1,
       duplicates: 0,
       ignored: false
     });
     assert.deepEqual(second, {
       eventType: "TicketsIssued",
       delivered: 0,
-      duplicates: 2,
+      duplicates: 1,
       ignored: false
     });
-    assert.equal(sender.messages.length, 2);
-    assert.equal(renderer.tokens.length, 2);
-    assert.match(sender.messages[0]?.text ?? "", /Билет: BP-ORDER-T001/);
-    assert.match(sender.messages[0]?.text ?? "", /Код билета: t{43}/);
+    assert.equal(sender.messages.length, 1);
+    // QR больше не рисуется: в заказе два места, а картинок ноль.
+    assert.equal(renderer.tokens.length, 0);
+    assert.equal(
+      sender.messages[0]?.text,
+      "Оплата прошла ✅ Билет за вами! До встречи на Бизнес-Пикнике 🏕"
+    );
   });
 
-  it("resumes after a partial failure without repeating a sent ticket", async () => {
+  it("после сбоя отправки повторяет попытку и доводит подтверждение до человека", async () => {
     const ledger = new MemoryLedger();
-    const sender = new RecordingSender("BP-ORDER-T002");
+    // Отправитель падает один раз на первом сообщении, дальше работает.
+    const sender = new RecordingSender("Оплата прошла");
     const service = createService(ledger, sender);
 
     await assert.rejects(service.execute(execution(ticketJob)), /Telegram send failed/);
@@ -58,11 +62,9 @@ describe("HandleNotificationJobService", () => {
     assert.deepEqual(retry, {
       eventType: "TicketsIssued",
       delivered: 1,
-      duplicates: 1,
+      duplicates: 0,
       ignored: false
     });
-    assert.equal(sender.messages.filter((message) => message.text.includes("T001")).length, 1);
-    assert.equal(sender.messages.filter((message) => message.text.includes("T002")).length, 2);
     assert.deepEqual(ledger.failureCodes, ["ExternalDeliveryError"]);
   });
 
@@ -133,7 +135,7 @@ describe("HandleNotificationJobService", () => {
     assert.equal(retry.duplicates, 1);
     assert.equal(nextRequest.delivered, 1);
     assert.equal(sender.messages.length, 2);
-    assert.match(sender.messages[0]?.text ?? "", /^Повторная отправка билета\./);
+    assert.match(sender.messages[0]?.text ?? "", /^Повторная отправка подтверждения\./);
   });
 
   it("continues a scenario only from a confirmed payment domain event", async () => {
