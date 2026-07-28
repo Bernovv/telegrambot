@@ -148,9 +148,8 @@ describe("scenario-content", () => {
     const managerButton = reply.inlineButtons?.find((button) => button.text === "Написать менеджеру");
 
     assert.ok(managerButton && "url" in managerButton);
-    assert.equal(managerButton.url, "tg://user?id=7490389949");
-    // Ссылка по числовому ID срабатывает не у всех — настройки приватности адресата могут её
-    // запретить. Поэтому в тексте обязательно остаётся вариант «спросить прямо здесь».
+    assert.equal(managerButton.url, "https://t.me/liubovpashian");
+    // Запасной путь в тексте остаётся в любом случае: человек может не захотеть писать в личку.
     assert.match(reply.text, /прямо здесь/);
   });
 

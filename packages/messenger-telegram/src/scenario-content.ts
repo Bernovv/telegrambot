@@ -28,12 +28,11 @@ const CHILD_TICKET_PRICE = 490;
 const FAMILY_STANDARD_PRICE = 3990;
 const FAMILY_VIP_PRICE = 6490;
 
-// Ссылка на менеджера по числовому Telegram ID. Bot API официально поддерживает такие ссылки в
-// кнопках, но с оговоркой: они срабатывают, если это разрешено настройками приватности адресата —
-// обычно достаточно, чтобы менеджер хоть раз написал боту. Ссылка вида https://t.me/username
-// работает без всяких условий, так что при появлении username это место стоит поменять: замена
-// одной строки.
-const MANAGER_CHAT_URL = "tg://user?id=7490389949";
+// Ссылка на менеджера по username. Сознательно не по числовому ID: ссылка вида
+// tg://user?id=... открывается, только если это разрешено настройками приватности адресата, а
+// https://t.me/username работает всегда. Если username сменится, поменяется и ссылка — но это
+// заметят сразу, в отличие от молчаливого отказа по приватности.
+const MANAGER_CHAT_URL = "https://t.me/liubovpashian";
 
 export function mainMenuButtons(): readonly TelegramInlineButton[] {
   return [
