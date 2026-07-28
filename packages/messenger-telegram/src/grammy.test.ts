@@ -114,7 +114,8 @@ describe("grammY Telegram transport", () => {
     assert.equal(contactCommands[0]?.contact.externalUserId, "777");
     assert.equal(offerCommands[0]?.publicOrderToken, "a".repeat(43));
     assert.equal(offerCommands[0]?.callbackQueryId, "callback-1");
-    assert.equal(apiCalls.filter((call) => call.method === "sendMessage").length, 3);
+    // Четыре, а не три: на контакт бот отвечает подтверждением и следом возвращает меню.
+    assert.equal(apiCalls.filter((call) => call.method === "sendMessage").length, 4);
     assert.equal(apiCalls.filter((call) => call.method === "answerCallbackQuery").length, 1);
     assert.equal(apiCalls.filter((call) => call.method === "editMessageText").length, 1);
   });

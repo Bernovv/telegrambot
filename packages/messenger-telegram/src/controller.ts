@@ -491,25 +491,30 @@ export class TelegramUpdateController {
       ];
     }
 
+    // Вторым сообщением всегда возвращаем меню. До этого человек оставался с пустым экраном
+    // и не знал, что теперь ему доступны покупка, партнёрка и остальные разделы: клавиатуру
+    // с запросом контакта мы убираем, а взамен не показывали ничего.
     if (result.bonusCredited) {
       return [
         {
-          text: `Номер подтвержден. На баланс начислено ${formatKopecks(result.bonusAmountKopecks)} ₽.`,
+          text: `Номер подтверждён ✅ На баланс начислено ${formatKopecks(result.bonusAmountKopecks)} ₽ 🎁`,
           keyboard: "remove"
-        }
+        },
+        menuReply()
       ];
     }
 
     if (result.bonusReason === "already_credited") {
       return [
         {
-          text: `Номер подтвержден. Доступный баланс: ${formatKopecks(result.availableBalanceKopecks)} ₽.`,
+          text: `Номер подтверждён ✅ Доступный баланс: ${formatKopecks(result.availableBalanceKopecks)} ₽.`,
           keyboard: "remove"
-        }
+        },
+        menuReply()
       ];
     }
 
-    return [{ text: "Номер подтвержден.", keyboard: "remove" }];
+    return [{ text: "Номер подтверждён ✅", keyboard: "remove" }, menuReply()];
   }
 
   async onTickets(
