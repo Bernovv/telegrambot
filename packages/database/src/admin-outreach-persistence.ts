@@ -97,11 +97,15 @@ implements AdminOutreachRepository {
     await this.write(async (connection) => {
       await connection.query(
         `insert into public.outreach_campaigns (
-           id, name, description, status, created_by_admin_id,
+         id, name, description, status, created_by_admin_id,
            created_at, updated_at, completed_at
          ) values (
-           $1, $2, $3, $4, $5, $6, $6,
-           case when $4 = 'completed' then $6 else null end
+           $1::uuid, $2::text, $3::text, $4::text, $5::uuid,
+           $6::timestamptz, $6::timestamptz,
+           case
+             when $4::text = 'completed' then $6::timestamptz
+             else null::timestamptz
+           end
          )`,
         [
           input.id,
