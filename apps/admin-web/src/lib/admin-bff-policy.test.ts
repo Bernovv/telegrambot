@@ -8,6 +8,21 @@ import {
 
 test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("GET", "events"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "outreach/campaigns"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaign-contacts/activities"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/import"
+    ),
+    true
+  );
   assert.equal(
     isAllowedAdminApiPath(
       "GET",
@@ -108,6 +123,12 @@ test("allows a larger body only for bounded document and graph payloads", () => 
       "events/00000000-0000-4000-8000-000000000101/content-blocks"
     ),
     65_536
+  );
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/import"
+    ),
+    524_288
   );
 });
 

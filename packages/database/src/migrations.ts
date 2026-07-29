@@ -104,5 +104,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260728160000_offer_version_pdf",
     description: "Publish the signed offer PDF as the active immutable offer version",
     destructive: false
+  },
+  {
+    id: "20260729100000_outreach_tracking",
+    description: "Create outreach campaigns, pre-registration contacts, assignments, and append-only manager activities",
+    destructive: false
   }
 ];

@@ -3,6 +3,8 @@ export const ADMIN_PERMISSIONS = [
   "users.write",
   "contacts.export",
   "participants.export",
+  "outreach.read",
+  "outreach.write",
   "events.read",
   "events.write",
   "events.publish",

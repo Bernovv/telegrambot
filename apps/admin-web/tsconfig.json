@@ -34,6 +34,9 @@
       ],
       "@ticket-platform/contracts/admin-events": [
         "../../packages/contracts/src/admin-events.ts"
+      ],
+      "@ticket-platform/contracts/admin-outreach": [
+        "../../packages/contracts/src/admin-outreach.ts"
       ]
     }
   },

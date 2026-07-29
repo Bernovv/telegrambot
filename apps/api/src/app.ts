@@ -58,6 +58,10 @@ import {
   type CreateAdminBroadcastHandler
 } from "./admin-broadcast-api.js";
 import {
+  AdminOutreachApiModule,
+  type AdminOutreachHandler
+} from "./admin-outreach-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -126,6 +130,7 @@ export interface ApiApplicationOptions {
   readonly adminEvents?: AdminEventsHandlers;
   readonly participantsExport?: ExportParticipantsHandler;
   readonly adminBroadcast?: CreateAdminBroadcastHandler;
+  readonly adminOutreach?: AdminOutreachHandler;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -169,6 +174,9 @@ class ApiModule {
         ...(options.adminBroadcast
           ? [AdminBroadcastApiModule.register(options.adminBroadcast)]
           : []),
+        ...(options.adminOutreach
+          ? [AdminOutreachApiModule.register(options.adminOutreach)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -202,6 +210,7 @@ export async function createApiApplication(
       || options.adminEvents
       || options.participantsExport
       || options.adminBroadcast
+      || options.adminOutreach
     )
     && !options.adminAuth
   ) {

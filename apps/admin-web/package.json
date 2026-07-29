@@ -9,7 +9,7 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\" proxy.ts next.config.ts --max-warnings=0",
     "start": "next start",
     "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",

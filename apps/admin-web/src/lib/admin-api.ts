@@ -7,6 +7,18 @@ import type {
   CursorPage
 } from "@ticket-platform/contracts";
 import type {
+  OutreachCampaignContactDetail,
+  OutreachCampaignContactPage,
+  OutreachCampaignExport,
+  OutreachCampaignStatus,
+  OutreachCampaignSummary,
+  OutreachChannel,
+  OutreachContactStatus,
+  OutreachImportResult,
+  OutreachImportRow,
+  OutreachManager
+} from "@ticket-platform/contracts/admin-outreach";
+import type {
   AdminEventDetail,
   AdminEventCatalogMutationResult,
   AdminEventContentMutationResult,
@@ -76,6 +88,134 @@ export function getUser(
   signal?: AbortSignal
 ): Promise<AdminUserDetail> {
   return requestAdminApi(`users/${encodeURIComponent(userId)}`, signal);
+}
+
+export function listOutreachCampaigns(
+  signal?: AbortSignal
+): Promise<readonly OutreachCampaignSummary[]> {
+  return requestAdminApi("outreach/campaigns", signal);
+}
+
+export function createOutreachCampaign(input: {
+  readonly name: string;
+  readonly description?: string;
+}): Promise<OutreachCampaignSummary> {
+  return requestAdminMutation("outreach/campaigns", "POST", input);
+}
+
+export function getOutreachCampaign(
+  campaignId: string,
+  signal?: AbortSignal
+): Promise<OutreachCampaignSummary> {
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}`,
+    signal
+  );
+}
+
+export function updateOutreachCampaign(
+  campaignId: string,
+  input: {
+    readonly name?: string;
+    readonly description?: string | null;
+    readonly status?: OutreachCampaignStatus;
+  }
+): Promise<OutreachCampaignSummary> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}`,
+    "PATCH",
+    input
+  );
+}
+
+export interface OutreachContactFilters {
+  readonly search?: string;
+  readonly status?: OutreachContactStatus;
+  readonly assignedAdminId?: string;
+  readonly mine?: boolean;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export function listOutreachContacts(
+  campaignId: string,
+  filters: OutreachContactFilters,
+  signal?: AbortSignal
+): Promise<OutreachCampaignContactPage> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") {
+      query.set(key, String(value));
+    }
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/contacts${suffix}`,
+    signal
+  );
+}
+
+export function getOutreachContact(
+  campaignContactId: string,
+  signal?: AbortSignal
+): Promise<OutreachCampaignContactDetail> {
+  return requestAdminApi(
+    `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}`,
+    signal
+  );
+}
+
+export function listOutreachManagers(
+  signal?: AbortSignal
+): Promise<readonly OutreachManager[]> {
+  return requestAdminApi("outreach/managers", signal);
+}
+
+export function importOutreachContacts(
+  campaignId: string,
+  input: {
+    readonly assignedAdminId?: string;
+    readonly rows: readonly OutreachImportRow[];
+  }
+): Promise<OutreachImportResult> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/import`,
+    "POST",
+    input
+  );
+}
+
+export function recordOutreachActivities(input: {
+  readonly campaignContactIds: readonly string[];
+  readonly channel: OutreachChannel;
+  readonly result: Exclude<OutreachContactStatus, "new">;
+  readonly note?: string;
+  readonly nextContactAt?: string;
+}): Promise<{ readonly recorded: number }> {
+  return requestAdminMutation(
+    "outreach/campaign-contacts/activities",
+    "POST",
+    input
+  );
+}
+
+export function assignOutreachContacts(input: {
+  readonly campaignContactIds: readonly string[];
+  readonly assignedAdminId: string;
+}): Promise<{ readonly updated: number }> {
+  return requestAdminMutation(
+    "outreach/campaign-contacts/assign",
+    "POST",
+    input
+  );
+}
+
+export function exportOutreachCampaign(
+  campaignId: string
+): Promise<OutreachCampaignExport> {
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/export`
+  );
 }
 
 export function listOrders(

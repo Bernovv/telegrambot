@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
+  AdminOutreachService,
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
   ConfirmPaymentService,
@@ -58,6 +59,7 @@ import {
   createAdminEventCatalogManagementPersistence,
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
+  createAdminOutreachPersistence,
   createNodePostgresPool,
   createParticipantQuestionnairePersistence,
   createParticipantsExportPersistence,
@@ -233,6 +235,17 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             idGenerator
           );
         })()
+      : undefined;
+    const adminOutreach = adminAuth
+      ? new AdminOutreachService(
+          createAdminOutreachPersistence(pool),
+          new LibPhoneNumberNormalizer(
+            config.telegramWebhook.enabled
+              ? config.telegramWebhook.defaultCountry
+              : "RU"
+          ),
+          idGenerator
+        )
       : undefined;
     const orders = adminAuth
       ? (() => {
@@ -458,7 +471,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       appVersion: config.appVersion,
       bodyLimitBytes: Math.max(
         config.telegramWebhook.bodyLimitBytes,
-        config.tbankPayments.bodyLimitBytes
+        config.tbankPayments.bodyLimitBytes,
+        600_000
       ),
       readiness,
       ...(adminAuth ? { adminAuth } : {}),
@@ -468,6 +482,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminEvents ? { adminEvents } : {}),
       ...(participantsExport ? { participantsExport } : {}),
       ...(adminBroadcast ? { adminBroadcast } : {}),
+      ...(adminOutreach ? { adminOutreach } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

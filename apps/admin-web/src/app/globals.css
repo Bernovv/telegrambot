@@ -988,6 +988,301 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.outreach-heading {
+  align-items: flex-end;
+}
+
+.outreach-create {
+  padding-bottom: 18px;
+}
+
+.outreach-create-form,
+.outreach-action-form {
+  display: grid;
+  gap: 15px;
+  padding: 18px;
+}
+
+.outreach-create-form label,
+.outreach-action-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.outreach-create-form label > span,
+.outreach-action-form label > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.outreach-create-form input,
+.outreach-create-form textarea,
+.outreach-action-form input,
+.outreach-action-form select,
+.outreach-action-form textarea {
+  width: 100%;
+  padding: 10px 11px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+}
+
+.outreach-create-form .primary-button,
+.outreach-action-form .primary-button {
+  justify-self: start;
+}
+
+.outreach-filters {
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 190px) minmax(170px, 220px) auto;
+}
+
+.outreach-notice {
+  margin-top: 18px;
+  padding: 12px 14px;
+  color: #1e6047;
+  background: #eaf8f1;
+  border: 1px solid #bde6d2;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.outreach-bulk-bar {
+  position: sticky;
+  z-index: 8;
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--blue);
+  border-radius: 7px;
+  box-shadow: 0 8px 26px rgb(22 48 73 / 12%);
+}
+
+.outreach-bulk-bar > strong {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.outreach-assign {
+  min-width: 190px;
+}
+
+.outreach-table {
+  min-width: 1080px;
+}
+
+.outreach-table th:first-child,
+.outreach-table td:first-child {
+  width: 44px;
+  padding-right: 4px;
+}
+
+.outreach-table input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--blue);
+}
+
+.outreach-contact-link {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.outreach-contact-link:hover strong {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+.outreach-contact-link span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outreach-linked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  color: #237453;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.outreach-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.outreach-row-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.outreach-row-actions button:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.outreach-empty {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 52px 20px;
+}
+
+.outreach-empty span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.outreach-modal-backdrop,
+.outreach-drawer-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  background: rgb(13 29 44 / 48%);
+}
+
+.outreach-modal-backdrop {
+  place-items: center;
+  padding: 20px;
+}
+
+.outreach-modal {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 24%);
+}
+
+.outreach-drawer-backdrop {
+  justify-items: end;
+}
+
+.outreach-drawer {
+  width: min(480px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  background: #ffffff;
+  box-shadow: -12px 0 44px rgb(0 0 0 / 18%);
+}
+
+.outreach-contact-meta {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px 16px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.outreach-contact-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outreach-contact-meta strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.outreach-history {
+  padding: 18px;
+}
+
+.outreach-history h3 {
+  margin-bottom: 10px;
+}
+
+.outreach-history article {
+  display: grid;
+  gap: 5px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.outreach-history article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.outreach-history article span,
+.outreach-history article p,
+.outreach-history article small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outreach-history article p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .outreach-heading {
+    align-items: stretch;
+  }
+
+  .outreach-heading .heading-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .outreach-heading .heading-actions .icon-button {
+    display: none;
+  }
+
+  .outreach-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .outreach-bulk-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .outreach-bulk-bar > strong {
+    margin-right: 0;
+  }
+
+  .outreach-row-actions button {
+    min-width: 42px;
+    justify-content: center;
+  }
+
+  .outreach-row-actions button {
+    font-size: 0;
+  }
+
+  .outreach-row-actions button svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
