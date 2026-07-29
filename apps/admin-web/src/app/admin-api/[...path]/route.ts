@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { getAdminApiBaseUrl } from "@/lib/environment";
+import {
+  getAdminApiBaseUrl,
+  getAdminAppOrigin
+} from "@/lib/environment";
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
@@ -49,7 +52,8 @@ async function forwardAdminRequest(
       ? null
       : await readMutationBody(
           request,
-          getAdminMutationBodyLimit(upstreamPath)
+          getAdminMutationBodyLimit(upstreamPath),
+          getAdminAppOrigin() ?? request.nextUrl.origin
         );
   if (mutationBody instanceof Response) {
     return mutationBody;
@@ -125,12 +129,13 @@ async function forwardAdminRequest(
 
 async function readMutationBody(
   request: NextRequest,
-  maximumBytes: number
+  maximumBytes: number,
+  trustedOrigin: string
 ): Promise<string | Response> {
   if (
     !isTrustedMutationOrigin(
       request.headers.get("origin"),
-      request.nextUrl.origin
+      trustedOrigin
     )
   ) {
     return problem(403, "ADMIN_CSRF_REJECTED", "Request origin is not trusted");

@@ -28,3 +28,19 @@ export function getAdminApiBaseUrl(): string | null {
     return null;
   }
 }
+
+export function getAdminAppOrigin(): string | null {
+  const value = process.env.ADMIN_APP_URL;
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
