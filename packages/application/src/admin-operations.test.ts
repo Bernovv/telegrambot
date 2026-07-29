@@ -114,7 +114,7 @@ const userOne: AdminUserSummary = {
   id: USER_ID,
   displayName: "Alice",
   telegramUsername: "alice",
-  phoneMasked: "+7********67",
+  phone: "+79991234567",
   phoneStatus: "verified",
   isBlocked: false,
   registeredAt: "2026-07-25T14:00:00.000Z",

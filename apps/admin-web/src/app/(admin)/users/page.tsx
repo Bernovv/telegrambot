@@ -197,7 +197,7 @@ export default function UsersPage() {
                     </td>
                     <td>
                       <div className="stacked-cell">
-                        <span>{user.phoneMasked ?? "Не указан"}</span>
+                        <span>{user.phone ?? "Не указан"}</span>
                         {user.isBlocked ? (
                           <StatusPill tone="danger">Заблокирован</StatusPill>
                         ) : (

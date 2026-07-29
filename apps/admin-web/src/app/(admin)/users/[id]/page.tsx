@@ -80,8 +80,21 @@ export default function UserDetailPage() {
             </StatusPill>
           </div>
           <p>
-            {user.telegramUsername ? `@${user.telegramUsername}` : user.id}
+            {user.telegramUsername ? (
+              <a
+                className="offer-link-inline"
+                href={`https://t.me/${user.telegramUsername}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                @{user.telegramUsername}
+                <ExternalLink size={15} />
+              </a>
+            ) : (
+              user.id
+            )}
           </p>
+          {user.phone ? <p className="user-phone">{user.phone}</p> : null}
         </div>
       </div>
 
@@ -109,7 +122,7 @@ export default function UserDetailPage() {
           <div className="section-title-row">
             <div>
               <h2>Идентификаторы и контакты</h2>
-              <span>Контактные данные маскированы</span>
+              <span>Открытие карточки записывается в аудит</span>
             </div>
           </div>
           <div className="definition-list">
@@ -125,13 +138,52 @@ export default function UserDetailPage() {
               </div>
             ))}
             {user.contacts.map((contact) => (
-              <div key={`${contact.type}:${contact.valueMasked}`}>
+              <div key={`${contact.type}:${contact.value}`}>
                 <span>{contact.type}</span>
-                <strong>{contact.valueMasked}</strong>
+                <strong>{contact.value}</strong>
                 <small>{contact.verificationStatus}</small>
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="detail-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Откуда пришёл</h2>
+              <span>
+                {user.touchpoints.length > 0
+                  ? "Первое касание сверху"
+                  : "Данных о переходе нет"}
+              </span>
+            </div>
+          </div>
+          {user.touchpoints.length === 0 ? (
+            <p className="section-empty">
+              Человек открыл бота напрямую, без метки источника и партнёрской ссылки.
+            </p>
+          ) : (
+            <div className="definition-list">
+              {user.touchpoints.map((touchpoint) => (
+                <div key={`${touchpoint.channel}:${touchpoint.occurredAt}`}>
+                  <span>
+                    {touchpoint.isFirstTouch ? "Первый переход" : "Переход"}
+                  </span>
+                  <strong>
+                    {touchpoint.partnerCode
+                      ? `Партнёр ${touchpoint.partnerCode}`
+                      : touchpoint.source ?? "Прямой заход"}
+                  </strong>
+                  <small>
+                    {[
+                      touchpoint.campaign ? `Кампания: ${touchpoint.campaign}` : null,
+                      formatDateTime(touchpoint.occurredAt)
+                    ].filter(Boolean).join(" · ")}
+                  </small>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="detail-section">

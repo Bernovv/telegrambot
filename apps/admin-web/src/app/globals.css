@@ -1157,6 +1157,24 @@ tbody tr:hover {
   border-radius: inherit;
 }
 
+.offer-link-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue);
+  font-weight: 650;
+}
+
+.offer-link-inline:hover {
+  text-decoration: underline;
+}
+
+.user-phone {
+  margin-top: 4px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
 .offer-link {
   display: flex;
   min-height: 64px;

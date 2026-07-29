@@ -58,6 +58,15 @@ interface UserContactRow {
   readonly is_primary: boolean;
 }
 
+interface UserTouchpointRow {
+  readonly channel: string;
+  readonly source: string | null;
+  readonly campaign: string | null;
+  readonly partner_code: string | null;
+  readonly occurred_at: Date | string;
+  readonly is_first_touch: boolean;
+}
+
 interface WalletAccountRow {
   readonly currency: string;
   readonly cached_available_kopecks: string;
@@ -120,7 +129,7 @@ implements AdminOperationsRepository {
       if (!summary) {
         return null;
       }
-      const [identities, contacts, wallets, orders] = await Promise.all([
+      const [identities, contacts, wallets, orders, touchpoints] = await Promise.all([
         connection.query<UserIdentityRow>(
           `select channel, external_user_id, username, first_seen_at,
                   last_seen_at, is_bot_blocked
@@ -150,6 +159,16 @@ implements AdminOperationsRepository {
            order by orders.created_at desc, orders.id desc
            limit 20`,
           [userId]
+        ),
+        // Первое касание важнее последнего: оно отвечает на вопрос «откуда человек пришёл».
+        // Берём десяток последних записей — их обычно одна-две.
+        connection.query<UserTouchpointRow>(
+          `select channel, source, campaign, partner_code, occurred_at, is_first_touch
+           from public.user_touchpoints
+           where user_id = $1
+           order by is_first_touch desc, occurred_at
+           limit 10`,
+          [userId]
         )
       ]);
       return {
@@ -164,9 +183,17 @@ implements AdminOperationsRepository {
         })),
         contacts: contacts.rows.map((row) => ({
           type: row.contact_type,
-          valueMasked: maskContact(row.value_normalized),
+          value: row.value_normalized,
           verificationStatus: row.verification_status,
           isPrimary: row.is_primary
+        })),
+        touchpoints: touchpoints.rows.map((row) => ({
+          channel: row.channel,
+          source: row.source,
+          campaign: row.campaign,
+          partnerCode: row.partner_code,
+          occurredAt: toIso(row.occurred_at),
+          isFirstTouch: row.is_first_touch
         })),
         walletAccounts: wallets.rows.map((row) => ({
           currency: row.currency,
@@ -368,9 +395,7 @@ function mapUserSummary(row: UserSummaryRow): AdminUserSummary {
     id: row.id,
     displayName: row.display_name,
     telegramUsername: row.telegram_username,
-    phoneMasked: row.phone_normalized
-      ? maskContact(row.phone_normalized)
-      : null,
+    phone: row.phone_normalized,
     phoneStatus: row.phone_status,
     isBlocked: row.is_blocked,
     registeredAt: toIso(row.registered_at),
@@ -421,12 +446,7 @@ function toCount(value: string): number {
   return parsed;
 }
 
-function maskContact(value: string): string {
-  if (value.length <= 4) {
-    return "*".repeat(value.length);
-  }
-  return `${value.slice(0, 2)}${"*".repeat(value.length - 4)}${value.slice(-2)}`;
-}
+
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");

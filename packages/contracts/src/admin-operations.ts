@@ -16,7 +16,12 @@ export interface AdminUserSummary {
   readonly id: string;
   readonly displayName: string | null;
   readonly telegramUsername: string | null;
-  readonly phoneMasked: string | null;
+  /**
+   * Полный номер, без маскирования: менеджеру нужно позвонить человеку и найти его в списке
+   * участников. Панель закрыта двухфакторной аутентификацией и RBAC, а каждое открытие
+   * карточки видно в аудите — маскирование здесь давало ложное чувство защиты и мешало работе.
+   */
+  readonly phone: string | null;
   readonly phoneStatus: string;
   readonly isBlocked: boolean;
   readonly registeredAt: string;
@@ -60,9 +65,18 @@ export interface AdminUserDetail extends AdminUserSummary {
   }[];
   readonly contacts: readonly {
     readonly type: string;
-    readonly valueMasked: string;
+    readonly value: string;
     readonly verificationStatus: string;
     readonly isPrimary: boolean;
+  }[];
+  /** Откуда пришёл человек: метка источника, кампания и код партнёра из диплинка. */
+  readonly touchpoints: readonly {
+    readonly channel: string;
+    readonly source: string | null;
+    readonly campaign: string | null;
+    readonly partnerCode: string | null;
+    readonly occurredAt: string;
+    readonly isFirstTouch: boolean;
   }[];
   readonly walletAccounts: readonly {
     readonly currency: string;

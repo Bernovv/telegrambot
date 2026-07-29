@@ -32,7 +32,7 @@ describe("PostgreSQL administrator read models", () => {
       limit: 26
     });
 
-    assert.equal(result[0]?.phoneMasked, "+7********67");
+    assert.equal(result[0]?.phone, "+79991234567");
     assert.equal(connection.queries[0]?.text,
       "begin transaction isolation level repeatable read read only");
     const query = findQuery(connection, "order by users.registered_at desc");
@@ -41,7 +41,7 @@ describe("PostgreSQL administrator read models", () => {
     assert.equal(connection.queries.at(-1)?.text, "commit");
   });
 
-  it("builds a user detail without exposing a raw phone", async () => {
+  it("отдаёт полный телефон и точки касания в карточке пользователя", async () => {
     const connection = new FakeConnection((text) => {
       if (text.includes("where users.id = $1")) {
         return rows([userRow]);
@@ -58,14 +58,20 @@ describe("PostgreSQL administrator read models", () => {
       if (text.includes("where orders.user_id = $1")) {
         return rows([orderRow]);
       }
+      if (text.includes("from public.user_touchpoints")) {
+        return rows([touchpointRow]);
+      }
       return affected();
     });
     const repository = createAdminOperationsPersistence(new FakePool(connection));
 
     const result = await repository.getUser(USER_ID);
 
-    assert.equal(result?.contacts[0]?.valueMasked, "+7********67");
-    assert.equal(JSON.stringify(result).includes("+79991234567"), false);
+    // Менеджеру нужен номер целиком: по маске нельзя ни позвонить, ни найти человека в списке.
+    assert.equal(result?.contacts[0]?.value, "+79991234567");
+    assert.equal(result?.phone, "+79991234567");
+    assert.equal(result?.touchpoints[0]?.partnerCode, "376802789");
+    assert.equal(result?.touchpoints[0]?.isFirstTouch, true);
     assert.equal(result?.recentOrders[0]?.number, "BP-000001");
     assert.equal(result?.walletAccounts[0]?.availableKopecks, "10000");
   });
@@ -180,6 +186,15 @@ const contactRow = {
   value_normalized: "+79991234567",
   verification_status: "verified",
   is_primary: true
+};
+
+const touchpointRow = {
+  channel: "telegram",
+  source: null,
+  campaign: null,
+  partner_code: "376802789",
+  occurred_at: new Date("2026-07-25T10:00:00.000Z"),
+  is_first_touch: true
 };
 
 const walletRow = {
