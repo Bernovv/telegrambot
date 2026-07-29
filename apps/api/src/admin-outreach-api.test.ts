@@ -81,6 +81,44 @@ describe("administrator outreach HTTP contract", () => {
       await app.close();
     }
   });
+
+  it("validates lost-stage reasons and delegates a valid stage move", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async updateContactStage(input) {
+          requests.push(input);
+          return { updated: true };
+        }
+      })
+    });
+    await app.init();
+    try {
+      const invalid = await inject(app, {
+        method: "PATCH",
+        url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
+        payload: { stage: "lost" }
+      });
+      const valid = await inject(app, {
+        method: "PATCH",
+        url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
+        payload: { stage: "lost", lostReason: "declined" }
+      });
+      assert.equal(invalid.statusCode, 400);
+      assert.equal(valid.statusCode, 200);
+      assert.equal(requests.length, 1);
+      assert.equal(
+        (requests[0] as { readonly lostReason: string }).lostReason,
+        "declined"
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 function handler(
@@ -104,6 +142,9 @@ function handler(
     },
     async assignContacts() { return { updated: 0 }; },
     async recordActivities() { return { recorded: 0 }; },
+    async updateContactStage() { return { updated: false }; },
+    async createTask() { return { created: false }; },
+    async completeTask() { return { completed: false }; },
     async listManagers() { return []; },
     async exportCampaign() { return null; },
     ...overrides
@@ -138,7 +179,7 @@ function adminAuth(permissions: AdminPermission[]) {
 async function inject(
   app: Awaited<ReturnType<typeof createApiApplication>>,
   input: {
-    readonly method: "GET" | "POST";
+    readonly method: "GET" | "POST" | "PATCH";
     readonly url: string;
     readonly payload?: Record<string, unknown>;
   }
@@ -149,7 +190,7 @@ async function inject(
     url: input.url,
     headers: {
       authorization: "Bearer valid-token",
-      ...(input.method === "POST" ? { "content-type": "application/json" } : {})
+      ...(input.method !== "GET" ? { "content-type": "application/json" } : {})
     },
     ...(input.payload === undefined ? {} : { payload: input.payload })
   });
@@ -157,6 +198,7 @@ async function inject(
 
 const ADMIN_ID = "00000000-0000-4000-8000-000000000101";
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000102";
+const CAMPAIGN_CONTACT_ID = "00000000-0000-4000-8000-000000000103";
 const campaign = {
   id: CAMPAIGN_ID,
   name: "Не оплатили",

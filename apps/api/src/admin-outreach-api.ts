@@ -18,7 +18,10 @@ import type { AdminOutreachService } from "@ticket-platform/application";
 import {
   OUTREACH_CAMPAIGN_STATUSES,
   OUTREACH_CHANNELS,
-  OUTREACH_CONTACT_STATUSES
+  OUTREACH_CONTACT_STATUSES,
+  OUTREACH_LOST_REASONS,
+  OUTREACH_PIPELINE_STAGES,
+  OUTREACH_TASK_TYPES
 } from "@ticket-platform/contracts";
 import { z } from "zod";
 import {
@@ -34,6 +37,9 @@ const activityResult = z.enum(
   OUTREACH_CONTACT_STATUSES.filter((status) => status !== "new")
 );
 const channel = z.enum(OUTREACH_CHANNELS);
+const pipelineStage = z.enum(OUTREACH_PIPELINE_STAGES);
+const lostReason = z.enum(OUTREACH_LOST_REASONS);
+const taskType = z.enum(OUTREACH_TASK_TYPES);
 
 const createCampaignBody = z.object({
   name: z.string().trim().min(1).max(200),
@@ -50,10 +56,11 @@ const updateCampaignBody = z.object({
 const contactListQuery = z.object({
   search: z.string().trim().min(2).max(100).optional(),
   status: contactStatus.optional(),
+  stage: pipelineStage.optional(),
   assignedAdminId: uuid.optional(),
   mine: z.enum(["true", "false"]).optional(),
   page: z.coerce.number().int().min(1).max(100_000).optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional()
+  limit: z.coerce.number().int().min(1).max(500).optional()
 }).strict();
 
 const importRow = z.object({
@@ -79,8 +86,26 @@ const activityBody = z.object({
   campaignContactIds: z.array(uuid).min(1).max(100),
   channel,
   result: activityResult,
+  stage: pipelineStage.optional(),
+  lostReason: lostReason.optional(),
   note: z.string().trim().max(2000).optional(),
   nextContactAt: z.iso.datetime({ offset: true }).optional()
+}).strict().superRefine((value, context) => {
+  validateLostStage(value.stage, value.lostReason, context);
+});
+
+const stageBody = z.object({
+  stage: pipelineStage,
+  lostReason: lostReason.optional()
+}).strict().superRefine((value, context) => {
+  validateLostStage(value.stage, value.lostReason, context);
+});
+
+const taskBody = z.object({
+  assignedAdminId: uuid.optional(),
+  type: taskType,
+  text: z.string().trim().min(1).max(500),
+  dueAt: z.iso.datetime({ offset: true })
 }).strict();
 
 export type AdminOutreachHandler = Pick<
@@ -94,6 +119,9 @@ export type AdminOutreachHandler = Pick<
   | "importContacts"
   | "assignContacts"
   | "recordActivities"
+  | "updateContactStage"
+  | "createTask"
+  | "completeTask"
   | "listManagers"
   | "exportCampaign"
 >;
@@ -167,6 +195,10 @@ export class AdminOutreachController {
         campaignContactIds: parsed.campaignContactIds,
         channel: parsed.channel,
         result: parsed.result,
+        ...(parsed.stage === undefined ? {} : { stage: parsed.stage }),
+        ...(parsed.lostReason === undefined
+          ? {}
+          : { lostReason: parsed.lostReason }),
         ...(parsed.note === undefined ? {} : { note: parsed.note }),
         ...(parsed.nextContactAt === undefined
           ? {}
@@ -174,6 +206,80 @@ export class AdminOutreachController {
         now: new Date()
       })
     );
+  }
+
+  @Patch("campaign-contacts/:id/stage")
+  @RequireAdminPermission("outreach.write")
+  async updateContactStage(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignContactId = parse(uuid, id);
+    const parsed = parse(stageBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.updateContactStage({
+        actor: requireActor(request),
+        campaignContactId,
+        stage: parsed.stage,
+        ...(parsed.lostReason === undefined
+          ? {}
+          : { lostReason: parsed.lostReason }),
+        now: new Date()
+      })
+    );
+    if (!result.updated) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Post("campaign-contacts/:id/tasks")
+  @RequireAdminPermission("outreach.write")
+  async createTask(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignContactId = parse(uuid, id);
+    const parsed = parse(taskBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.createTask({
+        actor: requireActor(request),
+        campaignContactId,
+        ...(parsed.assignedAdminId === undefined
+          ? {}
+          : { assignedAdminId: parsed.assignedAdminId }),
+        type: parsed.type,
+        text: parsed.text,
+        dueAt: new Date(parsed.dueAt),
+        now: new Date()
+      })
+    );
+    if (!result.created) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Patch("tasks/:id/complete")
+  @RequireAdminPermission("outreach.write")
+  async completeTask(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const taskId = parse(uuid, id);
+    const result = await executeOutreach(() =>
+      this.handler.completeTask({
+        actor: requireActor(request),
+        taskId,
+        now: new Date()
+      })
+    );
+    if (!result.completed) {
+      throw outreachNotFound();
+    }
+    return result;
   }
 
   @Post("campaign-contacts/assign")
@@ -250,6 +356,7 @@ export class AdminOutreachController {
       campaignId,
       ...(parsed.search === undefined ? {} : { search: parsed.search }),
       ...(parsed.status === undefined ? {} : { status: parsed.status }),
+      ...(parsed.stage === undefined ? {} : { stage: parsed.stage }),
       ...(parsed.assignedAdminId === undefined
         ? {}
         : { assignedAdminId: parsed.assignedAdminId }),
@@ -328,6 +435,27 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     });
   }
   return result.data;
+}
+
+function validateLostStage(
+  stage: string | undefined,
+  reason: string | undefined,
+  context: z.RefinementCtx
+): void {
+  if (stage === "lost" && !reason) {
+    context.addIssue({
+      code: "custom",
+      path: ["lostReason"],
+      message: "Lost reason is required"
+    });
+  }
+  if (stage !== "lost" && reason) {
+    context.addIssue({
+      code: "custom",
+      path: ["lostReason"],
+      message: "Lost reason is only valid for lost stage"
+    });
+  }
 }
 
 function requireActor(

@@ -9,7 +9,10 @@ import type {
   OutreachContactStatus,
   OutreachImportResult,
   OutreachImportRow,
-  OutreachManager
+  OutreachLostReason,
+  OutreachManager,
+  OutreachPipelineStage,
+  OutreachTaskType
 } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
 import type { PhoneNormalizer } from "./phone.js";
@@ -32,6 +35,8 @@ export interface OutreachExportRow {
   readonly maxIdentifier: string | null;
   readonly source: string | null;
   readonly assignedAdminName: string | null;
+  readonly stage: OutreachPipelineStage;
+  readonly lostReason: OutreachLostReason | null;
   readonly status: OutreachContactStatus;
   readonly lastChannel: OutreachChannel | null;
   readonly lastActivityAt: string | null;
@@ -62,6 +67,7 @@ export interface AdminOutreachRepository {
     readonly campaignId: string;
     readonly search: string | null;
     readonly status: OutreachContactStatus | null;
+    readonly stage: OutreachPipelineStage | null;
     readonly assignedAdminId: string | null;
     readonly page: number;
     readonly limit: number;
@@ -86,6 +92,8 @@ export interface AdminOutreachRepository {
     readonly activities: readonly {
       readonly id: string;
       readonly campaignContactId: string;
+      readonly stageHistoryId: string | null;
+      readonly taskId: string | null;
     }[];
     readonly actorAdminId: string;
     readonly action: "message" | "call";
@@ -93,9 +101,34 @@ export interface AdminOutreachRepository {
     readonly result: Exclude<OutreachContactStatus, "new">;
     readonly note: string | null;
     readonly batchId: string | null;
+    readonly stage: OutreachPipelineStage | null;
+    readonly lostReason: OutreachLostReason | null;
     readonly nextContactAt: Date | null;
     readonly occurredAt: Date;
   }): Promise<number>;
+  updateContactStage(input: {
+    readonly campaignContactId: string;
+    readonly actorAdminId: string;
+    readonly historyId: string;
+    readonly stage: OutreachPipelineStage;
+    readonly lostReason: OutreachLostReason | null;
+    readonly now: Date;
+  }): Promise<boolean>;
+  createTask(input: {
+    readonly id: string;
+    readonly campaignContactId: string;
+    readonly assignedAdminId: string | null;
+    readonly createdByAdminId: string;
+    readonly type: OutreachTaskType;
+    readonly text: string;
+    readonly dueAt: Date;
+    readonly now: Date;
+  }): Promise<boolean>;
+  completeTask(input: {
+    readonly taskId: string;
+    readonly completedByAdminId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
   listManagers(): Promise<readonly OutreachManager[]>;
   exportCampaignContacts(campaignId: string): Promise<{
     readonly campaign: OutreachCampaignSummary | null;
@@ -181,6 +214,7 @@ export class AdminOutreachService {
     readonly campaignId: string;
     readonly search?: string;
     readonly status?: OutreachContactStatus;
+    readonly stage?: OutreachPipelineStage;
     readonly assignedAdminId?: string;
     readonly mine?: boolean;
     readonly page?: number;
@@ -193,7 +227,7 @@ export class AdminOutreachService {
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) {
       throw new Error("Outreach page is invalid");
     }
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new Error("Outreach page limit is invalid");
     }
     if (input.assignedAdminId) {
@@ -203,6 +237,7 @@ export class AdminOutreachService {
       campaignId: input.campaignId,
       search: optionalText(input.search, 100),
       status: input.status ?? null,
+      stage: input.stage ?? null,
       assignedAdminId: input.mine
         ? input.actor.adminId
         : input.assignedAdminId ?? null,
@@ -271,6 +306,8 @@ export class AdminOutreachService {
     readonly campaignContactIds: readonly string[];
     readonly channel: OutreachChannel;
     readonly result: Exclude<OutreachContactStatus, "new">;
+    readonly stage?: OutreachPipelineStage;
+    readonly lostReason?: OutreachLostReason;
     readonly note?: string;
     readonly nextContactAt?: Date;
     readonly now: Date;
@@ -279,6 +316,7 @@ export class AdminOutreachService {
     requireIds(input.campaignContactIds);
     const ids = unique(input.campaignContactIds);
     validateActivity(input.channel, input.result);
+    validateStage(input.stage ?? null, input.lostReason ?? null);
     const nextContactAt = input.nextContactAt ?? null;
     if (
       nextContactAt
@@ -289,7 +327,9 @@ export class AdminOutreachService {
     const recorded = await this.repository.recordActivities({
       activities: ids.map((campaignContactId) => ({
         id: this.idGenerator.newId(),
-        campaignContactId
+        campaignContactId,
+        stageHistoryId: input.stage ? this.idGenerator.newId() : null,
+        taskId: nextContactAt ? this.idGenerator.newId() : null
       })),
       actorAdminId: input.actor.adminId,
       action: input.channel === "phone" ? "call" : "message",
@@ -297,13 +337,84 @@ export class AdminOutreachService {
       result: input.result,
       note: optionalText(input.note, 2000),
       batchId: ids.length > 1 ? this.idGenerator.newId() : null,
-      nextContactAt: input.result === "callback" ? nextContactAt : null,
+      stage: input.stage ?? null,
+      lostReason: input.stage === "lost" ? input.lostReason ?? null : null,
+      nextContactAt,
       occurredAt: input.now
     });
     if (recorded !== ids.length) {
       throw new Error("Outreach campaign contact was not found");
     }
     return { recorded };
+  }
+
+  async updateContactStage(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignContactId: string;
+    readonly stage: OutreachPipelineStage;
+    readonly lostReason?: OutreachLostReason;
+    readonly now: Date;
+  }): Promise<{ readonly updated: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignContactId);
+    validateStage(input.stage, input.lostReason ?? null);
+    return {
+      updated: await this.repository.updateContactStage({
+        campaignContactId: input.campaignContactId,
+        actorAdminId: input.actor.adminId,
+        historyId: this.idGenerator.newId(),
+        stage: input.stage,
+        lostReason: input.stage === "lost" ? input.lostReason ?? null : null,
+        now: input.now
+      })
+    };
+  }
+
+  async createTask(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignContactId: string;
+    readonly assignedAdminId?: string;
+    readonly type: OutreachTaskType;
+    readonly text: string;
+    readonly dueAt: Date;
+    readonly now: Date;
+  }): Promise<{ readonly created: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignContactId);
+    if (input.assignedAdminId) {
+      requireUuid(input.assignedAdminId);
+    }
+    if (Number.isNaN(input.dueAt.getTime())) {
+      throw new Error("Outreach task due time is invalid");
+    }
+    return {
+      created: await this.repository.createTask({
+        id: this.idGenerator.newId(),
+        campaignContactId: input.campaignContactId,
+        assignedAdminId: input.assignedAdminId ?? null,
+        createdByAdminId: input.actor.adminId,
+        type: input.type,
+        text: requiredText(input.text, 500, "Outreach task text"),
+        dueAt: input.dueAt,
+        now: input.now
+      })
+    };
+  }
+
+  async completeTask(input: {
+    readonly actor: AdminRequestActor;
+    readonly taskId: string;
+    readonly now: Date;
+  }): Promise<{ readonly completed: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.taskId);
+    return {
+      completed: await this.repository.completeTask({
+        taskId: input.taskId,
+        completedByAdminId: input.actor.adminId,
+        now: input.now
+      })
+    };
   }
 
   listManagers(input: {
@@ -330,6 +441,8 @@ export class AdminOutreachService {
       "max",
       "source",
       "manager",
+      "pipeline_stage",
+      "lost_reason",
       "status",
       "last_channel",
       "last_activity_at",
@@ -344,6 +457,8 @@ export class AdminOutreachService {
       row.maxIdentifier,
       row.source,
       row.assignedAdminName,
+      row.stage,
+      row.lostReason,
       row.status,
       row.lastChannel,
       row.lastActivityAt,
@@ -445,6 +560,18 @@ function validateActivity(
     : ["sent", "answered", "callback", "interested", "declined", "converted", "invalid"];
   if (!allowed.includes(result)) {
     throw new Error("Outreach activity result is invalid");
+  }
+}
+
+function validateStage(
+  stage: OutreachPipelineStage | null,
+  lostReason: OutreachLostReason | null
+): void {
+  if (stage === "lost" && !lostReason) {
+    throw new Error("Outreach lost reason is required");
+  }
+  if (stage !== "lost" && lostReason) {
+    throw new Error("Outreach lost reason is only valid for a lost lead");
   }
 }
 

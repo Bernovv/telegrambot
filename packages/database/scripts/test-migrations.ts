@@ -141,6 +141,9 @@ async function verifyMigrations(
       readonly scenario_versions: string | null;
       readonly scenario_sessions: string | null;
       readonly scenario_events: string | null;
+      readonly outreach_campaigns: string | null;
+      readonly outreach_tasks: string | null;
+      readonly outreach_stage_history: string | null;
       readonly pgboss_version: string | null;
     }>(
       `select
@@ -157,6 +160,9 @@ async function verifyMigrations(
          to_regclass('public.scenario_versions')::text as scenario_versions,
          to_regclass('public.scenario_sessions')::text as scenario_sessions,
          to_regclass('public.scenario_events')::text as scenario_events,
+         to_regclass('public.outreach_campaigns')::text as outreach_campaigns,
+         to_regclass('public.outreach_tasks')::text as outreach_tasks,
+         to_regclass('public.outreach_stage_history')::text as outreach_stage_history,
          to_regclass('pgboss.version')::text as pgboss_version`
     );
     const row = schema.rows[0];
@@ -202,6 +208,19 @@ async function verifyMigrations(
       !== Boolean(row.scenario_sessions && row.scenario_events)
     ) {
       throw new Error("Scenario runtime schema presence does not match the migration sequence");
+    }
+
+    const includesOutreach = expectedVersions.includes("20260729100000");
+    if (includesOutreach !== Boolean(row.outreach_campaigns)) {
+      throw new Error("Outreach schema presence does not match the migration sequence");
+    }
+
+    const includesOutreachPipeline = expectedVersions.includes("20260729110000");
+    if (
+      includesOutreachPipeline
+      !== Boolean(row.outreach_tasks && row.outreach_stage_history)
+    ) {
+      throw new Error("Outreach pipeline schema presence does not match the migration sequence");
     }
   } finally {
     await client.end();

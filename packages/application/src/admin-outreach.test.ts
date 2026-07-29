@@ -109,6 +109,42 @@ describe("AdminOutreachService", () => {
       /permission/
     );
   });
+
+  it("requires a reason for a lost stage and creates a trimmed follow-up task", async () => {
+    let received: Parameters<AdminOutreachRepository["createTask"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async createTask(input) {
+          received = input;
+          return true;
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.updateContactStage({
+        actor: writeActor,
+        campaignContactId: CAMPAIGN_CONTACT_ID,
+        stage: "lost",
+        now
+      }),
+      /lost reason/
+    );
+    const result = await service.createTask({
+      actor: writeActor,
+      campaignContactId: CAMPAIGN_CONTACT_ID,
+      type: "call",
+      text: "  Перезвонить после обеда  ",
+      dueAt: new Date("2026-07-30T12:00:00.000Z"),
+      now
+    });
+
+    assert.equal(result.created, true);
+    assert.equal(received?.text, "Перезвонить после обеда");
+    assert.equal(received?.assignedAdminId, null);
+  });
 });
 
 function repository(
@@ -132,6 +168,9 @@ function repository(
     },
     async assignContacts() { return 0; },
     async recordActivities() { return 0; },
+    async updateContactStage() { return false; },
+    async createTask() { return false; },
+    async completeTask() { return false; },
     async listManagers() { return []; },
     async exportCampaignContacts() { return { campaign: null, rows: [] }; },
     ...overrides

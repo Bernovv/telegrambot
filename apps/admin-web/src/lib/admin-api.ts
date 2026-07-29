@@ -16,7 +16,10 @@ import type {
   OutreachContactStatus,
   OutreachImportResult,
   OutreachImportRow,
-  OutreachManager
+  OutreachLostReason,
+  OutreachManager,
+  OutreachPipelineStage,
+  OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
 import type {
   AdminEventDetail,
@@ -131,6 +134,7 @@ export function updateOutreachCampaign(
 export interface OutreachContactFilters {
   readonly search?: string;
   readonly status?: OutreachContactStatus;
+  readonly stage?: OutreachPipelineStage;
   readonly assignedAdminId?: string;
   readonly mine?: boolean;
   readonly page?: number;
@@ -189,6 +193,8 @@ export function recordOutreachActivities(input: {
   readonly campaignContactIds: readonly string[];
   readonly channel: OutreachChannel;
   readonly result: Exclude<OutreachContactStatus, "new">;
+  readonly stage?: OutreachPipelineStage;
+  readonly lostReason?: OutreachLostReason;
   readonly note?: string;
   readonly nextContactAt?: string;
 }): Promise<{ readonly recorded: number }> {
@@ -196,6 +202,46 @@ export function recordOutreachActivities(input: {
     "outreach/campaign-contacts/activities",
     "POST",
     input
+  );
+}
+
+export function updateOutreachContactStage(
+  campaignContactId: string,
+  input: {
+    readonly stage: OutreachPipelineStage;
+    readonly lostReason?: OutreachLostReason;
+  }
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}/stage`,
+    "PATCH",
+    input
+  );
+}
+
+export function createOutreachTask(
+  campaignContactId: string,
+  input: {
+    readonly assignedAdminId?: string;
+    readonly type: OutreachTaskType;
+    readonly text: string;
+    readonly dueAt: string;
+  }
+): Promise<{ readonly created: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}/tasks`,
+    "POST",
+    input
+  );
+}
+
+export function completeOutreachTask(
+  taskId: string
+): Promise<{ readonly completed: boolean }> {
+  return requestAdminMutation(
+    `outreach/tasks/${encodeURIComponent(taskId)}/complete`,
+    "PATCH",
+    {}
   );
 }
 

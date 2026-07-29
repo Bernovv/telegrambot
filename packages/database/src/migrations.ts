@@ -109,5 +109,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260729100000_outreach_tracking",
     description: "Create outreach campaigns, pre-registration contacts, assignments, and append-only manager activities",
     destructive: false
+  },
+  {
+    id: "20260729110000_outreach_pipeline_tasks",
+    description: "Add the outreach sales pipeline, stage history, and manager follow-up tasks",
+    destructive: false
   }
 ];

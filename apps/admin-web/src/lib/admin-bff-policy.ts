@@ -28,6 +28,7 @@ export function isAllowedAdminApiPath(
       || path === "outreach/campaigns"
       || path === "outreach/campaign-contacts/activities"
       || path === "outreach/campaign-contacts/assign"
+      || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/tasks$/i.test(path)
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/publish$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/content-blocks$/i.test(path)
@@ -40,6 +41,8 @@ export function isAllowedAdminApiPath(
         .test(path);
   }
   return /^outreach\/campaigns\/[0-9a-f-]{36}$/i.test(path)
+    || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/stage$/i.test(path)
+    || /^outreach\/tasks\/[0-9a-f-]{36}\/complete$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/general$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/content-blocks\/[0-9a-f-]{36}$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/offer\/deactivate$/i.test(path)

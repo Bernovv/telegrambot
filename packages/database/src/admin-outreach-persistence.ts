@@ -9,7 +9,9 @@ import type {
   OutreachCampaignContactSummary,
   OutreachCampaignSummary,
   OutreachImportResult,
-  OutreachManager
+  OutreachManager,
+  OutreachStageHistoryEntry,
+  OutreachTask
 } from "@ticket-platform/contracts";
 import type {
   SqlConnection,
@@ -41,11 +43,22 @@ interface ContactRow {
   readonly linked_user_id: string | null;
   readonly assigned_admin_id: string | null;
   readonly assigned_admin_name: string | null;
+  readonly pipeline_stage: OutreachCampaignContactSummary["stage"];
+  readonly lost_reason: OutreachCampaignContactSummary["lostReason"];
   readonly current_status: OutreachCampaignContactSummary["status"];
   readonly last_activity_at: Date | string | null;
   readonly next_contact_at: Date | string | null;
   readonly last_channel: OutreachCampaignContactSummary["lastChannel"];
   readonly last_result: OutreachCampaignContactSummary["lastResult"];
+  readonly open_task_id: string | null;
+  readonly open_task_assigned_admin_id: string | null;
+  readonly open_task_assigned_admin_name: string | null;
+  readonly open_task_created_by_admin_id: string | null;
+  readonly open_task_created_by_admin_name: string | null;
+  readonly open_task_type: OutreachTask["type"] | null;
+  readonly open_task_text: string | null;
+  readonly open_task_due_at: Date | string | null;
+  readonly open_task_created_at: Date | string | null;
   readonly total_count?: string;
 }
 
@@ -61,6 +74,32 @@ interface ActivityRow {
 
 interface ExistingContactRow {
   readonly id: string;
+}
+
+interface TaskRow {
+  readonly id: string;
+  readonly assigned_admin_id: string;
+  readonly assigned_admin_name: string;
+  readonly created_by_admin_id: string;
+  readonly created_by_admin_name: string;
+  readonly completed_by_admin_id: string | null;
+  readonly completed_by_admin_name: string | null;
+  readonly task_type: OutreachTask["type"];
+  readonly task_text: string;
+  readonly due_at: Date | string;
+  readonly status: OutreachTask["status"];
+  readonly created_at: Date | string;
+  readonly completed_at: Date | string | null;
+}
+
+interface StageHistoryRow {
+  readonly id: string;
+  readonly actor_admin_id: string | null;
+  readonly actor_name: string;
+  readonly from_stage: OutreachStageHistoryEntry["fromStage"];
+  readonly to_stage: OutreachStageHistoryEntry["toStage"];
+  readonly lost_reason: OutreachStageHistoryEntry["lostReason"];
+  readonly occurred_at: Date | string;
 }
 
 export class PostgresAdminOutreachRepository
@@ -172,6 +211,21 @@ implements AdminOutreachRepository {
            order by activity.occurred_at desc, activity.id desc
            limit 1
          ) last_activity on true
+         left join lateral (
+           select task.id, task.assigned_admin_id,
+                  coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                  task.created_by_admin_id,
+                  coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
+                  task.task_type, task.task_text, task.due_at, task.created_at
+           from public.outreach_tasks task
+           join public.admin_accounts task_assignee
+             on task_assignee.id = task.assigned_admin_id
+           join public.admin_accounts task_creator
+             on task_creator.id = task.created_by_admin_id
+           where task.campaign_contact_id = campaign_contact.id
+             and task.status = 'open'
+           limit 1
+         ) open_task on true
          where campaign_contact.campaign_id = $1
            and ($2::text is null or (
              coalesce(contact.display_name, '') ilike $2 escape '\\'
@@ -180,16 +234,27 @@ implements AdminOutreachRepository {
              or coalesce(contact.max_identifier_normalized, '') ilike $2 escape '\\'
            ))
            and ($3::text is null or campaign_contact.current_status = $3)
-           and ($4::uuid is null or campaign_contact.assigned_admin_id = $4)
+           and ($4::text is null or campaign_contact.pipeline_stage = $4)
+           and ($5::uuid is null or campaign_contact.assigned_admin_id = $5)
          order by
-           case when campaign_contact.current_status = 'new' then 0 else 1 end,
+           case campaign_contact.pipeline_stage
+             when 'new' then 0
+             when 'first_contact' then 1
+             when 'dialogue' then 2
+             when 'follow_up' then 3
+             when 'interested' then 4
+             when 'won' then 5
+             else 6
+           end,
+           open_task.due_at nulls last,
            campaign_contact.created_at desc,
            campaign_contact.id desc
-         limit $5 offset $6`,
+         limit $6 offset $7`,
         [
           input.campaignId,
           search,
           input.status,
+          input.stage,
           input.assignedAdminId,
           input.limit,
           (input.page - 1) * input.limit
@@ -220,6 +285,21 @@ implements AdminOutreachRepository {
            order by activity.occurred_at desc, activity.id desc
            limit 1
          ) last_activity on true
+         left join lateral (
+           select task.id, task.assigned_admin_id,
+                  coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                  task.created_by_admin_id,
+                  coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
+                  task.task_type, task.task_text, task.due_at, task.created_at
+           from public.outreach_tasks task
+           join public.admin_accounts task_assignee
+             on task_assignee.id = task.assigned_admin_id
+           join public.admin_accounts task_creator
+             on task_creator.id = task.created_by_admin_id
+           where task.campaign_contact_id = campaign_contact.id
+             and task.status = 'open'
+           limit 1
+         ) open_task on true
          where campaign_contact.id = $1`,
         [campaignContactId]
       );
@@ -238,9 +318,44 @@ implements AdminOutreachRepository {
          limit 100`,
         [campaignContactId]
       );
+      const tasks = await connection.query<TaskRow>(
+        `select task.id, task.assigned_admin_id,
+                coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                task.created_by_admin_id,
+                coalesce(creator.display_name, creator.email_normalized, 'Менеджер') as created_by_admin_name,
+                task.completed_by_admin_id,
+                coalesce(completer.display_name, completer.email_normalized) as completed_by_admin_name,
+                task.task_type, task.task_text, task.due_at, task.status,
+                task.created_at, task.completed_at
+         from public.outreach_tasks task
+         join public.admin_accounts assignee on assignee.id = task.assigned_admin_id
+         join public.admin_accounts creator on creator.id = task.created_by_admin_id
+         left join public.admin_accounts completer on completer.id = task.completed_by_admin_id
+         where task.campaign_contact_id = $1
+         order by
+           case when task.status = 'open' then 0 else 1 end,
+           task.created_at desc,
+           task.id desc
+         limit 100`,
+        [campaignContactId]
+      );
+      const stageHistory = await connection.query<StageHistoryRow>(
+        `select history.id, history.actor_admin_id,
+                coalesce(actor.display_name, actor.email_normalized, 'Система') as actor_name,
+                history.from_stage, history.to_stage,
+                history.lost_reason, history.occurred_at
+         from public.outreach_stage_history history
+         left join public.admin_accounts actor on actor.id = history.actor_admin_id
+         where history.campaign_contact_id = $1
+         order by history.occurred_at desc, history.id desc
+         limit 100`,
+        [campaignContactId]
+      );
       return {
         ...mapContact(row),
-        activities: activities.rows.map(mapActivity)
+        activities: activities.rows.map(mapActivity),
+        tasks: tasks.rows.map(mapTask),
+        stageHistory: stageHistory.rows.map(mapStageHistory)
       };
     });
   }
@@ -346,19 +461,36 @@ implements AdminOutreachRepository {
     return this.write(async (connection) => {
       let recorded = 0;
       for (const activity of input.activities) {
+        const contact = await connection.query<{
+          readonly contact_id: string;
+          readonly pipeline_stage: OutreachCampaignContactSummary["stage"];
+          readonly assigned_admin_id: string | null;
+        }>(
+          `select contact_id, pipeline_stage, assigned_admin_id
+           from public.outreach_campaign_contacts
+           where id = $1::uuid
+           for update`,
+          [activity.campaignContactId]
+        );
+        const current = contact.rows[0];
+        if (!current) {
+          continue;
+        }
         const inserted = await connection.query<{ readonly id: string }>(
           `insert into public.outreach_activities (
              id, campaign_contact_id, contact_id, actor_admin_id,
              action, channel, result, note, batch_id, occurred_at
            )
-           select $1, campaign_contact.id, campaign_contact.contact_id, $3,
-                  $4, $5, $6, $7, $8, $9
-           from public.outreach_campaign_contacts campaign_contact
-           where campaign_contact.id = $2
+           values (
+             $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+             $5::text, $6::text, $7::text, $8::text,
+             $9::uuid, $10::timestamptz
+           )
            returning id`,
           [
             activity.id,
             activity.campaignContactId,
+            current.contact_id,
             input.actorAdminId,
             input.action,
             input.channel,
@@ -368,26 +500,234 @@ implements AdminOutreachRepository {
             input.occurredAt
           ]
         );
-        if (!inserted.rows[0]) {
-          continue;
-        }
         await connection.query(
           `update public.outreach_campaign_contacts
-           set current_status = $2,
-               last_activity_at = $3,
-               next_contact_at = $4,
-               updated_at = $3
-           where id = $1`,
+           set current_status = $2::text,
+               pipeline_stage = coalesce($3::text, pipeline_stage),
+               lost_reason = case
+                 when $3::text = 'lost' then $4::text
+                 when $3::text is not null then null
+                 else lost_reason
+               end,
+               last_activity_at = $5::timestamptz,
+               next_contact_at = coalesce($6::timestamptz, next_contact_at),
+               updated_at = $5::timestamptz
+           where id = $1::uuid`,
           [
             activity.campaignContactId,
             input.result,
+            input.stage,
+            input.lostReason,
             input.occurredAt,
             input.nextContactAt
           ]
         );
+        if (
+          input.stage
+          && activity.stageHistoryId
+          && input.stage !== current.pipeline_stage
+        ) {
+          await connection.query(
+            `insert into public.outreach_stage_history (
+               id, campaign_contact_id, actor_admin_id,
+               from_stage, to_stage, lost_reason, occurred_at
+             ) values (
+               $1::uuid, $2::uuid, $3::uuid,
+               $4::text, $5::text, $6::text, $7::timestamptz
+             )`,
+            [
+              activity.stageHistoryId,
+              activity.campaignContactId,
+              input.actorAdminId,
+              current.pipeline_stage,
+              input.stage,
+              input.lostReason,
+              input.occurredAt
+            ]
+          );
+        }
+        if (input.nextContactAt && activity.taskId) {
+          await connection.query(
+            `update public.outreach_tasks
+             set status = 'cancelled'
+             where campaign_contact_id = $1::uuid
+               and status = 'open'`,
+            [activity.campaignContactId]
+          );
+          await connection.query(
+            `insert into public.outreach_tasks (
+               id, campaign_contact_id, assigned_admin_id,
+               created_by_admin_id, task_type, task_text,
+               due_at, status, created_at
+             ) values (
+               $1::uuid, $2::uuid, coalesce($3::uuid, $4::uuid),
+               $4::uuid, $5::text, $6::text,
+               $7::timestamptz, 'open', $8::timestamptz
+             )`,
+            [
+              activity.taskId,
+              activity.campaignContactId,
+              current.assigned_admin_id,
+              input.actorAdminId,
+              input.action === "call" ? "call" : "message",
+              input.action === "call" ? "Позвонить клиенту" : "Написать клиенту",
+              input.nextContactAt,
+              input.occurredAt
+            ]
+          );
+        }
+        if (!inserted.rows[0]) {
+          continue;
+        }
         recorded += 1;
       }
       return recorded;
+    });
+  }
+
+  updateContactStage(
+    input: Parameters<AdminOutreachRepository["updateContactStage"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const current = await connection.query<{
+        readonly pipeline_stage: OutreachCampaignContactSummary["stage"];
+        readonly lost_reason: OutreachCampaignContactSummary["lostReason"];
+      }>(
+        `select pipeline_stage, lost_reason
+         from public.outreach_campaign_contacts
+         where id = $1::uuid
+         for update`,
+        [input.campaignContactId]
+      );
+      const row = current.rows[0];
+      if (!row) {
+        return false;
+      }
+      await connection.query(
+        `update public.outreach_campaign_contacts
+         set pipeline_stage = $2::text,
+             lost_reason = $3::text,
+             updated_at = $4::timestamptz
+         where id = $1::uuid`,
+        [
+          input.campaignContactId,
+          input.stage,
+          input.lostReason,
+          input.now
+        ]
+      );
+      if (
+        row.pipeline_stage !== input.stage
+        || row.lost_reason !== input.lostReason
+      ) {
+        await connection.query(
+          `insert into public.outreach_stage_history (
+             id, campaign_contact_id, actor_admin_id,
+             from_stage, to_stage, lost_reason, occurred_at
+           ) values (
+             $1::uuid, $2::uuid, $3::uuid,
+             $4::text, $5::text, $6::text, $7::timestamptz
+           )`,
+          [
+            input.historyId,
+            input.campaignContactId,
+            input.actorAdminId,
+            row.pipeline_stage,
+            input.stage,
+            input.lostReason,
+            input.now
+          ]
+        );
+      }
+      return true;
+    });
+  }
+
+  createTask(
+    input: Parameters<AdminOutreachRepository["createTask"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const contact = await connection.query<{
+        readonly assigned_admin_id: string | null;
+      }>(
+        `select assigned_admin_id
+         from public.outreach_campaign_contacts
+         where id = $1::uuid
+         for update`,
+        [input.campaignContactId]
+      );
+      const row = contact.rows[0];
+      if (!row) {
+        return false;
+      }
+      await connection.query(
+        `update public.outreach_tasks
+         set status = 'cancelled'
+         where campaign_contact_id = $1::uuid
+           and status = 'open'`,
+        [input.campaignContactId]
+      );
+      await connection.query(
+        `insert into public.outreach_tasks (
+           id, campaign_contact_id, assigned_admin_id,
+           created_by_admin_id, task_type, task_text,
+           due_at, status, created_at
+         ) values (
+           $1::uuid, $2::uuid, coalesce($3::uuid, $4::uuid, $5::uuid),
+           $5::uuid, $6::text, $7::text,
+           $8::timestamptz, 'open', $9::timestamptz
+         )`,
+        [
+          input.id,
+          input.campaignContactId,
+          input.assignedAdminId,
+          row.assigned_admin_id,
+          input.createdByAdminId,
+          input.type,
+          input.text,
+          input.dueAt,
+          input.now
+        ]
+      );
+      await connection.query(
+        `update public.outreach_campaign_contacts
+         set next_contact_at = $2::timestamptz,
+             updated_at = $3::timestamptz
+         where id = $1::uuid`,
+        [input.campaignContactId, input.dueAt, input.now]
+      );
+      return true;
+    });
+  }
+
+  completeTask(
+    input: Parameters<AdminOutreachRepository["completeTask"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const task = await connection.query<{
+        readonly campaign_contact_id: string;
+      }>(
+        `update public.outreach_tasks
+         set status = 'completed',
+             completed_by_admin_id = $2::uuid,
+             completed_at = $3::timestamptz
+         where id = $1::uuid
+           and status = 'open'
+         returning campaign_contact_id`,
+        [input.taskId, input.completedByAdminId, input.now]
+      );
+      const row = task.rows[0];
+      if (!row) {
+        return false;
+      }
+      await connection.query(
+        `update public.outreach_campaign_contacts
+         set next_contact_at = null,
+             updated_at = $2::timestamptz
+         where id = $1::uuid`,
+        [row.campaign_contact_id, input.now]
+      );
+      return true;
     });
   }
 
@@ -447,6 +787,21 @@ implements AdminOutreachRepository {
            order by activity.occurred_at desc, activity.id desc
            limit 1
          ) last_activity on true
+         left join lateral (
+           select task.id, task.assigned_admin_id,
+                  coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                  task.created_by_admin_id,
+                  coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
+                  task.task_type, task.task_text, task.due_at, task.created_at
+           from public.outreach_tasks task
+           join public.admin_accounts task_assignee
+             on task_assignee.id = task.assigned_admin_id
+           join public.admin_accounts task_creator
+             on task_creator.id = task.created_by_admin_id
+           where task.campaign_contact_id = campaign_contact.id
+             and task.status = 'open'
+           limit 1
+         ) open_task on true
          where campaign_contact.campaign_id = $1
          order by contact.display_name nulls last, contact.phone_e164`,
         [campaignId]
@@ -460,6 +815,8 @@ implements AdminOutreachRepository {
           maxIdentifier: row.max_identifier,
           source: row.source,
           assignedAdminName: row.assigned_admin_name,
+          stage: row.pipeline_stage,
+          lostReason: row.lost_reason,
           status: row.current_status,
           lastChannel: row.last_channel,
           lastActivityAt: nullableIso(row.last_activity_at),
@@ -629,11 +986,33 @@ function mapContact(row: ContactRow): OutreachCampaignContactSummary {
     linkedUserId: row.linked_user_id,
     assignedAdminId: row.assigned_admin_id,
     assignedAdminName: row.assigned_admin_name,
+    stage: row.pipeline_stage,
+    lostReason: row.lost_reason,
     status: row.current_status,
     lastActivityAt: nullableIso(row.last_activity_at),
     nextContactAt: nullableIso(row.next_contact_at),
     lastChannel: row.last_channel,
-    lastResult: row.last_result
+    lastResult: row.last_result,
+    openTask: row.open_task_id && row.open_task_assigned_admin_id
+      && row.open_task_assigned_admin_name && row.open_task_created_by_admin_id
+      && row.open_task_created_by_admin_name && row.open_task_type
+      && row.open_task_text && row.open_task_due_at && row.open_task_created_at
+      ? {
+          id: row.open_task_id,
+          assignedAdminId: row.open_task_assigned_admin_id,
+          assignedAdminName: row.open_task_assigned_admin_name,
+          createdByAdminId: row.open_task_created_by_admin_id,
+          createdByAdminName: row.open_task_created_by_admin_name,
+          completedByAdminId: null,
+          completedByAdminName: null,
+          type: row.open_task_type,
+          text: row.open_task_text,
+          dueAt: toIso(row.open_task_due_at),
+          status: "open",
+          createdAt: toIso(row.open_task_created_at),
+          completedAt: null
+        }
+      : null
   };
 }
 
@@ -645,6 +1024,36 @@ function mapActivity(row: ActivityRow): OutreachActivity {
     channel: row.channel,
     result: row.result,
     note: row.note,
+    occurredAt: toIso(row.occurred_at)
+  };
+}
+
+function mapTask(row: TaskRow): OutreachTask {
+  return {
+    id: row.id,
+    assignedAdminId: row.assigned_admin_id,
+    assignedAdminName: row.assigned_admin_name,
+    createdByAdminId: row.created_by_admin_id,
+    createdByAdminName: row.created_by_admin_name,
+    completedByAdminId: row.completed_by_admin_id,
+    completedByAdminName: row.completed_by_admin_name,
+    type: row.task_type,
+    text: row.task_text,
+    dueAt: toIso(row.due_at),
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    completedAt: nullableIso(row.completed_at)
+  };
+}
+
+function mapStageHistory(row: StageHistoryRow): OutreachStageHistoryEntry {
+  return {
+    id: row.id,
+    actorAdminId: row.actor_admin_id,
+    actorName: row.actor_name,
+    fromStage: row.from_stage,
+    toStage: row.to_stage,
+    lostReason: row.lost_reason,
     occurredAt: toIso(row.occurred_at)
   };
 }
@@ -665,13 +1074,13 @@ const CAMPAIGN_SUMMARY_SELECT = `
   select campaign.id, campaign.name, campaign.description, campaign.status,
          count(campaign_contact.id)::text as total_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.current_status = 'new'
+           where campaign_contact.pipeline_stage = 'new'
          )::text as untouched_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.current_status = 'interested'
+           where campaign_contact.pipeline_stage = 'interested'
          )::text as interested_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.current_status = 'converted'
+           where campaign_contact.pipeline_stage = 'won'
          )::text as converted_contacts,
          campaign.created_at, campaign.completed_at
   from public.outreach_campaigns campaign
@@ -685,8 +1094,19 @@ const CONTACT_SUMMARY_SELECT = `
          contact.source, contact.note, contact.linked_user_id,
          campaign_contact.assigned_admin_id,
          coalesce(assignee.display_name, assignee.email_normalized) as assigned_admin_name,
+         campaign_contact.pipeline_stage,
+         campaign_contact.lost_reason,
          campaign_contact.current_status,
          campaign_contact.last_activity_at,
          campaign_contact.next_contact_at,
          last_activity.channel as last_channel,
-         last_activity.result as last_result`;
+         last_activity.result as last_result,
+         open_task.id as open_task_id,
+         open_task.assigned_admin_id as open_task_assigned_admin_id,
+         open_task.assigned_admin_name as open_task_assigned_admin_name,
+         open_task.created_by_admin_id as open_task_created_by_admin_id,
+         open_task.created_by_admin_name as open_task_created_by_admin_name,
+         open_task.task_type as open_task_type,
+         open_task.task_text as open_task_text,
+         open_task.due_at as open_task_due_at,
+         open_task.created_at as open_task_created_at`;

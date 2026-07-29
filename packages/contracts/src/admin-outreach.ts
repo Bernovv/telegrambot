@@ -25,11 +25,40 @@ export const OUTREACH_CHANNELS = [
   "other"
 ] as const;
 
+export const OUTREACH_PIPELINE_STAGES = [
+  "new",
+  "first_contact",
+  "dialogue",
+  "follow_up",
+  "interested",
+  "won",
+  "lost"
+] as const;
+
+export const OUTREACH_LOST_REASONS = [
+  "declined",
+  "not_relevant",
+  "invalid_contact",
+  "duplicate",
+  "other"
+] as const;
+
+export const OUTREACH_TASK_TYPES = ["call", "message", "other"] as const;
+export const OUTREACH_TASK_STATUSES = [
+  "open",
+  "completed",
+  "cancelled"
+] as const;
+
 export type OutreachCampaignStatus =
   typeof OUTREACH_CAMPAIGN_STATUSES[number];
 export type OutreachContactStatus =
   typeof OUTREACH_CONTACT_STATUSES[number];
 export type OutreachChannel = typeof OUTREACH_CHANNELS[number];
+export type OutreachPipelineStage = typeof OUTREACH_PIPELINE_STAGES[number];
+export type OutreachLostReason = typeof OUTREACH_LOST_REASONS[number];
+export type OutreachTaskType = typeof OUTREACH_TASK_TYPES[number];
+export type OutreachTaskStatus = typeof OUTREACH_TASK_STATUSES[number];
 
 export interface OutreachCampaignSummary {
   readonly id: string;
@@ -61,11 +90,14 @@ export interface OutreachCampaignContactSummary {
   readonly linkedUserId: string | null;
   readonly assignedAdminId: string | null;
   readonly assignedAdminName: string | null;
+  readonly stage: OutreachPipelineStage;
+  readonly lostReason: OutreachLostReason | null;
   readonly status: OutreachContactStatus;
   readonly lastActivityAt: string | null;
   readonly nextContactAt: string | null;
   readonly lastChannel: OutreachChannel | null;
   readonly lastResult: OutreachContactStatus | null;
+  readonly openTask: OutreachTask | null;
 }
 
 export interface OutreachCampaignContactPage {
@@ -85,9 +117,37 @@ export interface OutreachActivity {
   readonly occurredAt: string;
 }
 
+export interface OutreachTask {
+  readonly id: string;
+  readonly assignedAdminId: string;
+  readonly assignedAdminName: string;
+  readonly createdByAdminId: string;
+  readonly createdByAdminName: string;
+  readonly completedByAdminId: string | null;
+  readonly completedByAdminName: string | null;
+  readonly type: OutreachTaskType;
+  readonly text: string;
+  readonly dueAt: string;
+  readonly status: OutreachTaskStatus;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface OutreachStageHistoryEntry {
+  readonly id: string;
+  readonly actorAdminId: string | null;
+  readonly actorName: string;
+  readonly fromStage: OutreachPipelineStage | null;
+  readonly toStage: OutreachPipelineStage;
+  readonly lostReason: OutreachLostReason | null;
+  readonly occurredAt: string;
+}
+
 export interface OutreachCampaignContactDetail
 extends OutreachCampaignContactSummary {
   readonly activities: readonly OutreachActivity[];
+  readonly tasks: readonly OutreachTask[];
+  readonly stageHistory: readonly OutreachStageHistoryEntry[];
 }
 
 export interface OutreachImportRow {
