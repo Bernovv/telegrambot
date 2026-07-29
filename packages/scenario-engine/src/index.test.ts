@@ -146,6 +146,82 @@ test("wallet credit requires an idempotency key template", () => {
   ));
 });
 
+test("validates a bounded scenario wallet credit", () => {
+  const wallet = "00000000-0000-4000-8000-000000000006";
+  const valid = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(wallet, "wallet_credit", {
+        amountKopecks: "10000",
+        currency: "RUB",
+        idempotencyKeyTemplate: "welcome_bonus",
+        reason: "Приветственный бонус"
+      }),
+      node(ids.end, "end")
+    ],
+    [edge("101", ids.start, wallet), edge("102", wallet, ids.end)]
+  ));
+  const unsafe = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(wallet, "wallet_credit", {
+        amountKopecks: "1000001",
+        currency: "RUB",
+        idempotencyKeyTemplate: "welcome_bonus",
+        reason: "Приветственный бонус"
+      }),
+      node(ids.end, "end")
+    ],
+    [edge("103", ids.start, wallet), edge("104", wallet, ids.end)]
+  ));
+
+  assert.equal(valid.valid, true);
+  assert.ok(unsafe.issues.some((issue) =>
+    issue.code === "WALLET_CONFIGURATION_INVALID"
+  ));
+});
+
+test("validates strict status and category scenario actions", () => {
+  const status = "00000000-0000-4000-8000-000000000016";
+  const category = "00000000-0000-4000-8000-000000000017";
+  const valid = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(status, "set_status", {
+        statusCode: "interested",
+        reason: "Интерес подтвержден сценарием"
+      }),
+      node(category, "add_category", {
+        categoryCode: "event_interest",
+        reason: "Категория добавлена сценарием"
+      }),
+      node(ids.end, "end")
+    ],
+    [
+      edge("115", ids.start, status),
+      edge("116", status, category),
+      edge("117", category, ids.end)
+    ]
+  ));
+  const unsafe = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(status, "set_status", {
+        statusCode: "Interested",
+        reason: "Интерес подтвержден сценарием",
+        sql: "select 1"
+      }),
+      node(ids.end, "end")
+    ],
+    [edge("118", ids.start, status), edge("119", status, ids.end)]
+  ));
+
+  assert.equal(valid.valid, true);
+  assert.ok(unsafe.issues.some((issue) =>
+    issue.code === "USER_CLASSIFICATION_CONFIGURATION_INVALID"
+  ));
+});
+
 test("rejects presentation nodes that cannot be rendered in Telegram", () => {
   const menuId = "00000000-0000-4000-8000-000000000007";
   const result = validateScenarioGraph(graph(
@@ -381,6 +457,61 @@ test("requires bounded context mappings for order creation", () => {
   assert.equal(valid.valid, true);
   assert.ok(invalid.issues.some((issue) =>
     issue.code === "ORDER_CONFIGURATION_INVALID"
+  ));
+});
+
+test("validates a composed order before offer and rejects an empty draft", () => {
+  const addItemId = "00000000-0000-4000-8000-000000000016";
+  const summaryId = "00000000-0000-4000-8000-000000000017";
+  const valid = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(ids.order, "order_start", {
+        currency: "RUB",
+        mode: "compose",
+        walletMode: "all"
+      }),
+      node(addItemId, "order_add_item", {
+        productId: ids.product,
+        quantityContextKey: "adultQuantity"
+      }),
+      node(summaryId, "order_summary"),
+      node(ids.offer, "offer_acceptance"),
+      node(ids.payment, "payment_start"),
+      node(ids.end, "end")
+    ],
+    [
+      edge("126", ids.start, ids.order),
+      edge("127", ids.order, addItemId),
+      edge("128", addItemId, summaryId),
+      edge("129", summaryId, ids.offer),
+      edge("130", ids.offer, ids.payment),
+      edge("131", ids.payment, ids.end)
+    ]
+  ));
+  const invalid = validateScenarioGraph(graph(
+    [
+      node(ids.start, "start"),
+      node(ids.order, "order_start", {
+        currency: "RUB",
+        mode: "compose"
+      }),
+      node(summaryId, "order_summary"),
+      node(ids.offer, "offer_acceptance"),
+      node(ids.end, "end")
+    ],
+    [
+      edge("132", ids.start, ids.order),
+      edge("133", ids.order, summaryId),
+      edge("134", summaryId, ids.offer),
+      edge("135", ids.offer, ids.end)
+    ]
+  ));
+
+  assert.equal(valid.valid, true);
+  assert.ok(invalid.issues.some((issue) =>
+    issue.code === "ORDER_FLOW_INVALID"
+    && issue.nodeId === summaryId
   ));
 });
 

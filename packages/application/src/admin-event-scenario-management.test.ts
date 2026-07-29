@@ -19,6 +19,7 @@ const paymentId = "00000000-0000-4000-8000-000000000107";
 const endId = "00000000-0000-4000-8000-000000000108";
 const orderId = "00000000-0000-4000-8000-000000000109";
 const productId = "00000000-0000-4000-8000-000000000110";
+const statusNodeId = "00000000-0000-4000-8000-000000000111";
 
 test("saves an invalid graph as a draft with validation issues", async () => {
   let receivedIssues = 0;
@@ -102,6 +103,63 @@ test("blocks publication when payment can start before offer", async () => {
     (error) =>
       error instanceof AdminScenarioValidationFailedError
       && error.issues.some((issue) => issue.code === "PAYMENT_BEFORE_OFFER")
+  );
+});
+
+test("blocks publication when a referenced status is unavailable", async () => {
+  const repository = stubRepository({
+    async loadDraft() {
+      return {
+        status: "ready",
+        graph: {
+          ...validGraph(),
+          nodes: [
+            ...validGraph().nodes.slice(0, -2),
+            node(statusNodeId, "set_status", {
+              statusCode: "interested",
+              reason: "Пользователь заинтересовался предложением"
+            }),
+            ...validGraph().nodes.slice(-2)
+          ],
+          edges: [
+            edge("201", startId, orderId),
+            edge("202", orderId, offerId),
+            edge("203", offerId, statusNodeId),
+            edge("204", statusNodeId, paymentId),
+            edge("205", paymentId, endId)
+          ]
+        }
+      };
+    },
+    async findUnavailableUserClassificationCodes(input) {
+      assert.deepEqual(input, {
+        statusCodes: ["interested"],
+        categoryCodes: []
+      });
+      return { statusCodes: ["interested"], categoryCodes: [] };
+    }
+  });
+  const service = new PublishAdminEventScenarioVersionService(
+    repository,
+    sequenceIds(auditId)
+  );
+
+  await assert.rejects(
+    service.execute({
+      actor: actor("scenarios.publish"),
+      eventId,
+      scenarioVersionId: versionId,
+      expectedLockVersion: 8,
+      reason: "Проверка ссылок на классификацию",
+      metadata: metadata()
+    }),
+    (error) =>
+      error instanceof AdminScenarioValidationFailedError
+      && error.issues.some(
+        (issue) =>
+          issue.code === "USER_CLASSIFICATION_CONFIGURATION_INVALID"
+          && issue.nodeId === statusNodeId
+      )
   );
 });
 
@@ -197,6 +255,9 @@ function stubRepository(
   overrides: Partial<AdminEventScenarioManagementRepository>
 ): AdminEventScenarioManagementRepository {
   return {
+    async findUnavailableUserClassificationCodes() {
+      return { statusCodes: [], categoryCodes: [] };
+    },
     async saveDraft() {
       throw new Error("Unexpected saveDraft");
     },

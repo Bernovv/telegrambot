@@ -7,6 +7,7 @@ import type {
   HandleTelegramStartCommand,
   ListTelegramTicketsCommand,
   RequestTelegramTicketRedeliveryCommand,
+  SelectTelegramEventCommand,
   SubmitTelegramScenarioInputCommand
 } from "@ticket-platform/contracts";
 import type { Logger } from "@ticket-platform/observability";
@@ -61,6 +62,8 @@ describe("grammY Telegram transport", () => {
           accepted: true,
           newlyAccepted: true,
           orderId: "order-1",
+          userId: "019c0123-4567-789a-bcde-f0123456789d",
+          eventId: "019c0123-4567-789a-bcde-f0123456789c",
           orderNumber: "BP-000001",
           currency: "RUB",
           totalKopecks: "249000",
@@ -220,11 +223,24 @@ describe("grammY Telegram transport", () => {
 
   it("maps compact scenario callbacks to an owner-bound command", async () => {
     const commands: AdvanceTelegramScenarioCommand[] = [];
+    const eventCommands: SelectTelegramEventCommand[] = [];
     const inputCommands: SubmitTelegramScenarioInputCommand[] = [];
     const scenario: TelegramScenarioUseCases = {
       start: {
         async execute() {
           return { handled: false, reason: "event_not_found" };
+        }
+      },
+      selectEvent: {
+        async execute(command) {
+          eventCommands.push(command);
+          return {
+            handled: true,
+            duplicate: false,
+            sessionId,
+            status: "waiting_input",
+            presentations: [{ text: "Event selected", buttons: [] }]
+          };
         }
       },
       advance: {
@@ -278,16 +294,30 @@ describe("grammY Telegram transport", () => {
       "callback-scenario",
       encodeScenarioCallback(sessionId, scenarioEdgeId)
     ));
+    await bot.handleUpdate(callbackFixture(
+      1009,
+      "callback-event",
+      `event_select:${eventId}`
+    ));
     await bot.handleUpdate(textFixture());
 
     assert.equal(commands[0]?.sessionId, sessionId);
     assert.equal(commands[0]?.edgeId, scenarioEdgeId);
     assert.equal(commands[0]?.senderExternalUserId, "777");
     assert.equal(commands[0]?.updateId, "1007");
+    assert.equal(eventCommands[0]?.eventId, eventId);
+    assert.equal(eventCommands[0]?.senderExternalUserId, "777");
+    assert.equal(eventCommands[0]?.updateId, "1009");
+    assert.equal(eventCommands[0]?.callbackQueryId, "callback-event");
     assert.equal(inputCommands[0]?.senderExternalUserId, "777");
     assert.equal(inputCommands[0]?.updateId, "1008");
     assert.equal(inputCommands[0]?.text, "3");
-    assert.deepEqual(apiCalls, ["answerCallbackQuery", "sendMessage"]);
+    assert.deepEqual(apiCalls, [
+      "answerCallbackQuery",
+      "answerCallbackQuery",
+      "sendMessage",
+      "sendMessage"
+    ]);
   });
 });
 
@@ -471,3 +501,4 @@ function testBotInfo(): NonNullable<Bot["botInfo"]> {
 const ticketId = "019c0123-4567-789a-bcde-f0123456789a";
 const sessionId = "019c0123-4567-789a-bcde-f0123456789b";
 const scenarioEdgeId = "019c0123-4567-789a-bcde-f0123456789c";
+const eventId = "019c0123-4567-789a-bcde-f0123456789d";

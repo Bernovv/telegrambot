@@ -13,6 +13,8 @@ Keep `TBANK_PAYMENTS_ENABLED=false` until all of the following are verified in s
 - migration `20260725120000_tbank_payment_reconciliation` is applied before enabling worker
   reconciliation;
 - migration `20260725160000_tbank_full_refunds` is applied before enabling full refunds;
+- migration `20260728120000_internal_zero_due_payments` is applied before publishing free or
+  wallet-only purchase scenarios;
 - the terminal credentials belong to the intended environment;
 - `TBANK_API_BASE_URL` is the official test or production v2 endpoint;
 - notification, success, and failure URLs are public HTTPS URLs;
@@ -41,6 +43,10 @@ The worker also requires the same stable `ORDER_TOKEN_SECRET` used for ticket re
 lease must cover the configured sequential batch timeout; invalid combinations fail at startup.
 
 ## Expected Flow
+
+Orders whose immutable `external_due_kopecks` is zero never enter this flow. The platform records
+an idempotent `internal` zero-amount payment attempt and confirms the order atomically without
+calling T-Bank.
 
 1. Telegram `payment_init:<opaque-order-token>` locks the owner-bound payable order.
 2. The platform creates a `creating` attempt and commits it.

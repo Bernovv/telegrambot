@@ -173,6 +173,30 @@ export function createTelegramBot(
   });
 
   bot.callbackQuery(
+    /^event_select:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
+    async (ctx) => {
+      const eventId = ctx.match[1];
+      if (
+        !eventId
+        || !ctx.callbackQuery.message
+        || ctx.callbackQuery.message.chat.type !== "private"
+      ) {
+        await ctx.answerCallbackQuery({ text: "Мероприятие недоступно" });
+        return;
+      }
+      const view = await controller.onEventSelection({
+        eventId,
+        senderExternalUserId: String(ctx.from.id),
+        updateId: String(ctx.update.update_id),
+        callbackQueryId: ctx.callbackQuery.id,
+        occurredAt: new Date()
+      });
+      await ctx.answerCallbackQuery({ text: view.callbackText });
+      await sendReplies(ctx.reply.bind(ctx), view.replies);
+    }
+  );
+
+  bot.callbackQuery(
     /^scenario:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]{22}$/,
     async (ctx) => {
       const reference = decodeScenarioCallback(ctx.callbackQuery.data);

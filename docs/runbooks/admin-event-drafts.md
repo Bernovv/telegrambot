@@ -44,11 +44,11 @@ Audit records contain administrator ID and roles, reason, request ID, API-observ
 and masked before/after configuration. `audit_log` remains append-only.
 
 Publication requires `events.publish` and uses the same aggregate lock. It fails atomically unless
-the draft has a title, start date, support contact, at least one active product, a positive active
-price for every active product, a published scenario, and an active offer when
-`offerRequired=true`. Zero-priced publication remains blocked until the free-order flow exists.
-Success sets `status=published`, `published_at`, increments `lock_version`, and appends
-`event.published` in one transaction.
+the draft has a title, start date, support contact, at least one active product, an active pricing
+rule for every active product, a published scenario, and an active offer when
+`offerRequired=true`. A zero-priced active rule is valid because the internal zero-due
+confirmation path issues tickets without T-Bank. Success sets `status=published`, `published_at`,
+increments `lock_version`, and appends `event.published` in one transaction.
 
 Products and pricing rules are never physically deleted through the API. Set `isActive` to false
 to withdraw them. Prices are integer-kopeck strings at the API boundary; the administrator form

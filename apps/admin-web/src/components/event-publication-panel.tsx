@@ -119,10 +119,10 @@ export function eventPublicationRequirements(
       href: `/events/${event.id}/catalog`
     },
     {
-      label: "Цена каждого активного продукта",
+      label: "Тариф каждого активного продукта",
       ready: activeProducts.length > 0 && activeProducts.every(
         (product) => product.pricingRules.some(
-          (rule) => rule.isActive && isPositiveKopeckAmount(rule.unitPriceKopecks)
+          (rule) => rule.isActive && isKopeckAmount(rule.unitPriceKopecks)
         )
       ),
       href: `/events/${event.id}/catalog`
@@ -140,8 +140,8 @@ export function eventPublicationRequirements(
   ];
 }
 
-function isPositiveKopeckAmount(value: string): boolean {
-  return /^\d{1,19}$/.test(value) && BigInt(value) > 0n;
+function isKopeckAmount(value: string): boolean {
+  return /^\d{1,19}$/.test(value);
 }
 
 function publicationErrorMessage(error: unknown): string {

@@ -155,7 +155,11 @@ describe("PostgreSQL administrator event draft management", () => {
     assert.deepEqual(result, { status: "published", lockVersion: 3 });
     assert.match(
       findQuery(connection, "from public.ticket_products").text,
-      /rules\.unit_price_kopecks > 0/
+      /rules\.is_active/
+    );
+    assert.doesNotMatch(
+      findQuery(connection, "from public.ticket_products").text,
+      /unit_price_kopecks > 0/
     );
     assert.equal(
       findQuery(connection, "set status = 'published'").values[1],

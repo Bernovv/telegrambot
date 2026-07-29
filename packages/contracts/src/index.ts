@@ -35,4 +35,7 @@ export * from "./jobs.js";
 export * from "./admin-auth.js";
 export * from "./admin-operations.js";
 export * from "./admin-events.js";
+export * from "./admin-user-classification.js";
+export * from "./admin-segments.js";
+export * from "./admin-broadcasts.js";
 export * from "./orders.js";

@@ -262,6 +262,10 @@ implements PaymentConfirmationRepository {
   private async insertConfirmedAttempt(
     input: PersistPaymentConfirmationInput
   ): Promise<void> {
+    const internalEvidence = input.command.internalEvidence;
+    if (input.command.source === "internal" && !internalEvidence) {
+      throw new Error("Internal payment evidence was not provided");
+    }
     await this.session.query(
       `insert into public.payment_attempts (
          id, order_id, attempt_number, provider, status, amount_kopecks, currency,
@@ -285,7 +289,14 @@ implements PaymentConfirmationRepository {
         input.command.confirmedAt,
         JSON.stringify({
           schemaVersion: 1,
-          actorType: input.command.actor.type
+          actorType: input.command.actor.type,
+          ...(input.command.source === "internal" && internalEvidence
+            ? {
+                reason: internalEvidence.reason,
+                userId: internalEvidence.userId,
+                eventId: internalEvidence.eventId
+              }
+            : {})
         })
       ]
     );

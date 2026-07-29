@@ -16,10 +16,13 @@ import type {
   ResumeTelegramScenarioAfterOfferCommand,
   ResumeTelegramScenarioAfterOfferResult,
   ScenarioPresentationModel,
+  SelectTelegramEventCommand,
+  SelectTelegramEventResult,
   StartTelegramScenarioCommand,
   StartTelegramScenarioResult,
   SubmitTelegramScenarioInputCommand,
   SubmitTelegramScenarioInputResult,
+  TelegramEventChoice,
   TelegramTicketSummary
 } from "@ticket-platform/contracts";
 import { encodeScenarioCallback } from "./scenario-callback.js";
@@ -62,6 +65,17 @@ export interface TelegramPaymentInitializationUseCase {
   ): Promise<InitializeTelegramPaymentResult>;
 }
 
+export interface TelegramInternalOrderCompletionUseCase {
+  execute(command: {
+    readonly orderId: string;
+    readonly userId: string;
+    readonly eventId: string;
+    readonly currency: string;
+    readonly idempotencyKey: string;
+    readonly completedAt: Date;
+  }): Promise<unknown>;
+}
+
 export interface TelegramScenarioStartUseCase {
   execute(
     command: StartTelegramScenarioCommand
@@ -72,6 +86,12 @@ export interface TelegramScenarioAdvanceUseCase {
   execute(
     command: AdvanceTelegramScenarioCommand
   ): Promise<AdvanceTelegramScenarioResult>;
+}
+
+export interface TelegramEventSelectionUseCase {
+  execute(
+    command: SelectTelegramEventCommand
+  ): Promise<SelectTelegramEventResult>;
 }
 
 export interface TelegramScenarioInputUseCase {
@@ -88,6 +108,7 @@ export interface TelegramScenarioOfferAcceptedUseCase {
 
 export interface TelegramScenarioUseCases {
   readonly start: TelegramScenarioStartUseCase;
+  readonly selectEvent?: TelegramEventSelectionUseCase;
   readonly advance: TelegramScenarioAdvanceUseCase;
   readonly input: TelegramScenarioInputUseCase;
   readonly offerAccepted?: TelegramScenarioOfferAcceptedUseCase;
@@ -113,7 +134,8 @@ export class TelegramUpdateController {
     private readonly listTickets: TelegramTicketListUseCase,
     private readonly requestTicketRedelivery: TelegramTicketRedeliveryUseCase,
     private readonly initializePayment?: TelegramPaymentInitializationUseCase,
-    private readonly scenario?: TelegramScenarioUseCases
+    private readonly scenario?: TelegramScenarioUseCases,
+    private readonly completeInternalOrder?: TelegramInternalOrderCompletionUseCase
   ) {}
 
   async onStart(command: HandleTelegramStartCommand): Promise<readonly TelegramReplyModel[]> {
@@ -147,6 +169,19 @@ export class TelegramUpdateController {
         }
         return scenarioMessages;
       }
+      if (scenario.reason === "event_selection_required") {
+        const eventReplies = eventChoiceReplies(
+          scenario.events,
+          scenario.hasMoreEvents
+        );
+        if (result.phoneRequired) {
+          eventReplies.push({
+            text: "Чтобы закрепить заявку и не потерять билет, поделитесь номером телефона.",
+            keyboard: "request_contact"
+          });
+        }
+        return eventReplies;
+      }
     }
     const replies: TelegramReplyModel[] = [
       {
@@ -167,6 +202,36 @@ export class TelegramUpdateController {
     }
 
     return replies;
+  }
+
+  async onEventSelection(
+    command: SelectTelegramEventCommand
+  ): Promise<TelegramScenarioTransitionView> {
+    if (!this.scenario?.selectEvent) {
+      return { callbackText: "Мероприятие недоступно", replies: [] };
+    }
+    const result = await this.scenario.selectEvent.execute(command);
+    if (!result.handled) {
+      return {
+        callbackText: result.reason === "participant_not_found"
+          ? "Сначала запустите бота"
+          : "Мероприятие недоступно",
+        replies: []
+      };
+    }
+    if (result.duplicate) {
+      return { callbackText: "Уже открыто", replies: [] };
+    }
+    const replies = scenarioReplies(result.sessionId, result.presentations);
+    if (result.status === "blocked") {
+      replies.push({
+        text: "Сценарий временно недоступен. Попробуйте начать заново позже."
+      });
+    }
+    return {
+      callbackText: result.status === "completed" ? "Готово" : "Открыто",
+      replies
+    };
   }
 
   async onScenarioTransition(
@@ -300,6 +365,17 @@ export class TelegramUpdateController {
         callbackText: offerRejectionText(result.reason)
       };
     }
+    const internallyCompleted =
+      result.externalDueKopecks === "0" && this.completeInternalOrder
+        ? await this.completeInternalOrder.execute({
+            orderId: result.orderId,
+            userId: result.userId,
+            eventId: result.eventId,
+            currency: result.currency,
+            idempotencyKey: `internal_order:${result.orderId}`,
+            completedAt: command.acceptedAt
+          }).then(() => true)
+        : false;
     const scenarioRepliesAfterOffer = await this.resumeScenarioAfterOffer(
       result.orderId,
       command
@@ -316,7 +392,7 @@ export class TelegramUpdateController {
     return {
       callbackText: "Оферта принята",
       replacementText: [
-        "Оферта принята",
+        internallyCompleted ? "Заказ подтвержден" : "Оферта принята",
         "",
         `Заказ: ${result.orderNumber}`,
         `Итого: ${formatKopecks(result.totalKopecks)} ₽`,
@@ -413,6 +489,78 @@ function scenarioReplies(
         }
       : {})
   }));
+}
+
+function eventChoiceReplies(
+  events: readonly TelegramEventChoice[],
+  hasMoreEvents: boolean
+): TelegramReplyModel[] {
+  if (events.length === 0) {
+    return [{
+      text: "Сейчас нет доступных мероприятий.",
+      inlineButtons: [{ text: "Мои билеты", callbackData: "my_tickets" }]
+    }];
+  }
+
+  const replies: TelegramReplyModel[] = [{
+    text: "Выберите мероприятие:",
+    inlineButtons: [{ text: "Мои билеты", callbackData: "my_tickets" }]
+  }];
+  for (const event of events) {
+    const details = [
+      event.title,
+      `Дата: ${formatEventDate(event.startsAt, event.timezone)}`,
+      ...(event.locationName ? [`Место: ${singleLine(event.locationName, 200)}`] : []),
+      ...(event.minimumPriceKopecks && event.currency
+        ? [`Билеты: от ${formatEventPrice(
+            event.minimumPriceKopecks,
+            event.currency
+          )}`]
+        : []),
+      ...(event.salesStatus === "sales_paused"
+        ? ["Продажи временно приостановлены"]
+        : event.salesStatus === "sold_out"
+          ? ["Билеты закончились"]
+          : [])
+    ];
+    replies.push({
+      text: details.join("\n"),
+      inlineButtons: [{
+        text: "Открыть",
+        callbackData: `event_select:${event.eventId}`
+      }]
+    });
+  }
+  if (hasMoreEvents) {
+    replies.push({
+      text: "Показаны ближайшие мероприятия. Остальные появятся после завершения текущих."
+    });
+  }
+  return replies;
+}
+
+function formatEventDate(startsAt: string, timezone: string): string {
+  const date = new Date(startsAt);
+  if (Number.isNaN(date.getTime())) {
+    return startsAt;
+  }
+  try {
+    return new Intl.DateTimeFormat("ru-RU", {
+      timeZone: timezone,
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function formatEventPrice(value: string, currency: string): string {
+  const amount = formatKopecks(value);
+  return currency === "RUB" ? `${amount} ₽` : `${amount} ${currency}`;
 }
 
 function formatTicketSummary(ticket: TelegramTicketSummary): string {

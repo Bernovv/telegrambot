@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -7,6 +8,7 @@ import {
   readMigrationFiles,
   type MigrationFile
 } from "./migration-runner.js";
+import { applyDemoSeed } from "./seed.js";
 
 const { Client } = pg;
 const databasePrefix = "ticket_platform_migration_";
@@ -16,6 +18,7 @@ const migrationDirectory = join(projectRoot, "supabase", "migrations");
 async function main(): Promise<void> {
   const adminUrl = validateAdminUrl();
   const migrations = await readMigrationFiles(migrationDirectory, migrationDescriptors);
+  const seedSql = await readFile(join(projectRoot, "supabase", "seed.sql"), "utf8");
 
   if (migrations.length < 2) {
     throw new Error("Migration upgrade test requires at least two migrations");
@@ -28,6 +31,14 @@ async function main(): Promise<void> {
   await withEphemeralDatabase(adminUrl, cleanDatabase, async (databaseUrl) => {
     await applyMigrationsToDatabase(databaseUrl, migrations);
     await verifyMigrations(databaseUrl, migrations);
+    const firstSeed = await applyDemoSeed(databaseUrl, seedSql);
+    if (!firstSeed.eventCreated || !firstSeed.userCreated) {
+      throw new Error("Fresh migration database did not create the complete local demo seed");
+    }
+    const repeatedSeed = await applyDemoSeed(databaseUrl, seedSql);
+    if (repeatedSeed.eventCreated || repeatedSeed.userCreated) {
+      throw new Error("Repeated local demo seed was not an idempotent no-op");
+    }
   });
 
   await withEphemeralDatabase(adminUrl, upgradeDatabase, async (databaseUrl) => {
@@ -39,7 +50,8 @@ async function main(): Promise<void> {
   });
 
   process.stdout.write(
-    `Migration smoke tests passed: fresh ${migrations.length}, upgrade ${migrations.length - 1}->${migrations.length}\n`
+    `Migration smoke tests passed: fresh ${migrations.length} with idempotent demo seed, `
+      + `upgrade ${migrations.length - 1}->${migrations.length}\n`
   );
 }
 
@@ -141,6 +153,9 @@ async function verifyMigrations(
       readonly scenario_versions: string | null;
       readonly scenario_sessions: string | null;
       readonly scenario_events: string | null;
+      readonly broadcasts: string | null;
+      readonly broadcast_deliveries: string | null;
+      readonly broadcast_delivery_rate_gate: string | null;
       readonly pgboss_version: string | null;
     }>(
       `select
@@ -157,6 +172,10 @@ async function verifyMigrations(
          to_regclass('public.scenario_versions')::text as scenario_versions,
          to_regclass('public.scenario_sessions')::text as scenario_sessions,
          to_regclass('public.scenario_events')::text as scenario_events,
+         to_regclass('public.broadcasts')::text as broadcasts,
+         to_regclass('public.broadcast_deliveries')::text as broadcast_deliveries,
+         to_regclass('public.broadcast_delivery_rate_gate')::text
+           as broadcast_delivery_rate_gate,
          to_regclass('pgboss.version')::text as pgboss_version`
     );
     const row = schema.rows[0];
@@ -202,6 +221,24 @@ async function verifyMigrations(
       !== Boolean(row.scenario_sessions && row.scenario_events)
     ) {
       throw new Error("Scenario runtime schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcasts = expectedVersions.includes("20260729200000");
+    if (includesBroadcasts !== Boolean(row.broadcasts)) {
+      throw new Error("Broadcast version schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastDelivery = expectedVersions.includes("20260730120000");
+    if (includesBroadcastDelivery !== Boolean(row.broadcast_deliveries)) {
+      throw new Error("Broadcast delivery schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastExecution = expectedVersions.includes("20260730160000");
+    if (
+      includesBroadcastExecution
+      !== Boolean(row.broadcast_delivery_rate_gate)
+    ) {
+      throw new Error("Broadcast execution schema presence does not match the migration sequence");
     }
   } finally {
     await client.end();

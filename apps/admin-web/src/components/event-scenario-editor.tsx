@@ -498,7 +498,17 @@ function editableGraph(
       edges: version.edges.map((edge) => ({ ...edge }))
     };
   }
-  const [start, message, quantity, order, offer, payment, end] = STARTER_NODE_IDS;
+  const [
+    start,
+    message,
+    quantity,
+    order,
+    orderItem,
+    orderSummary,
+    offer,
+    payment,
+    end
+  ] = STARTER_NODE_IDS;
   const activeProduct = products.find((product) => product.isActive);
   if (!activeProduct) {
     const starter: Array<[string, AdminScenarioNodeType, string]> = [
@@ -524,6 +534,8 @@ function editableGraph(
     [message, "message", defaultPayload("message", products)],
     [quantity, "number_input", defaultPayload("number_input", products)],
     [order, "order_start", defaultPayload("order_start", products)],
+    [orderItem, "order_add_item", defaultPayload("order_add_item", products)],
+    [orderSummary, "order_summary", "{}"],
     [offer, "offer_acceptance", "{}"],
     [payment, "payment_start", "{}"],
     [end, "end", "{}"]
@@ -539,9 +551,15 @@ function editableGraph(
       createEdge("00000000-0000-4000-8000-000000000821", start, message),
       createEdge("00000000-0000-4000-8000-000000000822", message, quantity),
       createEdge("00000000-0000-4000-8000-000000000823", quantity, order),
-      createEdge("00000000-0000-4000-8000-000000000824", order, offer),
-      createEdge("00000000-0000-4000-8000-000000000825", offer, payment),
-      createEdge("00000000-0000-4000-8000-000000000826", payment, end)
+      createEdge("00000000-0000-4000-8000-000000000824", order, orderItem),
+      createEdge(
+        "00000000-0000-4000-8000-000000000825",
+        orderItem,
+        orderSummary
+      ),
+      createEdge("00000000-0000-4000-8000-000000000826", orderSummary, offer),
+      createEdge("00000000-0000-4000-8000-000000000827", offer, payment),
+      createEdge("00000000-0000-4000-8000-000000000828", payment, end)
     ]
   };
 }
@@ -621,14 +639,37 @@ function defaultPayload(
     const activeProduct = products.find((product) => product.isActive);
     return JSON.stringify({
       currency: activeProduct?.currency ?? "RUB",
-      items: [{
-        productId: activeProduct?.id ?? "",
-        quantityContextKey: "quantity"
-      }]
+      mode: "compose",
+      walletMode: "all"
+    }, null, 2);
+  }
+  if (type === "order_add_item") {
+    const activeProduct = products.find((product) => product.isActive);
+    return JSON.stringify({
+      productId: activeProduct?.id ?? "",
+      quantityContextKey: "quantity"
     }, null, 2);
   }
   if (type === "wallet_credit") {
-    return '{\n  "idempotencyKeyTemplate": ""\n}';
+    const activeProduct = products.find((product) => product.isActive);
+    return JSON.stringify({
+      amountKopecks: "10000",
+      currency: activeProduct?.currency ?? "RUB",
+      idempotencyKeyTemplate: "scenario_bonus",
+      reason: "Бонус по сценарию"
+    }, null, 2);
+  }
+  if (type === "set_status") {
+    return JSON.stringify({
+      statusCode: "interested",
+      reason: "Назначено сценарием"
+    }, null, 2);
+  }
+  if (type === "add_category") {
+    return JSON.stringify({
+      categoryCode: "event_interest",
+      reason: "Добавлено сценарием"
+    }, null, 2);
   }
   return "{}";
 }
@@ -694,5 +735,7 @@ const STARTER_NODE_IDS = [
   "00000000-0000-4000-8000-000000000814",
   "00000000-0000-4000-8000-000000000815",
   "00000000-0000-4000-8000-000000000816",
-  "00000000-0000-4000-8000-000000000817"
+  "00000000-0000-4000-8000-000000000817",
+  "00000000-0000-4000-8000-000000000818",
+  "00000000-0000-4000-8000-000000000819"
 ] as const;

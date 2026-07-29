@@ -71,6 +71,31 @@ export interface AdminUserDetail extends AdminUserSummary {
     readonly status: string;
     readonly version: string;
   }[];
+  readonly activeStatuses: readonly {
+    readonly code: string;
+    readonly displayName: string;
+    readonly color: string;
+    readonly source: string;
+    readonly assignedAt: string;
+  }[];
+  readonly activeCategories: readonly {
+    readonly code: string;
+    readonly displayName: string;
+    readonly color: string;
+    readonly source: string;
+    readonly assignedAt: string;
+  }[];
+  readonly classificationHistory: readonly {
+    readonly kind: "status" | "category";
+    readonly code: string;
+    readonly displayName: string;
+    readonly color: string;
+    readonly source: string;
+    readonly sourceReference: string;
+    readonly reason: string;
+    readonly assignedAt: string;
+    readonly removedAt: string | null;
+  }[];
   readonly recentOrders: readonly AdminOrderSummary[];
 }
 

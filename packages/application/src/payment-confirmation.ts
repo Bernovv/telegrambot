@@ -11,7 +11,7 @@ import type {
   UnitOfWork
 } from "./identity.js";
 
-export type PaymentConfirmationSource = "manual" | "fake" | "tbank";
+export type PaymentConfirmationSource = "manual" | "fake" | "internal" | "tbank";
 
 export type PaymentConfirmationActor =
   | { readonly type: "admin"; readonly adminId: string }
@@ -37,6 +37,12 @@ export interface TBankPaymentEvidence {
   readonly payloadHash: string;
 }
 
+export interface InternalPaymentEvidence {
+  readonly reason: "zero_external_due";
+  readonly userId: string;
+  readonly eventId: string;
+}
+
 export interface ConfirmPaymentCommand {
   readonly orderId: string;
   readonly idempotencyKey: string;
@@ -46,6 +52,7 @@ export interface ConfirmPaymentCommand {
   readonly confirmedAt: Date;
   readonly actor: PaymentConfirmationActor;
   readonly manualEvidence?: ManualPaymentEvidence;
+  readonly internalEvidence?: InternalPaymentEvidence;
   readonly providerEvidence?: TBankPaymentEvidence;
 }
 
@@ -126,6 +133,40 @@ export interface ConfirmPaymentResult {
   readonly ticketCount: number;
   readonly ticketNumbers: readonly string[];
   readonly created: boolean;
+}
+
+export interface CompleteInternalOrderCommand {
+  readonly orderId: string;
+  readonly userId: string;
+  readonly eventId: string;
+  readonly currency: string;
+  readonly idempotencyKey: string;
+  readonly completedAt: Date;
+}
+
+export interface PaymentConfirmer {
+  execute(command: ConfirmPaymentCommand): Promise<ConfirmPaymentResult>;
+}
+
+export class CompleteInternalOrderService {
+  constructor(private readonly confirmer: PaymentConfirmer) {}
+
+  execute(command: CompleteInternalOrderCommand): Promise<ConfirmPaymentResult> {
+    return this.confirmer.execute({
+      orderId: command.orderId,
+      idempotencyKey: command.idempotencyKey,
+      source: "internal",
+      amountKopecks: "0",
+      currency: command.currency,
+      confirmedAt: command.completedAt,
+      actor: { type: "system" },
+      internalEvidence: {
+        reason: "zero_external_due",
+        userId: command.userId,
+        eventId: command.eventId
+      }
+    });
+  }
 }
 
 export class ConfirmPaymentService {
@@ -212,6 +253,14 @@ function validateCommand(command: ConfirmPaymentCommand): MoneyKopecks {
   }
 
   const amount = BigInt(command.amountKopecks);
+  if (
+    command.source !== "manual"
+    && command.source !== "fake"
+    && command.source !== "internal"
+    && command.source !== "tbank"
+  ) {
+    throw new Error("Payment confirmation source is invalid");
+  }
   if (command.source === "manual") {
     if (command.actor.type !== "admin" || !command.manualEvidence || amount <= 0n) {
       throw new Error("Manual payment requires an administrator, evidence, and a positive amount");
@@ -219,6 +268,19 @@ function validateCommand(command: ConfirmPaymentCommand): MoneyKopecks {
     validateManualEvidence(command.manualEvidence);
   } else if (command.manualEvidence) {
     throw new Error("Manual payment evidence is only valid for manual confirmations");
+  }
+
+  if (command.source === "internal") {
+    if (
+      command.actor.type !== "system"
+      || amount !== 0n
+      || !command.internalEvidence
+    ) {
+      throw new Error("Internal confirmation requires a zero amount and system evidence");
+    }
+    validateInternalEvidence(command.internalEvidence);
+  } else if (command.internalEvidence) {
+    throw new Error("Internal evidence is only valid for internal confirmations");
   }
 
   if (command.source === "tbank") {
@@ -233,6 +295,16 @@ function validateCommand(command: ConfirmPaymentCommand): MoneyKopecks {
   }
 
   return amount;
+}
+
+function validateInternalEvidence(evidence: InternalPaymentEvidence): void {
+  if (
+    evidence.reason !== "zero_external_due"
+    || !UUID_PATTERN.test(evidence.userId)
+    || !UUID_PATTERN.test(evidence.eventId)
+  ) {
+    throw new Error("Internal payment evidence is invalid");
+  }
 }
 
 function validateTBankEvidence(evidence: TBankPaymentEvidence): void {
@@ -285,6 +357,17 @@ function validateOrder(
   }
   if (order.currency !== command.currency || order.externalDue !== amount) {
     throw new Error("Payment amount or currency does not match the immutable order split");
+  }
+  if (
+    command.source === "internal"
+    && (
+      !command.internalEvidence
+      || order.userId !== command.internalEvidence.userId
+      || order.eventId !== command.internalEvidence.eventId
+      || order.externalDue !== 0n
+    )
+  ) {
+    throw new Error("Internal confirmation does not match the zero-due order owner");
   }
   if (order.total !== order.walletApplied + order.externalDue) {
     throw new Error("Order payment split requires reconciliation");
@@ -349,7 +432,8 @@ function hashConfirmationRequest(command: ConfirmPaymentCommand): string {
     amountKopecks: command.amountKopecks,
     currency: command.currency,
     actor: command.actor,
-    manualEvidence
+    manualEvidence,
+    internalEvidence: command.internalEvidence ?? null
   });
 
   return createHash("sha256").update(canonical).digest("hex");

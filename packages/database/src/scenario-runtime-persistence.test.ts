@@ -4,6 +4,7 @@ import {
   AdvanceTelegramScenarioService,
   ResumeTelegramScenarioAfterOfferService,
   ResumeTelegramScenarioAfterPaymentService,
+  SelectTelegramEventService,
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
   type IdGenerator
@@ -75,6 +76,94 @@ describe("PostgreSQL scenario runtime persistence", () => {
     assert.equal(
       findQuery(connection, "idempotency_key, schema_version").values[5],
       "telegram_update:5001:scenario_start"
+    );
+    assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
+
+  it("lists bounded event cards and starts an owner-selected event", async () => {
+    const connection = new FakeConnection((text) => {
+      if (text.includes("left join lateral")) {
+        return rows([{
+          id: eventId,
+          title: "Business Picnic",
+          starts_at: new Date("2026-08-01T09:00:00.000Z"),
+          timezone: "Europe/Moscow",
+          location_name: "Москва",
+          status: "published",
+          minimum_price_kopecks: "249000",
+          currency: "RUB"
+        }]);
+      }
+      if (text.includes("from public.scenario_events")) {
+        return rows([]);
+      }
+      if (text.includes("from public.messenger_identities")) {
+        return rows([{
+          user_id: userId,
+          messenger_identity_id: messengerIdentityId
+        }]);
+      }
+      if (text.includes("from public.events")) {
+        return rows([{
+          id: eventId,
+          published_scenario_version_id: versionId
+        }]);
+      }
+      if (
+        text.includes("from public.scenario_sessions")
+        && text.includes("user_id = $1")
+      ) {
+        return rows([]);
+      }
+      if (text.includes("from public.scenario_versions")) {
+        return rows([{ id: versionId, schema_version: 1 }]);
+      }
+      if (text.includes("from public.scenario_nodes")) {
+        return rows(nodeRows);
+      }
+      if (text.includes("from public.scenario_edges")) {
+        return rows(edgeRows);
+      }
+      return affected();
+    });
+    const persistence = createScenarioRuntimePersistence(
+      new FakePool(connection),
+      sequentialIds()
+    );
+    const choices = await persistence.unitOfWork.transact(() =>
+      persistence.repository.listTelegramEventChoices({
+        occurredAt,
+        limit: 10
+      })
+    );
+    const service = new SelectTelegramEventService(
+      persistence.repository,
+      persistence.unitOfWork,
+      fixedId(sessionId)
+    );
+
+    const result = await service.execute({
+      eventId,
+      senderExternalUserId: "777",
+      updateId: "5001-selection",
+      callbackQueryId: "callback-selection",
+      occurredAt
+    });
+
+    assert.equal(choices.events[0]?.minimumPriceKopecks, "249000");
+    assert.equal(choices.events[0]?.startsAt, "2026-08-01T09:00:00.000Z");
+    assert.equal(result.handled, true);
+    assert.deepEqual(
+      findQuery(connection, "from public.messenger_identities").values,
+      ["777"]
+    );
+    assert.deepEqual(
+      findQuery(connection, "where id = $1").values,
+      [eventId, occurredAt]
+    );
+    assert.equal(
+      findQuery(connection, "idempotency_key, schema_version").values[5],
+      "telegram_update:5001-selection:scenario_event_selection"
     );
     assert.equal(connection.queries.at(-1)?.text, "commit");
   });

@@ -30,6 +30,38 @@ import type {
   UpdateAdminEventPricingRuleRequest,
   UpdateAdminEventProductRequest
 } from "@ticket-platform/contracts/admin-events";
+import type {
+  AdminUserCategoryDefinition,
+  AdminUserClassificationCatalog,
+  AdminUserClassificationMutationResult,
+  AdminUserStatusDefinition,
+  CreateAdminUserCategoryRequest,
+  CreateAdminUserStatusRequest,
+  AssignAdminUserClassificationRequest,
+  RemoveAdminUserClassificationRequest,
+  UpdateAdminUserCategoryRequest,
+  UpdateAdminUserStatusRequest
+} from "@ticket-platform/contracts/admin-user-classification";
+import type {
+  AdminSavedSegment,
+  AdminSavedSegmentSummary,
+  AdminSegmentAudienceSnapshot,
+  AdminSegmentAudienceSnapshotSummary,
+  AdminSegmentPreview,
+  CreateAdminSavedSegmentRequest,
+  PublishAdminSavedSegmentRequest,
+  PreviewAdminSegmentRequest,
+  RequestAdminSegmentAudienceSnapshotRequest,
+  UpdateAdminSavedSegmentDraftRequest
+} from "@ticket-platform/contracts/admin-segments";
+import type {
+  AdminBroadcast,
+  AdminBroadcastSummary,
+  CreateAdminBroadcastRequest,
+  PublishAdminBroadcastDraftRequest,
+  ScheduleAdminBroadcastRequest,
+  UpdateAdminBroadcastDraftRequest
+} from "@ticket-platform/contracts/admin-broadcasts";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -246,6 +278,229 @@ export function updateEventPricingRule(
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/products/${encodeURIComponent(productId)}/pricing-rules/${encodeURIComponent(pricingRuleId)}`,
     "PATCH",
+    input
+  );
+}
+
+export function getUserClassificationCatalog(
+  signal?: AbortSignal
+): Promise<AdminUserClassificationCatalog> {
+  return requestAdminApi("classification", signal);
+}
+
+export function createUserStatus(
+  input: CreateAdminUserStatusRequest
+): Promise<AdminUserStatusDefinition> {
+  return requestAdminMutation("classification/statuses", "POST", input);
+}
+
+export function updateUserStatus(
+  statusId: string,
+  input: UpdateAdminUserStatusRequest
+): Promise<AdminUserStatusDefinition> {
+  return requestAdminMutation(
+    `classification/statuses/${encodeURIComponent(statusId)}`,
+    "PATCH",
+    input
+  );
+}
+
+export function createUserCategory(
+  input: CreateAdminUserCategoryRequest
+): Promise<AdminUserCategoryDefinition> {
+  return requestAdminMutation("classification/categories", "POST", input);
+}
+
+export function updateUserCategory(
+  categoryId: string,
+  input: UpdateAdminUserCategoryRequest
+): Promise<AdminUserCategoryDefinition> {
+  return requestAdminMutation(
+    `classification/categories/${encodeURIComponent(categoryId)}`,
+    "PATCH",
+    input
+  );
+}
+
+export function assignUserStatus(
+  userId: string,
+  input: AssignAdminUserClassificationRequest
+): Promise<AdminUserClassificationMutationResult> {
+  return requestAdminMutation(
+    `users/${encodeURIComponent(userId)}/classification/statuses`,
+    "POST",
+    input
+  );
+}
+
+export function assignUserCategory(
+  userId: string,
+  input: AssignAdminUserClassificationRequest
+): Promise<AdminUserClassificationMutationResult> {
+  return requestAdminMutation(
+    `users/${encodeURIComponent(userId)}/classification/categories`,
+    "POST",
+    input
+  );
+}
+
+export function removeUserStatus(
+  userId: string,
+  code: string,
+  input: RemoveAdminUserClassificationRequest
+): Promise<AdminUserClassificationMutationResult> {
+  return requestAdminMutation(
+    `users/${encodeURIComponent(userId)}/classification/statuses/${encodeURIComponent(code)}/remove`,
+    "POST",
+    input
+  );
+}
+
+export function removeUserCategory(
+  userId: string,
+  code: string,
+  input: RemoveAdminUserClassificationRequest
+): Promise<AdminUserClassificationMutationResult> {
+  return requestAdminMutation(
+    `users/${encodeURIComponent(userId)}/classification/categories/${encodeURIComponent(code)}/remove`,
+    "POST",
+    input
+  );
+}
+
+export function previewAdminSegment(
+  input: PreviewAdminSegmentRequest
+): Promise<AdminSegmentPreview> {
+  return requestAdminMutation("segments/preview", "POST", input);
+}
+
+export function listAdminSavedSegments(
+  signal?: AbortSignal
+): Promise<readonly AdminSavedSegmentSummary[]> {
+  return requestAdminApi("segments", signal);
+}
+
+export function getAdminSavedSegment(
+  segmentId: string,
+  signal?: AbortSignal
+): Promise<AdminSavedSegment> {
+  return requestAdminApi(
+    `segments/${encodeURIComponent(segmentId)}`,
+    signal
+  );
+}
+
+export function createAdminSavedSegment(
+  input: CreateAdminSavedSegmentRequest
+): Promise<AdminSavedSegment> {
+  return requestAdminMutation("segments", "POST", input);
+}
+
+export function updateAdminSavedSegmentDraft(
+  segmentId: string,
+  input: UpdateAdminSavedSegmentDraftRequest
+): Promise<AdminSavedSegment> {
+  return requestAdminMutation(
+    `segments/${encodeURIComponent(segmentId)}/draft`,
+    "PATCH",
+    input
+  );
+}
+
+export function publishAdminSavedSegment(
+  segmentId: string,
+  input: PublishAdminSavedSegmentRequest
+): Promise<AdminSavedSegment> {
+  return requestAdminMutation(
+    `segments/${encodeURIComponent(segmentId)}/publish`,
+    "POST",
+    input
+  );
+}
+
+export function listAdminSegmentAudienceSnapshots(
+  segmentId: string,
+  signal?: AbortSignal
+): Promise<readonly AdminSegmentAudienceSnapshotSummary[]> {
+  return requestAdminApi(
+    `segments/${encodeURIComponent(segmentId)}/audience-snapshots`,
+    signal
+  );
+}
+
+export function getAdminSegmentAudienceSnapshot(
+  segmentId: string,
+  snapshotId: string,
+  signal?: AbortSignal
+): Promise<AdminSegmentAudienceSnapshot> {
+  return requestAdminApi(
+    `segments/${encodeURIComponent(segmentId)}/audience-snapshots/${encodeURIComponent(snapshotId)}`,
+    signal
+  );
+}
+
+export function requestAdminSegmentAudienceSnapshot(
+  segmentId: string,
+  input: RequestAdminSegmentAudienceSnapshotRequest
+): Promise<AdminSegmentAudienceSnapshotSummary> {
+  return requestAdminMutation(
+    `segments/${encodeURIComponent(segmentId)}/audience-snapshots`,
+    "POST",
+    input
+  );
+}
+
+export function listAdminBroadcasts(
+  signal?: AbortSignal
+): Promise<readonly AdminBroadcastSummary[]> {
+  return requestAdminApi("broadcasts", signal);
+}
+
+export function getAdminBroadcast(
+  broadcastId: string,
+  signal?: AbortSignal
+): Promise<AdminBroadcast> {
+  return requestAdminApi(
+    `broadcasts/${encodeURIComponent(broadcastId)}`,
+    signal
+  );
+}
+
+export function createAdminBroadcast(
+  input: CreateAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return requestAdminMutation("broadcasts", "POST", input);
+}
+
+export function updateAdminBroadcastDraft(
+  broadcastId: string,
+  input: UpdateAdminBroadcastDraftRequest
+): Promise<AdminBroadcast> {
+  return requestAdminMutation(
+    `broadcasts/${encodeURIComponent(broadcastId)}/draft`,
+    "PATCH",
+    input
+  );
+}
+
+export function publishAdminBroadcastDraft(
+  broadcastId: string,
+  input: PublishAdminBroadcastDraftRequest
+): Promise<AdminBroadcast> {
+  return requestAdminMutation(
+    `broadcasts/${encodeURIComponent(broadcastId)}/publish`,
+    "POST",
+    input
+  );
+}
+
+export function scheduleAdminBroadcast(
+  broadcastId: string,
+  input: ScheduleAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return requestAdminMutation(
+    `broadcasts/${encodeURIComponent(broadcastId)}/schedule`,
+    "POST",
     input
   );
 }

@@ -51,6 +51,28 @@ describe("AcceptTelegramOfferService", () => {
     assert.equal(fixture.events.length, 0);
   });
 
+  it("keeps an internally paid offer idempotent on repeated callbacks", async () => {
+    const fixture = createFixture({
+      order: {
+        ...order,
+        status: "paid",
+        externalDue: 0n,
+        walletApplied: 249_000n,
+        offerAcceptedAt: new Date("2026-07-24T12:04:00.000Z")
+      }
+    });
+
+    const result = await fixture.service.execute(command());
+
+    assert.equal(result.accepted, true);
+    if (result.accepted) {
+      assert.equal(result.newlyAccepted, false);
+      assert.equal(result.externalDueKopecks, "0");
+    }
+    assert.equal(fixture.records.length, 0);
+    assert.equal(fixture.events.length, 0);
+  });
+
   it("hides foreign or malformed tokens and rejects expired orders", async () => {
     const hidden = createFixture({ order: null });
     const expired = createFixture({

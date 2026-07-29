@@ -15,6 +15,81 @@ test("allowlists only implemented administrator API methods and paths", () => {
     ),
     true
   );
+  assert.equal(isAllowedAdminApiPath("POST", "segments/preview"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "segments"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "segments/00000000-0000-4000-8000-000000000101"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "segments"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "segments/00000000-0000-4000-8000-000000000101/draft"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "segments/00000000-0000-4000-8000-000000000101/publish"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "segments/00000000-0000-4000-8000-000000000101/audience-snapshots"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "segments/00000000-0000-4000-8000-000000000101/audience-snapshots/00000000-0000-4000-8000-000000000102"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "segments/00000000-0000-4000-8000-000000000101/audience-snapshots"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("GET", "broadcasts"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "broadcasts/00000000-0000-4000-8000-000000000101"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "broadcasts"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "broadcasts/00000000-0000-4000-8000-000000000101/draft"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "broadcasts/00000000-0000-4000-8000-000000000101/publish"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "broadcasts/00000000-0000-4000-8000-000000000101/schedule"
+    ),
+    true
+  );
   assert.equal(
     isAllowedAdminApiPath(
       "POST",
@@ -53,6 +128,20 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("POST", "events"), true);
   assert.equal(
     isAllowedAdminApiPath(
+      "POST",
+      "users/00000000-0000-4000-8000-000000000101/classification/statuses"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "users/00000000-0000-4000-8000-000000000101/classification/categories/vip/remove"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
       "PATCH",
       "events/00000000-0000-4000-8000-000000000101/general"
     ),
@@ -83,6 +172,18 @@ test("allowlists only implemented administrator API methods and paths", () => {
     isAllowedAdminApiPath(
       "PATCH",
       "events/00000000-0000-4000-8000-000000000101/products/00000000-0000-4000-8000-000000000201/pricing-rules/00000000-0000-4000-8000-000000000301"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("GET", "classification"), true);
+  assert.equal(
+    isAllowedAdminApiPath("POST", "classification/categories"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "classification/statuses/00000000-0000-4000-8000-000000000101"
     ),
     true
   );

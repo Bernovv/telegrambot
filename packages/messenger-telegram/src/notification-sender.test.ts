@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   GrammyTextNotificationSender,
+  type TelegramBroadcastSendError,
+  classifyTelegramBroadcastError,
   type TelegramNotificationApi
 } from "./notification-sender.js";
+import { GrammyError, HttpError } from "grammy";
 
 describe("GrammyTextNotificationSender", () => {
   it("sends plain text and returns the Telegram message ID", async () => {
@@ -91,7 +94,7 @@ describe("GrammyTextNotificationSender", () => {
       async sendMessage(_chatId, text, options) {
         calls.push({
           text,
-          keyboard: options?.reply_markup.inline_keyboard
+          keyboard: options?.reply_markup?.inline_keyboard
         });
         return { message_id: 44 };
       },
@@ -119,4 +122,76 @@ describe("GrammyTextNotificationSender", () => {
         "scenario:AZwBI0VneJq83vASNFZ4mg:AZwBI0VneJq83vASNFZ4mw"
     }]]);
   });
+
+  it("sends broadcast links and disables link previews", async () => {
+    const calls: unknown[] = [];
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage(_chatId, _text, options) {
+        calls.push(options);
+        return { message_id: 45 };
+      },
+      async sendPhoto() {
+        throw new Error("Unexpected photo call");
+      }
+    });
+
+    const result = await sender.sendBroadcastMessage("123456789", {
+      text: "Новая программа мероприятия",
+      disableLinkPreview: true,
+      buttons: [{ label: "Открыть", url: "https://example.com/event" }]
+    });
+
+    assert.deepEqual(result, { providerMessageId: "45" });
+    const options = calls[0] as {
+      reply_markup: { inline_keyboard: unknown };
+      link_preview_options: { is_disabled: boolean };
+    };
+    assert.deepEqual(options.reply_markup.inline_keyboard, [[{
+      text: "Открыть",
+      url: "https://example.com/event"
+    }]]);
+    assert.deepEqual(options.link_preview_options, { is_disabled: true });
+  });
+
+  it("classifies Telegram rate limits, blocked users and transport failures", () => {
+    const rateLimit = new GrammyError(
+      "rate limited",
+      {
+        ok: false,
+        error_code: 429,
+        description: "Too Many Requests",
+        parameters: { retry_after: 17 }
+      },
+      "sendMessage",
+      {}
+    );
+    const blocked = new GrammyError(
+      "blocked",
+      {
+        ok: false,
+        error_code: 403,
+        description: "Forbidden: bot was blocked by the user",
+        parameters: {}
+      },
+      "sendMessage",
+      {}
+    );
+
+    assert.deepEqual(
+      pick(classifyTelegramBroadcastError(rateLimit)),
+      ["rate_limit", "TelegramRateLimited", 17]
+    );
+    assert.deepEqual(
+      pick(classifyTelegramBroadcastError(blocked)),
+      ["blocked", "TelegramRecipientBlocked", undefined]
+    );
+    assert.deepEqual(
+      pick(classifyTelegramBroadcastError(new HttpError("network", new Error()))),
+      ["transient", "TelegramTransportError", undefined]
+    );
+  });
 });
+
+function pick(error: TelegramBroadcastSendError): readonly unknown[] {
+  return [error.category, error.code, error.retryAfterSeconds];
+}

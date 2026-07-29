@@ -70,7 +70,7 @@ export class AcceptTelegramOfferService {
       if (!order) {
         return { accepted: false, reason: "order_not_found" };
       }
-      if (order.offerAcceptedAt !== null && order.status === "awaiting_payment") {
+      if (order.offerAcceptedAt !== null && isAcceptedOrderStatus(order.status)) {
         return acceptedResult(order, false);
       }
       if (command.acceptedAt >= order.expiresAt) {
@@ -103,6 +103,16 @@ export class AcceptTelegramOfferService {
   }
 }
 
+function isAcceptedOrderStatus(status: OrderStatus): boolean {
+  return [
+    "awaiting_payment",
+    "payment_processing",
+    "paid",
+    "partially_refunded",
+    "refunded"
+  ].includes(status);
+}
+
 function hashPublicToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -115,6 +125,8 @@ function acceptedResult(
     accepted: true,
     newlyAccepted,
     orderId: order.id,
+    userId: order.userId,
+    eventId: order.eventId,
     orderNumber: order.number,
     currency: order.currency,
     totalKopecks: order.total.toString(),

@@ -4,7 +4,13 @@ import {
   AcceptTelegramOfferService,
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
+  CompleteInternalOrderService,
   ConfirmPaymentService,
+  CreditScenarioWalletService,
+  AssignAdminUserCategoryService,
+  AssignAdminUserStatusService,
+  CreateAdminUserCategoryService,
+  CreateAdminUserStatusService,
   CreateAdminEventContentBlockService,
   CreateAdminEventPricingRuleService,
   CreateAdminEventProductService,
@@ -26,19 +32,44 @@ import {
   ListAdminOrdersService,
   ListAdminEventsService,
   ListAdminUsersService,
+  ListAdminUserClassificationService,
+  ListAdminSavedSegmentsService,
+  GetAdminSavedSegmentService,
+  CreateAdminSavedSegmentService,
+  UpdateAdminSavedSegmentDraftService,
+  PublishAdminSavedSegmentService,
+  ListAdminSegmentAudienceSnapshotsService,
+  GetAdminSegmentAudienceSnapshotService,
+  RequestAdminSegmentAudienceSnapshotService,
+  ListAdminBroadcastsService,
+  GetAdminBroadcastService,
+  CreateAdminBroadcastService,
+  UpdateAdminBroadcastDraftService,
+  PublishAdminBroadcastDraftService,
+  ScheduleAdminBroadcastService,
+  PreviewAdminSegmentService,
   PublishAdminEventOfferVersionService,
   PublishAdminEventService,
   PublishAdminEventScenarioVersionService,
   RequestTelegramTicketRedeliveryService,
   ResumeTelegramScenarioAfterOfferService,
   RequestFullTBankRefundService,
+  RemoveAdminUserCategoryService,
+  RemoveAdminUserStatusService,
+  RemoveUserCategoryService,
+  RemoveUserStatusService,
   SaveAdminEventScenarioDraftService,
+  SelectTelegramEventService,
+  SetUserStatusService,
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
+  AddUserCategoryService,
   UpdateAdminEventGeneralService,
   UpdateAdminEventContentBlockService,
   UpdateAdminEventPricingRuleService,
   UpdateAdminEventProductService,
+  UpdateAdminUserCategoryService,
+  UpdateAdminUserStatusService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadApiConfig } from "@ticket-platform/config";
@@ -51,6 +82,11 @@ import {
   createAdminEventCatalogManagementPersistence,
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
+  createAdminUserClassificationPersistence,
+  createAdminSegmentPreviewPersistence,
+  createAdminSavedSegmentPersistence,
+  createSegmentAudienceSnapshotPersistence,
+  createAdminBroadcastPersistence,
   createNodePostgresPool,
   createPostgresHealthProbes,
   createPhonePersistence,
@@ -132,6 +168,129 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             getUser: new GetAdminUserService(repository),
             listOrders: new ListAdminOrdersService(repository),
             getOrder: new GetAdminOrderService(repository)
+          };
+        })()
+      : undefined;
+    const adminUserClassification = adminAuth
+      ? (() => {
+          const repository = createAdminUserClassificationPersistence(pool);
+          const assignments = createScenarioRuntimePersistence(
+            pool,
+            idGenerator
+          );
+          const setStatus = new SetUserStatusService(
+            assignments.userClassificationRepository,
+            assignments.outboxWriter,
+            assignments.unitOfWork,
+            idGenerator,
+            assignments.userClassificationAuditWriter
+          );
+          const addCategory = new AddUserCategoryService(
+            assignments.userClassificationRepository,
+            assignments.outboxWriter,
+            assignments.unitOfWork,
+            idGenerator,
+            assignments.userClassificationAuditWriter
+          );
+          const removeStatus = new RemoveUserStatusService(
+            assignments.userClassificationRepository,
+            assignments.outboxWriter,
+            assignments.unitOfWork,
+            idGenerator,
+            assignments.userClassificationAuditWriter
+          );
+          const removeCategory = new RemoveUserCategoryService(
+            assignments.userClassificationRepository,
+            assignments.outboxWriter,
+            assignments.unitOfWork,
+            idGenerator,
+            assignments.userClassificationAuditWriter
+          );
+          return {
+            list: new ListAdminUserClassificationService(repository),
+            createStatus: new CreateAdminUserStatusService(
+              repository,
+              idGenerator
+            ),
+            updateStatus: new UpdateAdminUserStatusService(
+              repository,
+              idGenerator
+            ),
+            createCategory: new CreateAdminUserCategoryService(
+              repository,
+              idGenerator
+            ),
+            updateCategory: new UpdateAdminUserCategoryService(
+              repository,
+              idGenerator
+            ),
+            assignStatus: new AssignAdminUserStatusService(
+              setStatus,
+              idGenerator
+            ),
+            assignCategory: new AssignAdminUserCategoryService(
+              addCategory,
+              idGenerator
+            ),
+            removeStatus: new RemoveAdminUserStatusService(
+              removeStatus,
+              idGenerator
+            ),
+            removeCategory: new RemoveAdminUserCategoryService(
+              removeCategory,
+              idGenerator
+            )
+          };
+        })()
+      : undefined;
+    const adminSegments = adminAuth
+      ? (() => {
+          const saved = createAdminSavedSegmentPersistence(pool);
+          const snapshots = createSegmentAudienceSnapshotPersistence(pool);
+          return {
+            preview: new PreviewAdminSegmentService(
+              createAdminSegmentPreviewPersistence(pool)
+            ),
+            list: new ListAdminSavedSegmentsService(saved),
+            get: new GetAdminSavedSegmentService(saved),
+            create: new CreateAdminSavedSegmentService(saved, idGenerator),
+            updateDraft: new UpdateAdminSavedSegmentDraftService(
+              saved,
+              idGenerator
+            ),
+            publish: new PublishAdminSavedSegmentService(saved, idGenerator),
+            listSnapshots: new ListAdminSegmentAudienceSnapshotsService(
+              snapshots.repository
+            ),
+            getSnapshot: new GetAdminSegmentAudienceSnapshotService(
+              snapshots.repository
+            ),
+            requestSnapshot: new RequestAdminSegmentAudienceSnapshotService(
+              snapshots.repository,
+              idGenerator
+            )
+          };
+        })()
+      : undefined;
+    const adminBroadcasts = adminAuth
+      ? (() => {
+          const repository = createAdminBroadcastPersistence(pool);
+          return {
+            list: new ListAdminBroadcastsService(repository),
+            get: new GetAdminBroadcastService(repository),
+            create: new CreateAdminBroadcastService(repository, idGenerator),
+            updateDraft: new UpdateAdminBroadcastDraftService(
+              repository,
+              idGenerator
+            ),
+            publish: new PublishAdminBroadcastDraftService(
+              repository,
+              idGenerator
+            ),
+            schedule: new ScheduleAdminBroadcastService(
+              repository,
+              idGenerator
+            )
           };
         })()
       : undefined;
@@ -305,6 +464,37 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           config.orderNumberPrefix
         )
       );
+      const internalOrderCompleter = new CompleteInternalOrderService(
+        new ConfirmPaymentService(
+          scenarioPersistence.paymentConfirmationRepository,
+          scenarioPersistence.outboxWriter,
+          scenarioPersistence.unitOfWork,
+          idGenerator,
+          new HmacTicketReferenceGenerator(config.orderTokenSecret)
+        )
+      );
+      const scenarioWalletCreditor = new CreditScenarioWalletService(
+        scenarioPersistence.scenarioWalletCreditRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const setUserStatus = new SetUserStatusService(
+        scenarioPersistence.userClassificationRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const addUserCategory = new AddUserCategoryService(
+        scenarioPersistence.userClassificationRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const scenarioUserClassifier = {
+        setStatus: setUserStatus.execute.bind(setUserStatus),
+        addCategory: addUserCategory.execute.bind(addUserCategory)
+      };
       const ticketPersistence = createTelegramTicketAccessPersistence(pool);
       const startService = new HandleTelegramStartService(
         startPersistence.identityRepository,
@@ -345,22 +535,44 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           scenarioPersistence.unitOfWork,
           idGenerator,
           undefined,
-          scenarioOrderCreator
+          scenarioOrderCreator,
+          internalOrderCompleter,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
+        ),
+        selectEvent: new SelectTelegramEventService(
+          scenarioPersistence.repository,
+          scenarioPersistence.unitOfWork,
+          idGenerator,
+          undefined,
+          scenarioOrderCreator,
+          internalOrderCompleter,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
         ),
         advance: new AdvanceTelegramScenarioService(
           scenarioPersistence.repository,
           scenarioPersistence.unitOfWork,
-          scenarioOrderCreator
+          scenarioOrderCreator,
+          internalOrderCompleter,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
         ),
         input: new SubmitTelegramScenarioInputService(
           scenarioPersistence.repository,
           scenarioPersistence.unitOfWork,
-          scenarioOrderCreator
+          scenarioOrderCreator,
+          internalOrderCompleter,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
         ),
         offerAccepted: new ResumeTelegramScenarioAfterOfferService(
           scenarioPersistence.repository,
           scenarioPersistence.unitOfWork,
-          scenarioOrderCreator
+          scenarioOrderCreator,
+          internalOrderCompleter,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
         )
       };
       const bot = createTelegramBot(
@@ -372,7 +584,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           ticketListService,
           ticketRedeliveryService,
           tbank?.initialization,
-          scenario
+          scenario,
+          internalOrderCompleter
         ),
         logger,
         { rethrowUpdateErrors: true }
@@ -396,6 +609,9 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(manualPayments ? { manualPayments } : {}),
       ...(adminOperations ? { adminOperations } : {}),
       ...(adminEvents ? { adminEvents } : {}),
+      ...(adminUserClassification ? { adminUserClassification } : {}),
+      ...(adminSegments ? { adminSegments } : {}),
+      ...(adminBroadcasts ? { adminBroadcasts } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

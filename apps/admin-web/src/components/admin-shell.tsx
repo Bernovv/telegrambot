@@ -6,7 +6,10 @@ import {
   LogOut,
   Menu,
   ReceiptText,
+  ScanSearch,
+  Send,
   ShieldCheck,
+  Tags,
   Users,
   X
 } from "lucide-react";
@@ -17,6 +20,9 @@ import { type ReactNode, useState } from "react";
 const NAVIGATION = [
   { href: "/events", label: "Мероприятия", icon: CalendarDays },
   { href: "/users", label: "Пользователи", icon: Users },
+  { href: "/classification", label: "Статусы и категории", icon: Tags },
+  { href: "/segments", label: "Сегменты", icon: ScanSearch },
+  { href: "/broadcasts", label: "Рассылки", icon: Send },
   { href: "/orders", label: "Заказы", icon: ReceiptText }
 ] as const;
 

@@ -2,6 +2,9 @@ import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
   AdvanceTelegramScenarioService,
+  CompleteInternalOrderService,
+  ConfirmPaymentService,
+  CreditScenarioWalletService,
   CreateOrderService,
   HandleTelegramContactService,
   HandleTelegramStartService,
@@ -9,9 +12,13 @@ import {
   ListTelegramTicketsService,
   RequestTelegramTicketRedeliveryService,
   ResumeTelegramScenarioAfterOfferService,
+  SelectTelegramEventService,
+  SetUserStatusService,
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
+  AddUserCategoryService,
   HmacOrderReferenceGenerator,
+  HmacTicketReferenceGenerator,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadTelegramBotConfig } from "@ticket-platform/config";
@@ -63,6 +70,37 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
       config.orderNumberPrefix
     )
   );
+  const internalOrderCompleter = new CompleteInternalOrderService(
+    new ConfirmPaymentService(
+      scenarioPersistence.paymentConfirmationRepository,
+      scenarioPersistence.outboxWriter,
+      scenarioPersistence.unitOfWork,
+      idGenerator,
+      new HmacTicketReferenceGenerator(config.orderTokenSecret)
+    )
+  );
+  const scenarioWalletCreditor = new CreditScenarioWalletService(
+    scenarioPersistence.scenarioWalletCreditRepository,
+    scenarioPersistence.outboxWriter,
+    scenarioPersistence.unitOfWork,
+    idGenerator
+  );
+  const setUserStatus = new SetUserStatusService(
+    scenarioPersistence.userClassificationRepository,
+    scenarioPersistence.outboxWriter,
+    scenarioPersistence.unitOfWork,
+    idGenerator
+  );
+  const addUserCategory = new AddUserCategoryService(
+    scenarioPersistence.userClassificationRepository,
+    scenarioPersistence.outboxWriter,
+    scenarioPersistence.unitOfWork,
+    idGenerator
+  );
+  const scenarioUserClassifier = {
+    setStatus: setUserStatus.execute.bind(setUserStatus),
+    addCategory: addUserCategory.execute.bind(addUserCategory)
+  };
   const ticketPersistence = createTelegramTicketAccessPersistence(pool);
   const paymentInitializationService = config.tbankPayments.enabled
     ? new InitializeTelegramTBankPaymentService(
@@ -119,22 +157,44 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
       scenarioPersistence.unitOfWork,
       idGenerator,
       undefined,
-      scenarioOrderCreator
+      scenarioOrderCreator,
+      internalOrderCompleter,
+      scenarioWalletCreditor,
+      scenarioUserClassifier
+    ),
+    selectEvent: new SelectTelegramEventService(
+      scenarioPersistence.repository,
+      scenarioPersistence.unitOfWork,
+      idGenerator,
+      undefined,
+      scenarioOrderCreator,
+      internalOrderCompleter,
+      scenarioWalletCreditor,
+      scenarioUserClassifier
     ),
     advance: new AdvanceTelegramScenarioService(
       scenarioPersistence.repository,
       scenarioPersistence.unitOfWork,
-      scenarioOrderCreator
+      scenarioOrderCreator,
+      internalOrderCompleter,
+      scenarioWalletCreditor,
+      scenarioUserClassifier
     ),
     input: new SubmitTelegramScenarioInputService(
       scenarioPersistence.repository,
       scenarioPersistence.unitOfWork,
-      scenarioOrderCreator
+      scenarioOrderCreator,
+      internalOrderCompleter,
+      scenarioWalletCreditor,
+      scenarioUserClassifier
     ),
     offerAccepted: new ResumeTelegramScenarioAfterOfferService(
       scenarioPersistence.repository,
       scenarioPersistence.unitOfWork,
-      scenarioOrderCreator
+      scenarioOrderCreator,
+      internalOrderCompleter,
+      scenarioWalletCreditor,
+      scenarioUserClassifier
     )
   };
   const controller = new TelegramUpdateController(
@@ -144,7 +204,8 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     ticketListService,
     ticketRedeliveryService,
     paymentInitializationService,
-    scenario
+    scenario,
+    internalOrderCompleter
   );
   const bot = createTelegramBot(config.telegramBotToken, controller, logger);
   const stop = () => {

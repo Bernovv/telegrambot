@@ -66,10 +66,13 @@ export const SCENARIO_VALIDATION_CODES = [
   "TRANSITION_MODE_INVALID",
   "INPUT_CONFIGURATION_INVALID",
   "ORDER_CONFIGURATION_INVALID",
+  "ORDER_FLOW_INVALID",
   "UNBOUNDED_CYCLE",
   "ORDER_REQUIRED",
   "PAYMENT_BEFORE_OFFER",
-  "WALLET_IDEMPOTENCY_MISSING"
+  "WALLET_IDEMPOTENCY_MISSING",
+  "WALLET_CONFIGURATION_INVALID",
+  "USER_CLASSIFICATION_CONFIGURATION_INVALID"
 ] as const;
 
 export type ScenarioValidationCode =
@@ -163,6 +166,45 @@ export function validateScenarioGraph(
       ));
     }
     if (
+      node.type === "wallet_credit"
+      && (
+        !isSingleAutomaticTransition(nodeOutgoing)
+        || !scenarioWalletCreditRequest(node)
+      )
+    ) {
+      issues.push(issue(
+        "WALLET_CONFIGURATION_INVALID",
+        "Начисление кошелька требует сумму до 10 000 ₽, валюту, причину, безопасный ключ и один автоматический переход.",
+        node.id
+      ));
+    }
+    if (
+      node.type === "set_status"
+      && (
+        !isSingleAutomaticTransition(nodeOutgoing)
+        || !scenarioSetStatusRequest(node)
+      )
+    ) {
+      issues.push(issue(
+        "USER_CLASSIFICATION_CONFIGURATION_INVALID",
+        "Назначение статуса требует стабильный код, причину и один автоматический переход.",
+        node.id
+      ));
+    }
+    if (
+      node.type === "add_category"
+      && (
+        !isSingleAutomaticTransition(nodeOutgoing)
+        || !scenarioAddCategoryRequest(node)
+      )
+    ) {
+      issues.push(issue(
+        "USER_CLASSIFICATION_CONFIGURATION_INVALID",
+        "Добавление категории требует стабильный код, причину и один автоматический переход.",
+        node.id
+      ));
+    }
+    if (
       (node.type === "message"
         || node.type === "menu"
         || node.type === "choice"
@@ -237,12 +279,41 @@ export function validateScenarioGraph(
       node.type === "order_start"
       && (
         !isSingleAutomaticTransition(nodeOutgoing)
-        || !scenarioOrderStartRequest(node)
+        || (
+          !scenarioOrderStartRequest(node)
+          && !scenarioOrderDraftStartRequest(node)
+        )
       )
     ) {
       issues.push(issue(
         "ORDER_CONFIGURATION_INVALID",
-        "Создание заказа требует валюту, позиции из контекста и один автоматический переход.",
+        "Начало заказа требует валюту, legacy-позиции или mode=compose и один автоматический переход.",
+        node.id
+      ));
+    }
+    if (
+      node.type === "order_add_item"
+      && (
+        !isSingleAutomaticTransition(nodeOutgoing)
+        || !scenarioOrderAddItemRequest(node)
+      )
+    ) {
+      issues.push(issue(
+        "ORDER_CONFIGURATION_INVALID",
+        "Добавление товара требует productId, quantityContextKey и один автоматический переход.",
+        node.id
+      ));
+    }
+    if (
+      node.type === "order_summary"
+      && (
+        !isSingleAutomaticTransition(nodeOutgoing)
+        || !scenarioOrderSummaryRequest(node)
+      )
+    ) {
+      issues.push(issue(
+        "ORDER_CONFIGURATION_INVALID",
+        "Состав заказа не принимает параметры и требует один автоматический переход.",
         node.id
       ));
     }
@@ -278,6 +349,13 @@ export function validateScenarioGraph(
       issues.push(issue(
         "ORDER_REQUIRED",
         "До оферты или оплаты на каждом пути требуется создать заказ.",
+        nodeId
+      ));
+    }
+    for (const nodeId of findInvalidOrderComposition(start.id, nodes, outgoing)) {
+      issues.push(issue(
+        "ORDER_FLOW_INVALID",
+        "Составной заказ требует order_start с mode=compose, хотя бы один order_add_item и затем order_summary.",
         nodeId
       ));
     }
@@ -529,12 +607,74 @@ function findActionsBeforeOrder(
     ) {
       invalidActions.add(node.id);
     }
-    const orderCreated = state.orderCreated || node.type === "order_start";
+    const orderCreated = state.orderCreated
+      || scenarioOrderStartRequest(node) !== null
+      || node.type === "order_summary";
     for (const edge of outgoing.get(node.id) ?? []) {
       queue.push({ nodeId: edge.toNodeId, orderCreated });
     }
   }
   return [...invalidActions].sort();
+}
+
+type OrderCompositionState = "none" | "draft_empty" | "draft_ready" | "created";
+
+function findInvalidOrderComposition(
+  startId: string,
+  nodes: ReadonlyMap<string, ScenarioNode>,
+  outgoing: ReadonlyMap<string, readonly ScenarioEdge[]>
+): readonly string[] {
+  const invalidNodes = new Set<string>();
+  const visited = new Set<string>();
+  const queue: Array<{
+    readonly nodeId: string;
+    readonly state: OrderCompositionState;
+  }> = [{ nodeId: startId, state: "none" }];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+    const key = `${current.nodeId}:${current.state}`;
+    if (visited.has(key)) {
+      continue;
+    }
+    visited.add(key);
+    const node = nodes.get(current.nodeId);
+    if (!node) {
+      continue;
+    }
+
+    let nextState = current.state;
+    if (scenarioOrderStartRequest(node)) {
+      nextState = "created";
+    } else if (scenarioOrderDraftStartRequest(node)) {
+      if (current.state !== "none") {
+        invalidNodes.add(node.id);
+      }
+      nextState = "draft_empty";
+    } else if (node.type === "order_add_item") {
+      if (
+        current.state !== "draft_empty"
+        && current.state !== "draft_ready"
+      ) {
+        invalidNodes.add(node.id);
+      } else {
+        nextState = "draft_ready";
+      }
+    } else if (node.type === "order_summary") {
+      if (current.state !== "draft_ready") {
+        invalidNodes.add(node.id);
+      } else {
+        nextState = "created";
+      }
+    }
+
+    for (const edge of outgoing.get(node.id) ?? []) {
+      queue.push({ nodeId: edge.toNodeId, state: nextState });
+    }
+  }
+  return [...invalidNodes].sort();
 }
 
 function hasPositiveIterationLimit(node: ScenarioNode | undefined): boolean {
@@ -605,6 +745,39 @@ export interface ScenarioOrderStartItemRequest {
 export interface ScenarioOrderStartRequest {
   readonly currency: string;
   readonly items: readonly ScenarioOrderStartItemRequest[];
+  readonly walletMode: "none" | "all";
+}
+
+export interface ScenarioOrderDraftStartRequest {
+  readonly currency: string;
+  readonly walletMode: "none" | "all";
+}
+
+export interface ScenarioOrderAddItemRequest {
+  readonly productId: string;
+  readonly quantityContextKey: string;
+  readonly optional: boolean;
+}
+
+export interface ScenarioOrderSummaryRequest {
+  readonly mode: "create";
+}
+
+export interface ScenarioWalletCreditRequest {
+  readonly amountKopecks: string;
+  readonly currency: string;
+  readonly idempotencyKeyTemplate: string;
+  readonly reason: string;
+}
+
+export interface ScenarioSetStatusRequest {
+  readonly statusCode: string;
+  readonly reason: string;
+}
+
+export interface ScenarioAddCategoryRequest {
+  readonly categoryCode: string;
+  readonly reason: string;
 }
 
 export type ScenarioInputSubmissionResult =
@@ -1012,9 +1185,13 @@ export function scenarioOrderStartRequest(
   }
   const currency = node.payload.currency;
   const items = node.payload.items;
+  const walletMode = node.payload.walletMode ?? "none";
   if (
+    node.payload.mode !== undefined
+    ||
     typeof currency !== "string"
     || !/^[A-Z]{3}$/.test(currency)
+    || (walletMode !== "none" && walletMode !== "all")
     || !Array.isArray(items)
     || items.length < 1
     || items.length > 20
@@ -1047,7 +1224,151 @@ export function scenarioOrderStartRequest(
     productIds.add(productId);
     parsedItems.push({ productId, quantityContextKey, optional });
   }
-  return { currency, items: parsedItems };
+  return { currency, items: parsedItems, walletMode };
+}
+
+export function scenarioOrderDraftStartRequest(
+  node: ScenarioNode
+): ScenarioOrderDraftStartRequest | null {
+  if (
+    node.type !== "order_start"
+    || node.payload.mode !== "compose"
+    || typeof node.payload.currency !== "string"
+    || !/^[A-Z]{3}$/.test(node.payload.currency)
+    || (
+      node.payload.walletMode !== undefined
+      && node.payload.walletMode !== "none"
+      && node.payload.walletMode !== "all"
+    )
+    || Object.keys(node.payload).some(
+      (key) => !["currency", "mode", "walletMode"].includes(key)
+    )
+  ) {
+    return null;
+  }
+  return {
+    currency: node.payload.currency,
+    walletMode: node.payload.walletMode === "all" ? "all" : "none"
+  };
+}
+
+export function scenarioOrderAddItemRequest(
+  node: ScenarioNode
+): ScenarioOrderAddItemRequest | null {
+  if (node.type !== "order_add_item") {
+    return null;
+  }
+  const productId = node.payload.productId;
+  const quantityContextKey = node.payload.quantityContextKey;
+  const optional = node.payload.optional ?? false;
+  if (
+    typeof productId !== "string"
+    || !UUID_PATTERN.test(productId)
+    || typeof quantityContextKey !== "string"
+    || !isSafeContextKey(quantityContextKey)
+    || typeof optional !== "boolean"
+    || Object.keys(node.payload).some(
+      (key) => !["productId", "quantityContextKey", "optional"].includes(key)
+    )
+  ) {
+    return null;
+  }
+  return { productId, quantityContextKey, optional };
+}
+
+export function scenarioOrderSummaryRequest(
+  node: ScenarioNode
+): ScenarioOrderSummaryRequest | null {
+  return node.type === "order_summary"
+    && Object.keys(node.payload).length === 0
+    ? { mode: "create" }
+    : null;
+}
+
+export function scenarioWalletCreditRequest(
+  node: ScenarioNode
+): ScenarioWalletCreditRequest | null {
+  if (node.type !== "wallet_credit") {
+    return null;
+  }
+  const amountKopecks = node.payload.amountKopecks;
+  const currency = node.payload.currency;
+  const idempotencyKeyTemplate = node.payload.idempotencyKeyTemplate;
+  const reason = node.payload.reason;
+  if (
+    typeof amountKopecks !== "string"
+    || !/^[1-9]\d{0,6}$/.test(amountKopecks)
+    || BigInt(amountKopecks) > 1_000_000n
+    || typeof currency !== "string"
+    || !/^[A-Z]{3}$/.test(currency)
+    || typeof idempotencyKeyTemplate !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,59}$/.test(idempotencyKeyTemplate)
+    || typeof reason !== "string"
+    || reason.trim().length < 3
+    || reason.trim().length > 200
+    || Object.keys(node.payload).some(
+      (key) => ![
+        "amountKopecks",
+        "currency",
+        "idempotencyKeyTemplate",
+        "reason"
+      ].includes(key)
+    )
+  ) {
+    return null;
+  }
+  return {
+    amountKopecks,
+    currency,
+    idempotencyKeyTemplate,
+    reason: reason.trim()
+  };
+}
+
+export function scenarioSetStatusRequest(
+  node: ScenarioNode
+): ScenarioSetStatusRequest | null {
+  if (node.type !== "set_status") {
+    return null;
+  }
+  const statusCode = node.payload.statusCode;
+  const reason = node.payload.reason;
+  if (
+    typeof statusCode !== "string"
+    || !/^[a-z][a-z0-9_]{1,63}$/.test(statusCode)
+    || typeof reason !== "string"
+    || reason.trim().length < 3
+    || reason.trim().length > 200
+    || Object.keys(node.payload).some(
+      (key) => !["statusCode", "reason"].includes(key)
+    )
+  ) {
+    return null;
+  }
+  return { statusCode, reason: reason.trim() };
+}
+
+export function scenarioAddCategoryRequest(
+  node: ScenarioNode
+): ScenarioAddCategoryRequest | null {
+  if (node.type !== "add_category") {
+    return null;
+  }
+  const categoryCode = node.payload.categoryCode;
+  const reason = node.payload.reason;
+  if (
+    typeof categoryCode !== "string"
+    || !/^[a-z][a-z0-9_]{1,63}$/.test(categoryCode)
+    || typeof reason !== "string"
+    || reason.trim().length < 3
+    || reason.trim().length > 200
+    || Object.keys(node.payload).some(
+      (key) => !["categoryCode", "reason"].includes(key)
+    )
+  ) {
+    return null;
+  }
+  return { categoryCode, reason: reason.trim() };
 }
 
 function isSafeContextKey(value: string): boolean {

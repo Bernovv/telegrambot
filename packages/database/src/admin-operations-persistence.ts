@@ -66,6 +66,28 @@ interface WalletAccountRow {
   readonly balance_version: string;
 }
 
+interface UserStatusAssignmentRow {
+  readonly status_code: string;
+  readonly status_display_name: string;
+  readonly status_color: string;
+  readonly source_type: string;
+  readonly source_reference: string;
+  readonly reason: string;
+  readonly assigned_at: Date | string;
+  readonly removed_at: Date | string | null;
+}
+
+interface UserCategoryAssignmentRow {
+  readonly category_code: string;
+  readonly category_display_name: string;
+  readonly category_color: string;
+  readonly source_type: string;
+  readonly source_reference: string;
+  readonly reason: string;
+  readonly assigned_at: Date | string;
+  readonly removed_at: Date | string | null;
+}
+
 interface OrderDetailRow extends OrderSummaryRow {
   readonly expires_at: Date | string;
   readonly source: string;
@@ -120,7 +142,14 @@ implements AdminOperationsRepository {
       if (!summary) {
         return null;
       }
-      const [identities, contacts, wallets, orders] = await Promise.all([
+      const [
+        identities,
+        contacts,
+        wallets,
+        orders,
+        statusAssignments,
+        categoryAssignments
+      ] = await Promise.all([
         connection.query<UserIdentityRow>(
           `select channel, external_user_id, username, first_seen_at,
                   last_seen_at, is_bot_blocked
@@ -150,8 +179,48 @@ implements AdminOperationsRepository {
            order by orders.created_at desc, orders.id desc
            limit 20`,
           [userId]
+        ),
+        connection.query<UserStatusAssignmentRow>(
+          `select status_code, status_display_name, status_color, source_type,
+                  source_reference, reason, assigned_at, removed_at
+           from public.user_status_assignments
+           where user_id = $1
+           order by assigned_at desc, id desc
+           limit 50`,
+          [userId]
+        ),
+        connection.query<UserCategoryAssignmentRow>(
+          `select category_code, category_display_name, category_color,
+                  source_type, source_reference, reason, assigned_at, removed_at
+           from public.user_category_assignments
+           where user_id = $1
+           order by assigned_at desc, id desc
+           limit 50`,
+          [userId]
         )
       ]);
+      const statusHistory = statusAssignments.rows.map((row) => ({
+        kind: "status" as const,
+        code: row.status_code,
+        displayName: row.status_display_name,
+        color: row.status_color,
+        source: row.source_type,
+        sourceReference: row.source_reference,
+        reason: row.reason,
+        assignedAt: toIso(row.assigned_at),
+        removedAt: toNullableIso(row.removed_at)
+      }));
+      const categoryHistory = categoryAssignments.rows.map((row) => ({
+        kind: "category" as const,
+        code: row.category_code,
+        displayName: row.category_display_name,
+        color: row.category_color,
+        source: row.source_type,
+        sourceReference: row.source_reference,
+        reason: row.reason,
+        assignedAt: toIso(row.assigned_at),
+        removedAt: toNullableIso(row.removed_at)
+      }));
       return {
         ...mapUserSummary(summary),
         identities: identities.rows.map((row) => ({
@@ -175,6 +244,29 @@ implements AdminOperationsRepository {
           status: row.status,
           version: row.balance_version
         })),
+        activeStatuses: statusHistory
+          .filter((assignment) => assignment.removedAt === null)
+          .map(({ code, displayName, color, source, assignedAt }) => ({
+            code,
+            displayName,
+            color,
+            source,
+            assignedAt
+          })),
+        activeCategories: categoryHistory
+          .filter((assignment) => assignment.removedAt === null)
+          .map(({ code, displayName, color, source, assignedAt }) => ({
+            code,
+            displayName,
+            color,
+            source,
+            assignedAt
+          })),
+        classificationHistory: [...statusHistory, ...categoryHistory]
+          .sort((left, right) =>
+            right.assignedAt.localeCompare(left.assignedAt)
+          )
+          .slice(0, 50),
         recentOrders: orders.rows.map(mapOrderSummary)
       };
     });

@@ -199,6 +199,10 @@ describe("loadWorkerConfig", () => {
     assert.equal(config.workerHeartbeatIntervalMs, 10_000);
     assert.equal(config.orderExpiryBatchSize, 50);
     assert.equal(config.orderExpiryPollIntervalMs, 5_000);
+    assert.equal(config.segmentAudienceSnapshotBatchSize, 1);
+    assert.equal(config.segmentAudienceSnapshotPollIntervalMs, 2_000);
+    assert.equal(config.broadcastPreparationBatchSize, 1);
+    assert.equal(config.broadcastPreparationPollIntervalMs, 2_000);
     assert.deepEqual(config.tbankReconciliation, { enabled: false });
     assert.deepEqual(config.telegramNotifications, { enabled: false });
   });
@@ -237,10 +241,18 @@ describe("loadWorkerConfig", () => {
     assert.deepEqual(config.telegramNotifications, {
       enabled: true,
       botToken: "test-token",
+      httpTimeoutSeconds: 20,
       adminChatId: "-1001234567890",
       ticketTokenSecret: "s".repeat(32),
       leaseSeconds: 60,
-      localConcurrency: 2
+      localConcurrency: 2,
+      broadcastDeliveryLeaseSeconds: 60,
+      broadcastDeliveryPollIntervalMs: 50,
+      broadcastDeliveryMaxAttempts: 5,
+      broadcastDeliveryRetryBaseSeconds: 5,
+      broadcastDeliveryRetryMaxSeconds: 300,
+      broadcastAutoPauseMinimumAttempts: 20,
+      broadcastAutoPauseFailurePercent: 30
     });
   });
 
@@ -274,10 +286,34 @@ describe("loadWorkerConfig", () => {
     );
     assert.throws(
       () => loadWorkerConfig(validEnvironment({
+        SEGMENT_AUDIENCE_SNAPSHOT_BATCH_SIZE: "11"
+      })),
+      /SEGMENT_AUDIENCE_SNAPSHOT_BATCH_SIZE/
+    );
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({
         TELEGRAM_NOTIFICATIONS_ENABLED: "true",
         ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID: "not-a-chat"
       })),
       /ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID/
+    );
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({
+        TELEGRAM_NOTIFICATIONS_ENABLED: "true",
+        ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID: "-1001234567890",
+        BROADCAST_DELIVERY_RETRY_BASE_SECONDS: "60",
+        BROADCAST_DELIVERY_RETRY_MAX_SECONDS: "30"
+      })),
+      /BROADCAST_DELIVERY_RETRY_MAX_SECONDS/
+    );
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({
+        TELEGRAM_NOTIFICATIONS_ENABLED: "true",
+        ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID: "-1001234567890",
+        TELEGRAM_HTTP_TIMEOUT_SECONDS: "60",
+        BROADCAST_DELIVERY_LEASE_SECONDS: "60"
+      })),
+      /Telegram delivery leases/
     );
     assert.throws(
       () => loadWorkerConfig(validEnvironment({

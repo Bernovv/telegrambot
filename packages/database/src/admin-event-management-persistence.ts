@@ -163,7 +163,6 @@ implements AdminEventManagementRepository {
                  from public.pricing_rules rules
                  where rules.product_id = products.id
                    and rules.is_active
-                   and rules.unit_price_kopecks > 0
                )
            ) as unpriced_active_product_count
          from public.ticket_products products

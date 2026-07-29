@@ -8,14 +8,23 @@ import type {
   ResumeTelegramScenarioAfterPaymentCommand,
   ResumeTelegramScenarioAfterPaymentResult,
   ScenarioPresentationModel,
+  SelectTelegramEventCommand,
+  SelectTelegramEventResult,
   StartTelegramScenarioCommand,
   StartTelegramScenarioResult,
   SubmitTelegramScenarioInputCommand,
-  SubmitTelegramScenarioInputResult
+  SubmitTelegramScenarioInputResult,
+  TelegramEventChoice
 } from "@ticket-platform/contracts";
 import {
   executeScenarioGraph,
+  scenarioAddCategoryRequest,
+  scenarioOrderAddItemRequest,
+  scenarioOrderDraftStartRequest,
   scenarioOrderStartRequest,
+  scenarioOrderSummaryRequest,
+  scenarioSetStatusRequest,
+  scenarioWalletCreditRequest,
   submitScenarioInput,
   type ScenarioExecutionResult,
   type ScenarioGraph,
@@ -26,6 +35,19 @@ import type {
   OutboxWriter,
   UnitOfWork
 } from "./identity.js";
+import type {
+  CompleteInternalOrderCommand,
+  ConfirmPaymentResult
+} from "./payment-confirmation.js";
+import type {
+  CreditScenarioWalletCommand,
+  CreditScenarioWalletResult
+} from "./scenario-wallet-credit.js";
+import type {
+  AddUserCategoryCommand,
+  SetUserStatusCommand,
+  UserClassificationResult
+} from "./user-classification.js";
 
 export interface ScenarioRuntimeSession {
   readonly id: string;
@@ -44,6 +66,7 @@ export type OpenTelegramScenarioResult =
       readonly status:
         | "event_not_found"
         | "event_selection_required"
+        | "participant_not_found"
         | "scenario_not_published"
         | "scenario_invalid";
     }
@@ -83,10 +106,29 @@ export interface ScenarioOrderCreator {
   execute(command: CreateOrderCommand): Promise<CreateOrderResult>;
 }
 
+export interface ScenarioInternalOrderCompleter {
+  execute(command: CompleteInternalOrderCommand): Promise<ConfirmPaymentResult>;
+}
+
+export interface ScenarioWalletCreditor {
+  execute(command: CreditScenarioWalletCommand): Promise<CreditScenarioWalletResult>;
+}
+
+export interface ScenarioUserClassifier {
+  setStatus(command: SetUserStatusCommand): Promise<UserClassificationResult>;
+  addCategory(command: AddUserCategoryCommand): Promise<UserClassificationResult>;
+}
+
 export interface SaveScenarioExecutionInput {
   readonly session: ScenarioRuntimeSession;
   readonly commandIdempotencyKey: string;
-  readonly commandKind: "start" | "transition" | "input" | "offer" | "payment";
+  readonly commandKind:
+    | "start"
+    | "event_selection"
+    | "transition"
+    | "input"
+    | "offer"
+    | "payment";
   readonly callbackQueryId: string | null;
   readonly selectedEdgeId: string | null;
   readonly contextPatch: Readonly<Record<string, unknown>>;
@@ -96,10 +138,24 @@ export interface SaveScenarioExecutionInput {
 
 export interface ScenarioRuntimeRepository {
   findProcessedSession(commandIdempotencyKey: string): Promise<string | null>;
+  listTelegramEventChoices(input: {
+    readonly occurredAt: Date;
+    readonly limit: number;
+  }): Promise<{
+    readonly events: readonly TelegramEventChoice[];
+    readonly hasMoreEvents: boolean;
+  }>;
   lockOrCreateForTelegramStart(input: {
     readonly userId: string;
     readonly messengerIdentityId: string;
     readonly eventSlug: string | null;
+    readonly proposedSessionId: string;
+    readonly occurredAt: Date;
+    readonly expiresAt: Date;
+  }): Promise<OpenTelegramScenarioResult>;
+  lockOrCreateForTelegramEventSelection(input: {
+    readonly eventId: string;
+    readonly senderExternalUserId: string;
     readonly proposedSessionId: string;
     readonly occurredAt: Date;
     readonly expiresAt: Date;
@@ -139,71 +195,177 @@ export class StartTelegramScenarioService {
     private readonly unitOfWork: UnitOfWork,
     private readonly idGenerator: IdGenerator,
     private readonly sessionTtlMs = 24 * 60 * 60 * 1_000,
-    private readonly orderCreator?: ScenarioOrderCreator
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
   ) {}
 
   execute(command: StartTelegramScenarioCommand): Promise<StartTelegramScenarioResult> {
     const idempotencyKey = scenarioCommandKey(command.updateId, "start");
 
-    return this.unitOfWork.transact(async () => {
-      const processedSessionId = await this.repository.findProcessedSession(
-        idempotencyKey
-      );
-      if (processedSessionId) {
-        return duplicateStartResult(processedSessionId);
-      }
-
-      const opened = await this.repository.lockOrCreateForTelegramStart({
-        userId: command.userId,
-        messengerIdentityId: command.messengerIdentityId,
-        eventSlug: command.eventSlug,
-        proposedSessionId: this.idGenerator.newId(),
-        occurredAt: command.occurredAt,
-        expiresAt: new Date(command.occurredAt.getTime() + this.sessionTtlMs)
-      });
-      if (opened.status !== "ready") {
-        return { handled: false, reason: opened.status };
-      }
-      const concurrentlyProcessedSessionId =
-        await this.repository.findProcessedSession(idempotencyKey);
-      if (concurrentlyProcessedSessionId) {
-        return duplicateStartResult(concurrentlyProcessedSessionId);
-      }
-
-      const resolved = await resolveScenarioActions({
-        session: opened.session,
-        execution: executeScenarioGraph({
-          graph: opened.session.graph,
-          currentNodeId: opened.session.currentNodeId
-        }),
-        contextPatch: {},
-        orderCreator: this.orderCreator,
-        occurredAt: command.occurredAt
-      });
-      await this.repository.saveExecution({
-        session: opened.session,
-        commandIdempotencyKey: idempotencyKey,
-        commandKind: "start",
-        callbackQueryId: null,
-        selectedEdgeId: null,
-        contextPatch: resolved.contextPatch,
-        execution: resolved.execution,
-        occurredAt: command.occurredAt
-      });
-      return startResult(
-        opened.session.id,
-        resolved.execution,
-        resolved.presentations
-      );
+    return executeTelegramScenarioOpening({
+      repository: this.repository,
+      unitOfWork: this.unitOfWork,
+      idGenerator: this.idGenerator,
+      idempotencyKey,
+      commandKind: "start",
+      callbackQueryId: null,
+      occurredAt: command.occurredAt,
+      sessionTtlMs: this.sessionTtlMs,
+      orderCreator: this.orderCreator,
+      internalOrderCompleter: this.internalOrderCompleter,
+      walletCreditor: this.walletCreditor,
+      userClassifier: this.userClassifier,
+      open: (proposedSessionId, expiresAt) =>
+        this.repository.lockOrCreateForTelegramStart({
+          userId: command.userId,
+          messengerIdentityId: command.messengerIdentityId,
+          eventSlug: command.eventSlug,
+          proposedSessionId,
+          occurredAt: command.occurredAt,
+          expiresAt
+        })
     });
   }
+}
+
+export class SelectTelegramEventService {
+  constructor(
+    private readonly repository: ScenarioRuntimeRepository,
+    private readonly unitOfWork: UnitOfWork,
+    private readonly idGenerator: IdGenerator,
+    private readonly sessionTtlMs = 24 * 60 * 60 * 1_000,
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
+  ) {}
+
+  execute(command: SelectTelegramEventCommand): Promise<SelectTelegramEventResult> {
+    if (!UUID_PATTERN.test(command.eventId)) {
+      return Promise.resolve({ handled: false, reason: "event_not_found" });
+    }
+
+    return executeTelegramScenarioOpening({
+      repository: this.repository,
+      unitOfWork: this.unitOfWork,
+      idGenerator: this.idGenerator,
+      idempotencyKey: scenarioCommandKey(command.updateId, "event_selection"),
+      commandKind: "event_selection",
+      callbackQueryId: command.callbackQueryId,
+      occurredAt: command.occurredAt,
+      sessionTtlMs: this.sessionTtlMs,
+      orderCreator: this.orderCreator,
+      internalOrderCompleter: this.internalOrderCompleter,
+      walletCreditor: this.walletCreditor,
+      userClassifier: this.userClassifier,
+      open: (proposedSessionId, expiresAt) =>
+        this.repository.lockOrCreateForTelegramEventSelection({
+          eventId: command.eventId,
+          senderExternalUserId: command.senderExternalUserId,
+          proposedSessionId,
+          occurredAt: command.occurredAt,
+          expiresAt
+        })
+    });
+  }
+}
+
+interface TelegramScenarioOpeningInput {
+  readonly repository: ScenarioRuntimeRepository;
+  readonly unitOfWork: UnitOfWork;
+  readonly idGenerator: IdGenerator;
+  readonly idempotencyKey: string;
+  readonly commandKind: "start" | "event_selection";
+  readonly callbackQueryId: string | null;
+  readonly occurredAt: Date;
+  readonly sessionTtlMs: number;
+  readonly orderCreator: ScenarioOrderCreator | undefined;
+  readonly internalOrderCompleter: ScenarioInternalOrderCompleter | undefined;
+  readonly walletCreditor: ScenarioWalletCreditor | undefined;
+  readonly userClassifier: ScenarioUserClassifier | undefined;
+  readonly open: (
+    proposedSessionId: string,
+    expiresAt: Date
+  ) => Promise<OpenTelegramScenarioResult>;
+}
+
+function executeTelegramScenarioOpening(
+  input: TelegramScenarioOpeningInput
+): Promise<StartTelegramScenarioResult> {
+  return input.unitOfWork.transact(async () => {
+    const processedSessionId = await input.repository.findProcessedSession(
+      input.idempotencyKey
+    );
+    if (processedSessionId) {
+      return duplicateStartResult(processedSessionId);
+    }
+
+    const opened = await input.open(
+      input.idGenerator.newId(),
+      new Date(input.occurredAt.getTime() + input.sessionTtlMs)
+    );
+    if (opened.status === "event_selection_required") {
+      const choices = await input.repository.listTelegramEventChoices({
+        occurredAt: input.occurredAt,
+        limit: TELEGRAM_EVENT_CHOICE_LIMIT
+      });
+      return {
+        handled: false,
+        reason: "event_selection_required",
+        ...choices
+      };
+    }
+    if (opened.status !== "ready") {
+      return { handled: false, reason: opened.status };
+    }
+
+    const concurrentlyProcessedSessionId =
+      await input.repository.findProcessedSession(input.idempotencyKey);
+    if (concurrentlyProcessedSessionId) {
+      return duplicateStartResult(concurrentlyProcessedSessionId);
+    }
+
+    const resolved = await resolveScenarioActions({
+      session: opened.session,
+      execution: executeScenarioGraph({
+        graph: opened.session.graph,
+        currentNodeId: opened.session.currentNodeId
+      }),
+      contextPatch: {},
+      orderCreator: input.orderCreator,
+      internalOrderCompleter: input.internalOrderCompleter,
+      walletCreditor: input.walletCreditor,
+      userClassifier: input.userClassifier,
+      occurredAt: input.occurredAt
+    });
+    await input.repository.saveExecution({
+      session: opened.session,
+      commandIdempotencyKey: input.idempotencyKey,
+      commandKind: input.commandKind,
+      callbackQueryId: input.callbackQueryId,
+      selectedEdgeId: null,
+      contextPatch: resolved.contextPatch,
+      execution: resolved.execution,
+      occurredAt: input.occurredAt
+    });
+    return startResult(
+      opened.session.id,
+      resolved.execution,
+      resolved.presentations
+    );
+  });
 }
 
 export class AdvanceTelegramScenarioService {
   constructor(
     private readonly repository: ScenarioRuntimeRepository,
     private readonly unitOfWork: UnitOfWork,
-    private readonly orderCreator?: ScenarioOrderCreator
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
   ) {}
 
   execute(
@@ -250,6 +412,9 @@ export class AdvanceTelegramScenarioService {
         execution,
         contextPatch: {},
         orderCreator: this.orderCreator,
+        internalOrderCompleter: this.internalOrderCompleter,
+        walletCreditor: this.walletCreditor,
+        userClassifier: this.userClassifier,
         occurredAt: command.occurredAt
       });
       await this.repository.saveExecution({
@@ -275,7 +440,10 @@ export class SubmitTelegramScenarioInputService {
   constructor(
     private readonly repository: ScenarioRuntimeRepository,
     private readonly unitOfWork: UnitOfWork,
-    private readonly orderCreator?: ScenarioOrderCreator
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
   ) {}
 
   execute(
@@ -332,6 +500,9 @@ export class SubmitTelegramScenarioInputService {
         execution: submission.execution,
         contextPatch: inputPatch,
         orderCreator: this.orderCreator,
+        internalOrderCompleter: this.internalOrderCompleter,
+        walletCreditor: this.walletCreditor,
+        userClassifier: this.userClassifier,
         occurredAt: command.occurredAt
       });
       await this.repository.saveExecution({
@@ -360,7 +531,10 @@ export class ResumeTelegramScenarioAfterOfferService {
   constructor(
     private readonly repository: ScenarioRuntimeRepository,
     private readonly unitOfWork: UnitOfWork,
-    private readonly orderCreator?: ScenarioOrderCreator
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
   ) {}
 
   execute(
@@ -406,6 +580,9 @@ export class ResumeTelegramScenarioAfterOfferService {
           order: { ...order, status: "awaiting_payment" }
         },
         orderCreator: this.orderCreator,
+        internalOrderCompleter: this.internalOrderCompleter,
+        walletCreditor: this.walletCreditor,
+        userClassifier: this.userClassifier,
         occurredAt: command.occurredAt
       });
       await this.repository.saveExecution({
@@ -435,7 +612,10 @@ export class ResumeTelegramScenarioAfterPaymentService {
     private readonly unitOfWork: UnitOfWork,
     private readonly outboxWriter: OutboxWriter,
     private readonly idGenerator: IdGenerator,
-    private readonly orderCreator?: ScenarioOrderCreator
+    private readonly orderCreator?: ScenarioOrderCreator,
+    private readonly internalOrderCompleter?: ScenarioInternalOrderCompleter,
+    private readonly walletCreditor?: ScenarioWalletCreditor,
+    private readonly userClassifier?: ScenarioUserClassifier
   ) {}
 
   execute(
@@ -480,6 +660,9 @@ export class ResumeTelegramScenarioAfterPaymentService {
           order: { ...order, status: "paid" }
         },
         orderCreator: this.orderCreator,
+        internalOrderCompleter: this.internalOrderCompleter,
+        walletCreditor: this.walletCreditor,
+        userClassifier: this.userClassifier,
         occurredAt: command.occurredAt
       });
       await this.repository.saveExecution({
@@ -520,7 +703,7 @@ export class ResumeTelegramScenarioAfterPaymentService {
 
 function scenarioCommandKey(
   updateId: string,
-  kind: "start" | "transition" | "input" | "offer"
+  kind: "start" | "event_selection" | "transition" | "input" | "offer"
 ): string {
   return `telegram_update:${updateId}:scenario_${kind}`;
 }
@@ -635,6 +818,9 @@ async function resolveScenarioActions(input: {
   readonly execution: ScenarioExecutionResult;
   readonly contextPatch: Readonly<Record<string, unknown>>;
   readonly orderCreator: ScenarioOrderCreator | undefined;
+  readonly internalOrderCompleter: ScenarioInternalOrderCompleter | undefined;
+  readonly walletCreditor: ScenarioWalletCreditor | undefined;
+  readonly userClassifier: ScenarioUserClassifier | undefined;
   readonly occurredAt: Date;
 }): Promise<ResolvedScenarioExecution> {
   let execution = input.execution;
@@ -666,11 +852,136 @@ async function resolveScenarioActions(input: {
       };
     }
 
-    if (node.type === "order_start" && input.orderCreator) {
-      const request = scenarioOrderStartRequest(node);
+    if (node.type === "wallet_credit") {
+      const request = scenarioWalletCreditRequest(node);
       const edge = singleAutomaticEdge(input.session.graph, node.id);
+      if (!request || !edge || !input.walletCreditor) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Начисление внутреннего баланса временно недоступно."
+        );
+      }
+      const credit = await input.walletCreditor.execute({
+        userId: input.session.userId,
+        eventId: input.session.eventId,
+        scenarioSessionId: input.session.id,
+        scenarioVersionId: input.session.scenarioVersionId,
+        nodeId: node.id,
+        amountKopecks: request.amountKopecks,
+        currency: request.currency,
+        idempotencyKey: [
+          "scenario_credit",
+          request.idempotencyKeyTemplate,
+          input.session.userId,
+          input.session.eventId
+        ].join(":"),
+        reason: request.reason,
+        creditedAt: input.occurredAt
+      });
+      const wallet = {
+        schemaVersion: 1,
+        currency: credit.currency,
+        availableBalanceKopecks: credit.availableBalanceKopecks,
+        lastCreditNodeId: node.id
+      };
+      context.wallet = wallet;
+      contextPatch = { ...contextPatch, wallet };
+      execution = continueFromAction(input.session.graph, execution, edge.id);
+      continue;
+    }
+
+    if (node.type === "set_status") {
+      const request = scenarioSetStatusRequest(node);
+      const edge = singleAutomaticEdge(input.session.graph, node.id);
+      if (!request || !edge || !input.userClassifier) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Назначение статуса временно недоступно."
+        );
+      }
+      const classification = await input.userClassifier.setStatus({
+        userId: input.session.userId,
+        statusCode: request.statusCode,
+        source: "scenario",
+        sourceReference:
+          `scenario_status:${input.session.id}:${node.id}`,
+        actorAdminId: null,
+        reason: request.reason,
+        assignedAt: input.occurredAt
+      });
+      const userClassification = classificationContext(
+        context.userClassification,
+        classification,
+        { statusCode: request.statusCode }
+      );
+      context.userClassification = userClassification;
+      contextPatch = { ...contextPatch, userClassification };
+      execution = continueFromAction(input.session.graph, execution, edge.id);
+      continue;
+    }
+
+    if (node.type === "add_category") {
+      const request = scenarioAddCategoryRequest(node);
+      const edge = singleAutomaticEdge(input.session.graph, node.id);
+      if (!request || !edge || !input.userClassifier) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Добавление категории временно недоступно."
+        );
+      }
+      const classification = await input.userClassifier.addCategory({
+        userId: input.session.userId,
+        categoryCode: request.categoryCode,
+        source: "scenario",
+        sourceReference:
+          `scenario_category:${input.session.id}:${node.id}`,
+        actorAdminId: null,
+        reason: request.reason,
+        assignedAt: input.occurredAt
+      });
+      const userClassification = classificationContext(
+        context.userClassification,
+        classification,
+        { categoryCode: request.categoryCode }
+      );
+      context.userClassification = userClassification;
+      contextPatch = { ...contextPatch, userClassification };
+      execution = continueFromAction(input.session.graph, execution, edge.id);
+      continue;
+    }
+
+    if (node.type === "order_start") {
+      const request = scenarioOrderStartRequest(node);
+      const draftRequest = scenarioOrderDraftStartRequest(node);
+      const edge = singleAutomaticEdge(input.session.graph, node.id);
+      if (draftRequest && edge) {
+        const orderDraft: StoredScenarioOrderDraft = {
+          schemaVersion: 1,
+          currency: draftRequest.currency,
+          walletMode: draftRequest.walletMode,
+          items: []
+        };
+        context.orderDraft = orderDraft;
+        context.order = null;
+        contextPatch = {
+          ...contextPatch,
+          orderDraft,
+          order: null
+        };
+        execution = continueFromAction(input.session.graph, execution, edge.id);
+        continue;
+      }
       const items = request ? scenarioOrderItems(request.items, context) : null;
-      if (!request || !edge || !items || items.length === 0) {
+      if (
+        !request
+        || !edge
+        || !items
+        || items.length === 0
+        || !input.orderCreator
+      ) {
         return waitingAtAction(
           execution,
           contextPatch,
@@ -684,13 +995,97 @@ async function resolveScenarioActions(input: {
         eventId: input.session.eventId,
         currency: request.currency,
         items,
-        wallet: { mode: "none" },
+        wallet: { mode: request.walletMode },
         source: "telegram_scenario",
         createdAt: input.occurredAt
       });
       const storedOrder = scenarioOrderContext(order);
       context.order = storedOrder;
       contextPatch = { ...contextPatch, order: storedOrder };
+      execution = continueFromAction(input.session.graph, execution, edge.id);
+      continue;
+    }
+
+    if (node.type === "order_add_item") {
+      const request = scenarioOrderAddItemRequest(node);
+      const edge = singleAutomaticEdge(input.session.graph, node.id);
+      const draft = readScenarioOrderDraftContext(context.orderDraft);
+      if (!request || !edge || !draft) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Не удалось обновить состав заказа. Начните покупку заново."
+        );
+      }
+      const quantity = context[request.quantityContextKey];
+      const remainingItems = draft.items.filter(
+        (item) => item.productId !== request.productId
+      );
+      let items: StoredScenarioOrderDraft["items"];
+      if (request.optional && (quantity === undefined || quantity === 0)) {
+        items = remainingItems;
+      } else if (!Number.isSafeInteger(quantity) || Number(quantity) < 1) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Не удалось определить количество товара. Начните покупку заново."
+        );
+      } else {
+        items = [
+          ...remainingItems,
+          { productId: request.productId, quantity: Number(quantity) }
+        ];
+      }
+      if (items.length > 20) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "В одном заказе может быть не больше 20 разных товаров."
+        );
+      }
+      const orderDraft: StoredScenarioOrderDraft = { ...draft, items };
+      context.orderDraft = orderDraft;
+      contextPatch = { ...contextPatch, orderDraft };
+      execution = continueFromAction(input.session.graph, execution, edge.id);
+      continue;
+    }
+
+    if (node.type === "order_summary") {
+      const request = scenarioOrderSummaryRequest(node);
+      const edge = singleAutomaticEdge(input.session.graph, node.id);
+      const draft = readScenarioOrderDraftContext(context.orderDraft);
+      if (
+        !request
+        || !edge
+        || !draft
+        || draft.items.length === 0
+        || !input.orderCreator
+      ) {
+        return waitingAtAction(
+          execution,
+          contextPatch,
+          "Состав заказа пуст или недоступен. Начните покупку заново."
+        );
+      }
+      const order = await input.orderCreator.execute({
+        idempotencyKey:
+          `scenario_order:${input.session.id}:${node.id}:${input.session.lockVersion}`,
+        userId: input.session.userId,
+        eventId: input.session.eventId,
+        currency: draft.currency,
+        items: draft.items,
+        wallet: { mode: draft.walletMode },
+        source: "telegram_scenario",
+        createdAt: input.occurredAt
+      });
+      const storedOrder = scenarioOrderContext(order);
+      context.order = storedOrder;
+      context.orderDraft = null;
+      contextPatch = {
+        ...contextPatch,
+        order: storedOrder,
+        orderDraft: null
+      };
       execution = continueFromAction(input.session.graph, execution, edge.id);
       continue;
     }
@@ -744,6 +1139,31 @@ async function resolveScenarioActions(input: {
         execution = continueFromAction(input.session.graph, execution, edge.id);
         continue;
       }
+      if (
+        order.status === "awaiting_payment"
+        && order.externalDueKopecks === "0"
+      ) {
+        if (!edge || !input.internalOrderCompleter) {
+          return waitingAtAction(
+            execution,
+            contextPatch,
+            "Заказ ожидает внутреннего подтверждения. Попробуйте снова позже."
+          );
+        }
+        await input.internalOrderCompleter.execute({
+          orderId: order.orderId,
+          userId: input.session.userId,
+          eventId: input.session.eventId,
+          currency: order.currency,
+          idempotencyKey: `internal_order:${order.orderId}`,
+          completedAt: input.occurredAt
+        });
+        const paidOrder: StoredScenarioOrder = { ...order, status: "paid" };
+        context.order = paidOrder;
+        contextPatch = { ...contextPatch, order: paidOrder };
+        execution = continueFromAction(input.session.graph, execution, edge.id);
+        continue;
+      }
       return waitingAtAction(
         execution,
         contextPatch,
@@ -785,6 +1205,18 @@ interface StoredScenarioOrder {
   readonly walletAppliedKopecks: string;
   readonly externalDueKopecks: string;
   readonly expiresAt: string;
+}
+
+interface StoredScenarioOrderDraftItem {
+  readonly productId: string;
+  readonly quantity: number;
+}
+
+interface StoredScenarioOrderDraft {
+  readonly schemaVersion: 1;
+  readonly currency: string;
+  readonly walletMode: "none" | "all";
+  readonly items: readonly StoredScenarioOrderDraftItem[];
 }
 
 function scenarioOrderContext(order: CreateOrderResult): StoredScenarioOrder {
@@ -837,6 +1269,62 @@ function readScenarioOrderContext(value: unknown): StoredScenarioOrder | null {
   return order as unknown as StoredScenarioOrder;
 }
 
+function readScenarioOrderDraftContext(
+  value: unknown
+): StoredScenarioOrderDraft | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const draft = value as Readonly<Record<string, unknown>>;
+  if (
+    draft.schemaVersion !== 1
+    || typeof draft.currency !== "string"
+    || !/^[A-Z]{3}$/.test(draft.currency)
+    || (draft.walletMode !== "none" && draft.walletMode !== "all")
+    || !Array.isArray(draft.items)
+    || draft.items.length > 20
+    || Object.keys(draft).some(
+      (key) => !["schemaVersion", "currency", "walletMode", "items"].includes(key)
+    )
+  ) {
+    return null;
+  }
+  const productIds = new Set<string>();
+  const items: StoredScenarioOrderDraftItem[] = [];
+  for (const value of draft.items) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const item = value as Readonly<Record<string, unknown>>;
+    if (
+      typeof item.productId !== "string"
+      || !SCENARIO_UUID_PATTERN.test(item.productId)
+      || productIds.has(item.productId)
+      || !Number.isSafeInteger(item.quantity)
+      || Number(item.quantity) < 1
+      || Object.keys(item).some(
+        (key) => !["productId", "quantity"].includes(key)
+      )
+    ) {
+      return null;
+    }
+    productIds.add(item.productId);
+    items.push({
+      productId: item.productId,
+      quantity: Number(item.quantity)
+    });
+  }
+  return {
+    schemaVersion: 1,
+    currency: draft.currency,
+    walletMode: draft.walletMode,
+    items
+  };
+}
+
+const SCENARIO_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function scenarioOrderItems(
   requests: readonly ScenarioOrderStartItemRequest[],
   context: Readonly<Record<string, unknown>>
@@ -853,6 +1341,34 @@ function scenarioOrderItems(
     items.push({ productId: request.productId, quantity: Number(quantity) });
   }
   return items;
+}
+
+function classificationContext(
+  current: unknown,
+  snapshot: UserClassificationResult,
+  changed: {
+    readonly statusCode?: string;
+    readonly categoryCode?: string;
+  }
+) {
+  const previous = current && typeof current === "object" && !Array.isArray(current)
+    ? current as Readonly<Record<string, unknown>>
+    : {};
+  return {
+    schemaVersion: 1,
+    statusCodes: snapshot.statusCodes,
+    categoryCodes: snapshot.categoryCodes,
+    lastStatusCode:
+      changed.statusCode
+      ?? (typeof previous.lastStatusCode === "string"
+        ? previous.lastStatusCode
+        : null),
+    lastCategoryCode:
+      changed.categoryCode
+      ?? (typeof previous.lastCategoryCode === "string"
+        ? previous.lastCategoryCode
+        : null)
+  };
 }
 
 function singleAutomaticEdge(
@@ -924,3 +1440,7 @@ function formatKopecks(value: string): string {
 function isKopeckString(value: unknown): value is string {
   return typeof value === "string" && /^(0|[1-9]\d*)$/.test(value);
 }
+
+const TELEGRAM_EVENT_CHOICE_LIMIT = 10;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

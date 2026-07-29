@@ -61,6 +61,8 @@ export type AcceptTelegramOfferResult =
       readonly accepted: true;
       readonly newlyAccepted: boolean;
       readonly orderId: string;
+      readonly userId: string;
+      readonly eventId: string;
       readonly orderNumber: string;
       readonly currency: string;
       readonly totalKopecks: string;
@@ -154,6 +156,17 @@ export interface ScenarioPresentationModel {
   readonly buttons: readonly ScenarioPresentationButton[];
 }
 
+export interface TelegramEventChoice {
+  readonly eventId: string;
+  readonly title: string;
+  readonly startsAt: string;
+  readonly timezone: string;
+  readonly locationName: string | null;
+  readonly minimumPriceKopecks: string | null;
+  readonly currency: string | null;
+  readonly salesStatus: "published" | "sales_paused" | "sold_out";
+}
+
 export interface StartTelegramScenarioCommand {
   readonly userId: string;
   readonly messengerIdentityId: string;
@@ -165,9 +178,15 @@ export interface StartTelegramScenarioCommand {
 export type StartTelegramScenarioResult =
   | {
       readonly handled: false;
+      readonly reason: "event_selection_required";
+      readonly events: readonly TelegramEventChoice[];
+      readonly hasMoreEvents: boolean;
+    }
+  | {
+      readonly handled: false;
       readonly reason:
         | "event_not_found"
-        | "event_selection_required"
+        | "participant_not_found"
         | "scenario_not_published"
         | "scenario_invalid";
     }
@@ -178,6 +197,16 @@ export type StartTelegramScenarioResult =
       readonly status: "waiting_input" | "completed" | "blocked";
       readonly presentations: readonly ScenarioPresentationModel[];
     };
+
+export interface SelectTelegramEventCommand {
+  readonly eventId: string;
+  readonly senderExternalUserId: string;
+  readonly updateId: string;
+  readonly callbackQueryId: string;
+  readonly occurredAt: Date;
+}
+
+export type SelectTelegramEventResult = StartTelegramScenarioResult;
 
 export interface AdvanceTelegramScenarioCommand {
   readonly sessionId: string;

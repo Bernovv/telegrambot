@@ -100,6 +100,9 @@ No destructive operation is included.
 - Replaced migration command scaffolds with the guarded application runner: exact manifest
   matching, a non-blocking advisory lock, transactional application, append-only SHA-256 evidence,
   and explicit production backup, rollback-plan, and confirmation gates.
+- Added a local/test-only, confirmation-gated and advisory-locked demo seed with synthetic identity,
+  Business Picnic catalog prices, an offer source, a validated purchase-scenario draft, and
+  insert-only repeat behavior.
 - Added a read-only GitHub Actions CI workflow with full-SHA-pinned actions, dependency review,
   frozen install, lint, typecheck, tests, build, and migration jobs.
 - Added Dependabot configuration, CI policy validation, and the required pull-request template.
@@ -173,6 +176,19 @@ No destructive operation is included.
 - Read-only event catalog administration, draft product, simple-pricing, content-block,
   immutable-offer management, and validated atomic event publication are implemented; the
   remaining purchase UX remains in Phase 2.
+- Added bounded Telegram event discovery when `/start` has no event deep-link. Published event
+  cards include event-timezone dates, location, current minimum price, and sales status; selecting
+  a UUID callback re-resolves the Telegram owner and starts the pinned scenario idempotently.
+- Added backward-compatible composed orders in scenarios: `order_start` can initialize a bounded
+  draft, `order_add_item` upserts validated context quantities, and `order_summary` creates the
+  immutable order once through the existing application service. Legacy published `order_start`
+  payloads retain immediate creation semantics.
+- Added internal zero-due confirmation for free and wallet-only orders. The shared payment
+  transaction records an `internal` attempt, captures any wallet hold, consumes inventory, issues
+  tickets, and advances the pinned scenario without calling T-Bank.
+- Added bounded `wallet_credit` scenario execution through the append-only ledger. Published
+  payloads carry integer kopecks, currency, reason, and a safe idempotency namespace; runtime,
+  ledger posting, outbox, cached balance, and session transition share one transaction.
 
 ## Phase 4 Admin Operations Slice
 
@@ -223,3 +239,87 @@ No destructive operation is included.
   and atomic idempotent input persistence without raw answers in execution events.
 - Scenario action ports, Expression DSL, preview/test execution, canvas, and rollback cloning
   remain future slices.
+
+## Срез классификации пользователей
+
+- Добавлены защищённые каталоги статусов и категорий с неизменяемыми кодами, группами
+  взаимоисключения, допустимыми переходами, оптимистической блокировкой и аудитом.
+- Добавлена неизменяемая история назначений со снимками отображения и первой операцией закрытия
+  активного интервала.
+- Добавлены application services и PostgreSQL-адаптеры для идемпотентных `set_status` и
+  `add_category`.
+- Действия подключены к long polling, Telegram webhook и продолжению после оплаты через общий
+  транзакционный runtime.
+- Публикация сценария проверяет, что используемые коды существуют и активны.
+- В админке добавлен `/classification`, а карточка пользователя показывает активные значения и
+  последние изменения.
+- Добавлены ручное назначение и снятие классификаций из карточки пользователя с `users.write`,
+  обязательной причиной, outbox и аудитом в общей транзакции.
+- Следующий срез: правила оплаты, опросов и импорта, массовые операции, сегменты и рассылки.
+
+## Срез предварительного просмотра сегмента
+
+- Добавлен строгий двухуровневый contract групп AND/OR для активных статусов и категорий.
+- Application service ограничивает размер выражения, нормализует коды и отклоняет недоступные
+  определения.
+- PostgreSQL строит только параметризованные `exists`/`not exists`/`count distinct` условия и
+  возвращает count со sample users в repeatable read-only snapshot.
+- Добавлены RBAC-маршрут `POST /api/v1/segments/preview`, BFF allowlist и рабочая страница
+  `/segments`.
+- Сохранённые сегменты используют один изменяемый черновик, неизменяемую опубликованную историю,
+  optimistic locking и повторную проверку справочников в транзакции публикации.
+- Добавлены audited API списка, чтения, создания, сохранения и публикации с раздельными правами
+  `users.read` и `broadcasts.send`, а также управление версиями на странице `/segments`.
+## Срез снимка аудитории сегмента
+
+- Добавлены audited-заявки на фиксацию аудитории для точной опубликованной версии сегмента.
+- Worker асинхронно материализует пользователей через параметризованный `INSERT ... SELECT` под
+  `FOR UPDATE SKIP LOCKED`; HTTP-запрос не выполняет массовую выборку.
+- Участники, состояние `ready` и `SegmentAudienceSnapshotReady` записываются в одной транзакции.
+- Готовый снимок и его append-only участники защищены PostgreSQL-триггерами.
+- Страница `/segments` показывает очередь и историю снимков с точным количеством получателей.
+- Черновик рассылки, неизменяемая версия содержимого и привязка к готовому снимку реализованы
+  следующим срезом.
+
+## Срез черновика и версии рассылки
+
+- Добавлен агрегат рассылки с optimistic locking, одним изменяемым черновиком и неизменяемой
+  опубликованной историей.
+- Версия схемы 1 фиксирует название, текст, настройку предпросмотра ссылок, до восьми
+  HTTPS-кнопок и точный готовый снимок аудитории.
+- Создание, сохранение и публикация требуют `broadcasts.send`, обязательную причину и записывают
+  append-only audit.
+- Публикация повторно проверяет готовность снимка и атомарно создаёт
+  `BroadcastVersionPublished` в transactional outbox без копирования текста сообщения.
+- Добавлены строгие API и BFF-маршруты, а также рабочий редактор `/broadcasts`.
+- Расписание и подготовка неизменяемого журнала доставок реализованы следующим срезом.
+
+## Срез расписания и подготовки рассылки
+
+- Добавлены состояния кампании и неизменяемая привязка расписания к точной опубликованной версии.
+- Планирование фиксирует UTC-момент, часовой пояс IANA и ограничение скорости с аудитом и
+  `BroadcastScheduled` в одной транзакции.
+- Worker выбирает наступившие кампании через `FOR UPDATE SKIP LOCKED` и одним
+  `INSERT ... SELECT` создаёт идемпотентные записи доставки для снимка аудитории.
+- Недоступные Telegram identity и известные блокировки фиксируются как `skipped`; доступные
+  получатели остаются `pending`.
+- Итоговые счётчики и `BroadcastPrepared` записываются атомарно, а экран `/broadcasts` показывает
+  состояние подготовки.
+- Следующий срез: арендованная отправка Telegram, повторные попытки с задержкой, пауза, отмена,
+  автопауза при высокой доле ошибок и завершение кампании.
+
+## Срез арендованной отправки рассылки
+
+- Worker атомарно арендует одну доступную delivery-запись, а просроченная аренда восстанавливается
+  после перезапуска без потери получателя.
+- Скорость сериализуется по кампании и глобально по боту; несколько worker вместе не превышают
+  25 вызовов Telegram в секунду.
+- Адаптер grammY отправляет текст, HTTPS-кнопки и настройку предпросмотра ссылок, сохраняя
+  `provider_message_id` после подтверждённого успеха.
+- HTTP 429 использует `retry_after`, транспортные и серверные ошибки повторяются с
+  экспоненциальной задержкой, блокировка пользователя становится окончательной и обновляет
+  Telegram identity.
+- Кампания завершается при отсутствии активных доставок и автоматически приостанавливается при
+  высокой доле окончательных ошибок; оба перехода атомарно публикуются через transactional outbox.
+- Следующий срез: административные пауза, возобновление и отмена с optimistic locking, аудитом,
+  outbox-событиями и отображением текущего прогресса.

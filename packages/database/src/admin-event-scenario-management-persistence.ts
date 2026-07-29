@@ -57,6 +57,44 @@ export class PostgresAdminEventScenarioManagementRepository
 implements AdminEventScenarioManagementRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
 
+  findUnavailableUserClassificationCodes(input: {
+    readonly statusCodes: readonly string[];
+    readonly categoryCodes: readonly string[];
+  }): Promise<{
+    readonly statusCodes: readonly string[];
+    readonly categoryCodes: readonly string[];
+  }> {
+    return this.read(async (connection) => {
+      const statuses = input.statusCodes.length === 0
+        ? { rows: [] as readonly { readonly code: string }[] }
+        : await connection.query<{ readonly code: string }>(
+            `select code
+             from public.user_statuses
+             where code = any($1::text[]) and is_active = true`,
+            [input.statusCodes]
+          );
+      const categories = input.categoryCodes.length === 0
+        ? { rows: [] as readonly { readonly code: string }[] }
+        : await connection.query<{ readonly code: string }>(
+            `select code
+             from public.user_categories
+             where code = any($1::text[]) and is_active = true`,
+            [input.categoryCodes]
+          );
+      const availableStatuses = new Set(statuses.rows.map((row) => row.code));
+      const availableCategories =
+        new Set(categories.rows.map((row) => row.code));
+      return {
+        statusCodes: input.statusCodes.filter(
+          (code) => !availableStatuses.has(code)
+        ),
+        categoryCodes: input.categoryCodes.filter(
+          (code) => !availableCategories.has(code)
+        )
+      };
+    });
+  }
+
   saveDraft(
     input: Parameters<
       AdminEventScenarioManagementRepository["saveDraft"]

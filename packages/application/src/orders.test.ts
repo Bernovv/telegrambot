@@ -54,6 +54,44 @@ describe("CreateOrderService", () => {
     );
   });
 
+  it("creates a zero-due order when the wallet covers the immutable total", async () => {
+    const fixture = createFixture({
+      context: { ...salesContext, walletAvailable: 300_000n }
+    });
+
+    const result = await fixture.service.execute(command([
+      { productId: "standard", quantity: 1 }
+    ], { mode: "all" }));
+
+    assert.equal(result.totalKopecks, "249000");
+    assert.equal(result.walletAppliedKopecks, "249000");
+    assert.equal(result.externalDueKopecks, "0");
+  });
+
+  it("creates a free order without a wallet hold amount", async () => {
+    const standardProduct = salesContext.products[0];
+    assert.ok(standardProduct);
+    const freeProduct = {
+      ...standardProduct,
+      pricingRules: [rule("standard-free", "standard", 1, null, 0n)]
+    };
+    const fixture = createFixture({
+      context: {
+        ...salesContext,
+        products: [freeProduct, ...salesContext.products.slice(1)]
+      }
+    });
+
+    const result = await fixture.service.execute(command([
+      { productId: "standard", quantity: 1 }
+    ], { mode: "all" }));
+
+    assert.equal(result.totalKopecks, "0");
+    assert.equal(result.walletAppliedKopecks, "0");
+    assert.equal(result.externalDueKopecks, "0");
+    assert.equal(fixture.persistedInputs[0]?.items[0]?.unitPrice, 0n);
+  });
+
   it("rejects insufficient event capacity before persistence", async () => {
     const fixture = createFixture({
       context: { ...salesContext, reservedEventInventoryUnits: 98 }

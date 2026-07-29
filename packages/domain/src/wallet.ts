@@ -4,6 +4,7 @@ export type WalletBucket = "bonus" | "referral" | "cash_equivalent" | "refund";
 
 export type WalletTransactionType =
   | "PHONE_BONUS"
+  | "SCENARIO_CREDIT"
   | "REFERRAL_REWARD"
   | "ADMIN_ADJUSTMENT"
   | "ORDER_HOLD"

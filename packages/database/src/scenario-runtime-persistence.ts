@@ -19,11 +19,33 @@ import {
   type SqlQueryResult
 } from "./postgres.js";
 import { PostgresOrderSalesRepository } from "./order-sales-persistence.js";
+import { PostgresPaymentConfirmationRepository } from "./payment-confirmation-persistence.js";
+import { PostgresScenarioWalletCreditRepository } from "./scenario-wallet-credit-persistence.js";
 import { PostgresOutboxWriter } from "./telegram-start-persistence.js";
+import {
+  PostgresUserClassificationAuditWriter,
+  PostgresUserClassificationRepository
+} from "./user-classification-persistence.js";
 
 interface EventRow {
   readonly id: string;
   readonly published_scenario_version_id: string | null;
+}
+
+interface EventChoiceRow {
+  readonly id: string;
+  readonly title: string;
+  readonly starts_at: Date | string;
+  readonly timezone: string;
+  readonly location_name: string | null;
+  readonly status: "published" | "sales_paused" | "sold_out";
+  readonly minimum_price_kopecks: string | null;
+  readonly currency: string | null;
+}
+
+interface TelegramParticipantRow {
+  readonly user_id: string;
+  readonly messenger_identity_id: string;
 }
 
 interface SessionRow {
@@ -78,6 +100,50 @@ implements ScenarioRuntimeRepository {
     return result.rows[0]?.session_id ?? null;
   }
 
+  async listTelegramEventChoices(input: {
+    readonly occurredAt: Date;
+    readonly limit: number;
+  }) {
+    const result = await this.session.query<EventChoiceRow>(
+      `select events.id, events.title, events.starts_at, events.timezone,
+              events.location_name, events.status,
+              minimum_price.unit_price_kopecks::text as minimum_price_kopecks,
+              minimum_price.currency
+       from public.events events
+       left join lateral (
+         select rules.unit_price_kopecks, rules.currency
+         from public.ticket_products products
+         join public.pricing_rules rules on rules.product_id = products.id
+         where products.event_id = events.id
+           and products.is_active
+           and rules.is_active
+           and (rules.valid_from is null or rules.valid_from <= $1)
+           and (rules.valid_until is null or rules.valid_until > $1)
+         order by rules.unit_price_kopecks, rules.currency, rules.id
+         limit 1
+       ) minimum_price on true
+       where events.status in ('published', 'sales_paused', 'sold_out')
+         and events.published_scenario_version_id is not null
+         and (events.ends_at is null or events.ends_at > $1)
+       order by events.starts_at, events.id
+       limit $2`,
+      [input.occurredAt, input.limit + 1]
+    );
+    return {
+      events: result.rows.slice(0, input.limit).map((event) => ({
+        eventId: event.id,
+        title: event.title,
+        startsAt: toIso(event.starts_at),
+        timezone: event.timezone,
+        locationName: event.location_name,
+        minimumPriceKopecks: event.minimum_price_kopecks,
+        currency: event.currency,
+        salesStatus: event.status
+      })),
+      hasMoreEvents: result.rowCount > input.limit
+    };
+  }
+
   async lockOrCreateForTelegramStart(input: {
     readonly userId: string;
     readonly messengerIdentityId: string;
@@ -90,10 +156,12 @@ implements ScenarioRuntimeRepository {
       `select id, published_scenario_version_id
        from public.events
        where status in ('published', 'sales_paused', 'sold_out')
+         and published_scenario_version_id is not null
+         and (ends_at is null or ends_at > $2)
          and ($1::text is null or slug = $1)
        order by starts_at, id
        limit 2`,
-      [input.eventSlug]
+      [input.eventSlug, input.occurredAt]
     );
     if (events.rowCount === 0) {
       return { status: "event_not_found" };
@@ -106,9 +174,69 @@ implements ScenarioRuntimeRepository {
       return { status: "event_not_found" };
     }
 
+    return this.lockOrCreateForEvent({
+      userId: input.userId,
+      messengerIdentityId: input.messengerIdentityId,
+      event,
+      proposedSessionId: input.proposedSessionId,
+      occurredAt: input.occurredAt,
+      expiresAt: input.expiresAt
+    });
+  }
+
+  async lockOrCreateForTelegramEventSelection(input: {
+    readonly eventId: string;
+    readonly senderExternalUserId: string;
+    readonly proposedSessionId: string;
+    readonly occurredAt: Date;
+    readonly expiresAt: Date;
+  }): Promise<OpenTelegramScenarioResult> {
+    const participants = await this.session.query<TelegramParticipantRow>(
+      `select user_id, id as messenger_identity_id
+       from public.messenger_identities
+       where channel = 'telegram'
+         and external_user_id = $1`,
+      [input.senderExternalUserId]
+    );
+    const participant = participants.rows[0];
+    if (!participant) {
+      return { status: "participant_not_found" };
+    }
+    const events = await this.session.query<EventRow>(
+      `select id, published_scenario_version_id
+       from public.events
+       where id = $1
+         and status in ('published', 'sales_paused', 'sold_out')
+         and published_scenario_version_id is not null
+         and (ends_at is null or ends_at > $2)`,
+      [input.eventId, input.occurredAt]
+    );
+    const event = events.rows[0];
+    if (!event) {
+      return { status: "event_not_found" };
+    }
+
+    return this.lockOrCreateForEvent({
+      userId: participant.user_id,
+      messengerIdentityId: participant.messenger_identity_id,
+      event,
+      proposedSessionId: input.proposedSessionId,
+      occurredAt: input.occurredAt,
+      expiresAt: input.expiresAt
+    });
+  }
+
+  private async lockOrCreateForEvent(input: {
+    readonly userId: string;
+    readonly messengerIdentityId: string;
+    readonly event: EventRow;
+    readonly proposedSessionId: string;
+    readonly occurredAt: Date;
+    readonly expiresAt: Date;
+  }): Promise<OpenTelegramScenarioResult> {
     await this.session.query(
       "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-      [`scenario-session:${input.userId}:${event.id}:telegram`]
+      [`scenario-session:${input.userId}:${input.event.id}:telegram`]
     );
     await this.session.query(
       `update public.scenario_sessions
@@ -118,7 +246,7 @@ implements ScenarioRuntimeRepository {
          and channel = 'telegram'
          and status in ('active', 'waiting_input')
          and expires_at <= $3`,
-      [input.userId, event.id, input.occurredAt]
+      [input.userId, input.event.id, input.occurredAt]
     );
 
     const current = await this.session.query<SessionRow>(
@@ -130,7 +258,7 @@ implements ScenarioRuntimeRepository {
          and channel = 'telegram'
          and status in ('active', 'waiting_input')
        for update`,
-      [input.userId, event.id]
+      [input.userId, input.event.id]
     );
     const existing = current.rows[0];
     if (existing) {
@@ -139,12 +267,12 @@ implements ScenarioRuntimeRepository {
         session: await this.loadSession(existing, false)
       };
     }
-    if (!event.published_scenario_version_id) {
+    if (!input.event.published_scenario_version_id) {
       return { status: "scenario_not_published" };
     }
 
     const graph = await this.loadPublishedGraph(
-      event.published_scenario_version_id
+      input.event.published_scenario_version_id
     );
     if (!graph) {
       return { status: "scenario_not_published" };
@@ -167,8 +295,8 @@ implements ScenarioRuntimeRepository {
         input.proposedSessionId,
         input.userId,
         input.messengerIdentityId,
-        event.id,
-        event.published_scenario_version_id,
+        input.event.id,
+        input.event.published_scenario_version_id,
         startNode.id,
         input.expiresAt,
         input.occurredAt
@@ -179,8 +307,8 @@ implements ScenarioRuntimeRepository {
       session: {
         id: input.proposedSessionId,
         userId: input.userId,
-        eventId: event.id,
-        scenarioVersionId: event.published_scenario_version_id,
+        eventId: input.event.id,
+        scenarioVersionId: input.event.published_scenario_version_id,
         currentNodeId: startNode.id,
         lockVersion: 1,
         newlyCreated: true,
@@ -593,6 +721,18 @@ export function createScenarioRuntimePersistence(
   return {
     repository: new PostgresScenarioRuntimeRepository(session, idGenerator),
     orderSalesRepository: new PostgresOrderSalesRepository(session, idGenerator),
+    paymentConfirmationRepository: new PostgresPaymentConfirmationRepository(
+      session,
+      idGenerator
+    ),
+    scenarioWalletCreditRepository: new PostgresScenarioWalletCreditRepository(
+      session,
+      idGenerator
+    ),
+    userClassificationRepository:
+      new PostgresUserClassificationRepository(session),
+    userClassificationAuditWriter:
+      new PostgresUserClassificationAuditWriter(session),
     outboxWriter: new PostgresOutboxWriter(session),
     unitOfWork: new PostgresUnitOfWork(pool, session)
   } as const;
@@ -648,4 +788,12 @@ function expectAffectedRow(
   if (result.rowCount !== 1) {
     throw new Error(message);
   }
+}
+
+function toIso(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid Telegram event timestamp");
+  }
+  return date.toISOString();
 }

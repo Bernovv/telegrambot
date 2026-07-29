@@ -4,6 +4,7 @@ import {
   TelegramUpdateController,
   formatKopecks,
   type TelegramContactUseCase,
+  type TelegramInternalOrderCompletionUseCase,
   type TelegramOfferAcceptanceUseCase,
   type TelegramPaymentInitializationUseCase,
   type TelegramScenarioUseCases,
@@ -84,6 +85,32 @@ describe("TelegramUpdateController", () => {
     );
   });
 
+  it("confirms a zero-due order internally without exposing payment callbacks", async () => {
+    const internalCompletionCommands: Array<
+      Parameters<TelegramInternalOrderCompletionUseCase["execute"]>[0]
+    > = [];
+    const instance = controller({
+      phoneRequired: false,
+      paymentsEnabled: true,
+      externalDueKopecks: "0",
+      internalCompletionCommands
+    });
+
+    const accepted = await instance.onOfferAcceptance(offerCommand());
+
+    assert.match(accepted.replacementText ?? "", /Заказ подтвержден/);
+    assert.equal(accepted.inlineButtons, undefined);
+    assert.equal(internalCompletionCommands.length, 1);
+    assert.deepEqual(internalCompletionCommands[0], {
+      orderId: "order-1",
+      userId,
+      eventId,
+      currency: "RUB",
+      idempotencyKey: "internal_order:order-1",
+      completedAt: new Date("2026-07-24T12:05:00.000Z")
+    });
+  });
+
   it("renders owner tickets with redelivery only for an issued ticket", async () => {
     const instance = controller({ phoneRequired: false });
 
@@ -135,6 +162,34 @@ describe("TelegramUpdateController", () => {
     assert.deepEqual(transition.replies, [{ text: "Готово" }]);
   });
 
+  it("renders event cards and starts the owner-selected event", async () => {
+    const instance = controller({
+      phoneRequired: false,
+      scenarioEnabled: true,
+      eventSelectionRequired: true
+    });
+
+    const replies = await instance.onStart(startCommand());
+    const eventButton = replies[1]?.inlineButtons?.[0];
+    const callbackData = eventButton && "callbackData" in eventButton
+      ? eventButton.callbackData
+      : "";
+    const selected = await instance.onEventSelection({
+      eventId,
+      senderExternalUserId: "777",
+      updateId: "1005-event",
+      callbackQueryId: "callback-event",
+      occurredAt: new Date("2026-07-26T12:01:00.000Z")
+    });
+
+    assert.match(replies[1]?.text ?? "", /Business Picnic/);
+    assert.match(replies[1]?.text ?? "", /от 2490 ₽/);
+    assert.equal(callbackData, `event_select:${eventId}`);
+    assert.ok(Buffer.byteLength(callbackData, "utf8") <= 64);
+    assert.equal(selected.callbackText, "Открыто");
+    assert.equal(selected.replies[0]?.text, "Выберите действие");
+  });
+
   it("renders validated scenario input and ignores text outside a scenario", async () => {
     const enabled = controller({
       phoneRequired: false,
@@ -184,6 +239,11 @@ function controller(options: {
   readonly contactAccepted?: boolean;
   readonly paymentsEnabled?: boolean;
   readonly scenarioEnabled?: boolean;
+  readonly eventSelectionRequired?: boolean;
+  readonly externalDueKopecks?: string;
+  readonly internalCompletionCommands?: Array<
+    Parameters<TelegramInternalOrderCompletionUseCase["execute"]>[0]
+  >;
 }): TelegramUpdateController {
   const start: TelegramStartUseCase = {
     async execute() {
@@ -221,11 +281,15 @@ function controller(options: {
         accepted: true,
         newlyAccepted,
         orderId: "order-1",
+        userId,
+        eventId,
         orderNumber: "BP-000001",
         currency: "RUB",
         totalKopecks: "249000",
-        walletAppliedKopecks: "10000",
-        externalDueKopecks: "239000"
+        walletAppliedKopecks: options.externalDueKopecks === "0"
+          ? "249000"
+          : "10000",
+        externalDueKopecks: options.externalDueKopecks ?? "239000"
       };
     }
   };
@@ -276,6 +340,37 @@ function controller(options: {
   };
   const scenario: TelegramScenarioUseCases = {
     start: {
+      async execute() {
+        if (options.eventSelectionRequired) {
+          return {
+            handled: false,
+            reason: "event_selection_required",
+            events: [{
+              eventId,
+              title: "Business Picnic",
+              startsAt: "2026-08-01T09:00:00.000Z",
+              timezone: "Europe/Moscow",
+              locationName: "Москва",
+              minimumPriceKopecks: "249000",
+              currency: "RUB",
+              salesStatus: "published"
+            }],
+            hasMoreEvents: false
+          };
+        }
+        return {
+          handled: true,
+          duplicate: false,
+          sessionId,
+          status: "waiting_input",
+          presentations: [{
+            text: "Выберите действие",
+            buttons: [{ text: "Завершить", edgeId }]
+          }]
+        };
+      }
+    },
+    selectEvent: {
       async execute() {
         return {
           handled: true,
@@ -330,6 +425,12 @@ function controller(options: {
       }
     }
   };
+  const internalCompletion: TelegramInternalOrderCompletionUseCase = {
+    async execute(command) {
+      options.internalCompletionCommands?.push(command);
+      return {};
+    }
+  };
 
   return new TelegramUpdateController(
     start,
@@ -338,7 +439,8 @@ function controller(options: {
     tickets,
     redelivery,
     options.paymentsEnabled ? payment : undefined,
-    options.scenarioEnabled ? scenario : undefined
+    options.scenarioEnabled ? scenario : undefined,
+    options.internalCompletionCommands ? internalCompletion : undefined
   );
 }
 
@@ -373,3 +475,5 @@ function offerCommand() {
 
 const sessionId = "019c0123-4567-789a-bcde-f0123456789a";
 const edgeId = "019c0123-4567-789a-bcde-f0123456789b";
+const eventId = "019c0123-4567-789a-bcde-f0123456789c";
+const userId = "019c0123-4567-789a-bcde-f0123456789d";

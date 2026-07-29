@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DomainEvent } from "@ticket-platform/domain";
 import {
+  CompleteInternalOrderService,
   ConfirmPaymentService,
   type ConfirmablePaymentOrder,
   type ConfirmedPaymentRecord,
@@ -126,6 +127,56 @@ describe("ConfirmPaymentService", () => {
 
     assert.equal(result.status, "paid");
     assert.equal(repository.persisted[0]?.paymentAttemptId, "019c0123-4567-789a-bcde-000000000001");
+  });
+
+  it("confirms a zero-due owner order internally and rejects foreign evidence", async () => {
+    const userId = "00000000-0000-4000-8000-000000000031";
+    const eventId = "00000000-0000-4000-8000-000000000032";
+    const internalOrder = {
+      ...order,
+      userId,
+      eventId,
+      total: 249_000n,
+      walletApplied: 249_000n,
+      externalDue: 0n
+    };
+    const repository = new RecordingRepository(internalOrder);
+    const confirmer = createService(repository, []);
+    const service = new CompleteInternalOrderService(confirmer);
+
+    const result = await service.execute({
+      orderId: internalOrder.id,
+      userId,
+      eventId,
+      currency: "RUB",
+      idempotencyKey: "scenario_internal:order-1",
+      completedAt: confirmedAt
+    });
+
+    assert.equal(result.status, "paid");
+    assert.equal(result.amountKopecks, "0");
+    assert.equal(result.walletCapturedKopecks, "249000");
+    const persisted = repository.persisted[0];
+    assert.ok(persisted);
+    assert.equal(persisted.command.source, "internal");
+    assert.deepEqual(persisted.command.internalEvidence, {
+      reason: "zero_external_due",
+      userId,
+      eventId
+    });
+
+    await assert.rejects(
+      createService(new RecordingRepository(internalOrder), []).execute({
+        ...persisted.command,
+        idempotencyKey: "scenario_internal:foreign-order",
+        internalEvidence: {
+          reason: "zero_external_due",
+          userId: "00000000-0000-4000-8000-000000000099",
+          eventId
+        }
+      }),
+      /does not match the zero-due order owner/
+    );
   });
 });
 

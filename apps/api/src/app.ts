@@ -49,6 +49,18 @@ import {
   type AdminEventsHandlers
 } from "./admin-events-api.js";
 import {
+  AdminUserClassificationApiModule,
+  type AdminUserClassificationHandlers
+} from "./admin-user-classification-api.js";
+import {
+  AdminSegmentsApiModule,
+  type AdminSegmentsHandlers
+} from "./admin-segments-api.js";
+import {
+  AdminBroadcastsApiModule,
+  type AdminBroadcastHandlers
+} from "./admin-broadcasts-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -115,6 +127,9 @@ export interface ApiApplicationOptions {
   readonly fullRefunds?: RequestFullRefundHandler;
   readonly adminOperations?: AdminOperationsHandlers;
   readonly adminEvents?: AdminEventsHandlers;
+  readonly adminUserClassification?: AdminUserClassificationHandlers;
+  readonly adminSegments?: AdminSegmentsHandlers;
+  readonly adminBroadcasts?: AdminBroadcastHandlers;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -151,6 +166,17 @@ class ApiModule {
         ...(options.adminEvents
           ? [AdminEventsApiModule.register(options.adminEvents)]
           : []),
+        ...(options.adminUserClassification
+          ? [AdminUserClassificationApiModule.register(
+              options.adminUserClassification
+            )]
+          : []),
+        ...(options.adminSegments
+          ? [AdminSegmentsApiModule.register(options.adminSegments)]
+          : []),
+        ...(options.adminBroadcasts
+          ? [AdminBroadcastsApiModule.register(options.adminBroadcasts)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -181,6 +207,9 @@ export async function createApiApplication(
       || options.fullRefunds
       || options.adminOperations
       || options.adminEvents
+      || options.adminUserClassification
+      || options.adminSegments
+      || options.adminBroadcasts
     )
     && !options.adminAuth
   ) {

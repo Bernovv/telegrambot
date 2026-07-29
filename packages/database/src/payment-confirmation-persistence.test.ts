@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  CompleteInternalOrderService,
   ConfirmPaymentService,
   HmacTicketReferenceGenerator,
   type IdGenerator
@@ -172,6 +173,136 @@ describe("PostgreSQL payment confirmation persistence", () => {
     );
     assert.equal(findQueries(connection, "insert into public.tickets").length, 2);
     assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
+
+  it("internally confirms a wallet-only order and captures its hold", async () => {
+    const internalOrderRow = {
+      ...orderRow,
+      user_id: "00000000-0000-4000-8000-000000000031",
+      event_id: "00000000-0000-4000-8000-000000000032",
+      wallet_applied_kopecks: "249000",
+      external_due_kopecks: "0"
+    };
+    const connection = new FakeConnection((text) => {
+      if (text.includes("from public.payment_attempts attempt")) {
+        return rows([]);
+      }
+      if (text.includes("from public.orders") && text.includes("for update")) {
+        return rows([internalOrderRow]);
+      }
+      if (text.includes("from public.order_items item")) {
+        return rows([orderItemRow]);
+      }
+      if (text.includes("from public.wallet_holds hold")) {
+        return rows([{
+          ...walletHoldRow,
+          amount_kopecks: "249000",
+          cached_held_kopecks: "249000"
+        }]);
+      }
+      if (text.includes("from public.wallet_hold_entries allocation")) {
+        return rows([{ ...walletAllocationRow, amount_kopecks: "249000" }]);
+      }
+      return affected();
+    });
+    const idGenerator = sequenceIdGenerator(20);
+    const persistence = createPaymentConfirmationPersistence(
+      new FakePool(connection),
+      idGenerator
+    );
+    const confirmation = new ConfirmPaymentService(
+      persistence.paymentConfirmationRepository,
+      persistence.outboxWriter,
+      persistence.unitOfWork,
+      idGenerator,
+      new HmacTicketReferenceGenerator("s".repeat(32))
+    );
+
+    const result = await new CompleteInternalOrderService(confirmation).execute({
+      orderId: internalOrderRow.id,
+      userId: internalOrderRow.user_id,
+      eventId: internalOrderRow.event_id,
+      currency: "RUB",
+      idempotencyKey: `scenario_internal:${internalOrderRow.id}`,
+      completedAt: confirmedAt
+    });
+
+    assert.equal(result.amountKopecks, "0");
+    assert.equal(result.walletCapturedKopecks, "249000");
+    assert.equal(
+      findQuery(connection, "insert into public.payment_attempts").values[2],
+      "internal"
+    );
+    assert.deepEqual(
+      JSON.parse(String(
+        findQuery(connection, "insert into public.payment_attempts").values[8]
+      )),
+      {
+        schemaVersion: 1,
+        actorType: "system",
+        reason: "zero_external_due",
+        userId: internalOrderRow.user_id,
+        eventId: internalOrderRow.event_id
+      }
+    );
+    assert.equal(
+      findQuery(connection, "insert into public.wallet_transactions").values[2],
+      `order_capture:${internalOrderRow.id}`
+    );
+    assert.equal(findQueries(connection, "insert into public.tickets").length, 2);
+  });
+
+  it("internally confirms a free order without creating wallet ledger rows", async () => {
+    const freeOrderRow = {
+      ...orderRow,
+      user_id: "00000000-0000-4000-8000-000000000041",
+      event_id: "00000000-0000-4000-8000-000000000042",
+      total_kopecks: "0",
+      wallet_applied_kopecks: "0",
+      external_due_kopecks: "0"
+    };
+    const connection = new FakeConnection((text) => {
+      if (text.includes("from public.payment_attempts attempt")) {
+        return rows([]);
+      }
+      if (text.includes("from public.orders") && text.includes("for update")) {
+        return rows([freeOrderRow]);
+      }
+      if (text.includes("from public.order_items item")) {
+        return rows([orderItemRow]);
+      }
+      if (text.includes("from public.wallet_holds hold")) {
+        return rows([]);
+      }
+      return affected();
+    });
+    const idGenerator = sequenceIdGenerator(20);
+    const persistence = createPaymentConfirmationPersistence(
+      new FakePool(connection),
+      idGenerator
+    );
+    const confirmation = new ConfirmPaymentService(
+      persistence.paymentConfirmationRepository,
+      persistence.outboxWriter,
+      persistence.unitOfWork,
+      idGenerator,
+      new HmacTicketReferenceGenerator("s".repeat(32))
+    );
+
+    const result = await new CompleteInternalOrderService(confirmation).execute({
+      orderId: freeOrderRow.id,
+      userId: freeOrderRow.user_id,
+      eventId: freeOrderRow.event_id,
+      currency: "RUB",
+      idempotencyKey: `scenario_internal:${freeOrderRow.id}`,
+      completedAt: confirmedAt
+    });
+
+    assert.equal(result.amountKopecks, "0");
+    assert.equal(result.walletCapturedKopecks, "0");
+    assert.equal(findQueries(connection, "insert into public.wallet_transactions").length, 0);
+    assert.equal(findQueries(connection, "insert into public.wallet_entries").length, 0);
+    assert.equal(findQueries(connection, "insert into public.tickets").length, 2);
   });
 });
 

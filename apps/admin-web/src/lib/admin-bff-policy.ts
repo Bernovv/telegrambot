@@ -14,10 +14,23 @@ export function isAllowedAdminApiPath(
   path: string
 ): boolean {
   if (method === "GET") {
-    return /^(?:users|orders|events)(?:\/[0-9a-f-]{36})?$/i.test(path);
+    return path === "classification"
+      || path === "segments"
+      || path === "broadcasts"
+      || /^broadcasts\/[0-9a-f-]{36}$/i.test(path)
+      || /^segments\/[0-9a-f-]{36}$/i.test(path)
+      || /^segments\/[0-9a-f-]{36}\/audience-snapshots(?:\/[0-9a-f-]{36})?$/i
+        .test(path)
+      || /^(?:users|orders|events)(?:\/[0-9a-f-]{36})?$/i.test(path);
   }
   if (method === "POST") {
     return path === "events"
+      || path === "segments"
+      || path === "broadcasts"
+      || /^broadcasts\/[0-9a-f-]{36}\/publish$/i.test(path)
+      || /^broadcasts\/[0-9a-f-]{36}\/schedule$/i.test(path)
+      || /^segments\/[0-9a-f-]{36}\/publish$/i.test(path)
+      || /^segments\/[0-9a-f-]{36}\/audience-snapshots$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/publish$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/content-blocks$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/offer-versions$/i.test(path)
@@ -26,13 +39,24 @@ export function isAllowedAdminApiPath(
         .test(path)
       || /^events\/[0-9a-f-]{36}\/products$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/products\/[0-9a-f-]{36}\/pricing-rules$/i
+        .test(path)
+      || path === "classification/statuses"
+      || path === "classification/categories"
+      || path === "segments/preview"
+      || /^users\/[0-9a-f-]{36}\/classification\/(?:statuses|categories)$/i
+        .test(path)
+      || /^users\/[0-9a-f-]{36}\/classification\/(?:statuses|categories)\/[a-z][a-z0-9_]{1,63}\/remove$/i
         .test(path);
   }
   return /^events\/[0-9a-f-]{36}\/general$/i.test(path)
+    || /^broadcasts\/[0-9a-f-]{36}\/draft$/i.test(path)
+    || /^segments\/[0-9a-f-]{36}\/draft$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/content-blocks\/[0-9a-f-]{36}$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/offer\/deactivate$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/products\/[0-9a-f-]{36}$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/products\/[0-9a-f-]{36}\/pricing-rules\/[0-9a-f-]{36}$/i
+      .test(path)
+    || /^classification\/(?:statuses|categories)\/[0-9a-f-]{36}$/i
       .test(path);
 }
 

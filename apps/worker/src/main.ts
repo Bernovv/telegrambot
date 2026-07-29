@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   ConfirmPaymentService,
+  CreditScenarioWalletService,
   DispatchOutboxBatchService,
   ExpireOrdersBatchService,
   HandleNotificationJobService,
@@ -10,6 +11,11 @@ import {
   ReconcileTBankPaymentsBatchService,
   ReconcileTBankRefundsBatchService,
   ResumeTelegramScenarioAfterPaymentService,
+  SetUserStatusService,
+  AddUserCategoryService,
+  BuildSegmentAudienceSnapshotsBatchService,
+  PrepareBroadcastDeliveriesBatchService,
+  SendNextBroadcastDeliveryService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
@@ -22,6 +28,9 @@ import {
   createScenarioRuntimePersistence,
   createTBankReconciliationPersistence,
   createTBankRefundPersistence,
+  createSegmentAudienceSnapshotPersistence,
+  createBroadcastPreparationPersistence,
+  createBroadcastDeliveryPersistence,
   PostgresOutboxDispatchRepository,
   PostgresWorkerHeartbeatRepository
 } from "@ticket-platform/database";
@@ -71,6 +80,23 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     expiryPersistence.unitOfWork,
     idGenerator
   );
+  const snapshotPersistence = createSegmentAudienceSnapshotPersistence(pool);
+  const buildSegmentAudienceSnapshots =
+    new BuildSegmentAudienceSnapshotsBatchService(
+      snapshotPersistence.repository,
+      snapshotPersistence.unitOfWork,
+      snapshotPersistence.outboxWriter,
+      idGenerator
+    );
+  const broadcastPreparationPersistence =
+    createBroadcastPreparationPersistence(pool);
+  const prepareBroadcastDeliveries =
+    new PrepareBroadcastDeliveriesBatchService(
+      broadcastPreparationPersistence.repository,
+      broadcastPreparationPersistence.unitOfWork,
+      broadcastPreparationPersistence.outboxWriter,
+      idGenerator
+    );
   const dispatch = new DispatchOutboxBatchService(
     new PostgresOutboxDispatchRepository(pool),
     new PgBossOutboxPublisher(boss)
@@ -115,14 +141,25 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let currentJobId: string | null = null;
   let heartbeatInFlight = false;
   let nextOrderExpirySweepAt = 0;
+  let nextSegmentAudienceSnapshotSweepAt = 0;
+  let nextBroadcastPreparationSweepAt = 0;
   let nextTBankReconciliationSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
+  let lastSegmentAudienceSnapshotSweepAt: string | null = null;
+  let lastBroadcastPreparationSweepAt: string | null = null;
+  let lastBroadcastDeliveryAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
+  const segmentAudienceSnapshotWorkload = "segment-audience-snapshot";
+  const broadcastPreparationWorkload = "broadcast-preparation";
+  const broadcastDeliveryWorkload = "broadcast-delivery";
   const tbankReconciliationWorkload = "tbank-reconciliation";
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
+    segmentAudienceSnapshotWorkload,
+    broadcastPreparationWorkload,
+    ...(config.telegramNotifications.enabled ? [broadcastDeliveryWorkload] : []),
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -155,6 +192,9 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           runtime: "node",
           queueDriver: "pg-boss",
           lastOrderExpirySweepAt,
+          lastSegmentAudienceSnapshotSweepAt,
+          lastBroadcastPreparationSweepAt,
+          lastBroadcastDeliveryAt,
           lastTBankReconciliationSweepAt
         }
       });
@@ -170,6 +210,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     () => void recordHeartbeat(),
     config.workerHeartbeatIntervalMs
   );
+  let broadcastDeliveryLoop: Promise<void> | undefined;
 
   try {
     await pool.ping();
@@ -177,19 +218,49 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     await assertPgBossQueuesProvisioned(boss);
     const notificationConfig = config.telegramNotifications;
     if (notificationConfig.enabled) {
+      const telegramSender = createTelegramNotificationSender(
+        notificationConfig.botToken,
+        notificationConfig.httpTimeoutSeconds
+      );
       const notificationPersistence = createNotificationDeliveryPersistence(pool);
       const scenarioPersistence = createScenarioRuntimePersistence(pool, idGenerator);
+      const scenarioWalletCreditor = new CreditScenarioWalletService(
+        scenarioPersistence.scenarioWalletCreditRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const setUserStatus = new SetUserStatusService(
+        scenarioPersistence.userClassificationRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const addUserCategory = new AddUserCategoryService(
+        scenarioPersistence.userClassificationRepository,
+        scenarioPersistence.outboxWriter,
+        scenarioPersistence.unitOfWork,
+        idGenerator
+      );
+      const scenarioUserClassifier = {
+        setStatus: setUserStatus.execute.bind(setUserStatus),
+        addCategory: addUserCategory.execute.bind(addUserCategory)
+      };
       const scenarioPaymentContinuation =
         new ResumeTelegramScenarioAfterPaymentService(
           scenarioPersistence.repository,
           scenarioPersistence.unitOfWork,
           scenarioPersistence.outboxWriter,
-          idGenerator
+          idGenerator,
+          undefined,
+          undefined,
+          scenarioWalletCreditor,
+          scenarioUserClassifier
         );
       const notificationHandler = new HandleNotificationJobService(
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationLedger,
-        createTelegramNotificationSender(notificationConfig.botToken),
+        telegramSender,
         new HmacTicketReferenceGenerator(notificationConfig.ticketTokenSecret),
         new QrTicketPngRenderer(),
         idGenerator,
@@ -232,6 +303,63 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           }
         }
       );
+
+      const sendBroadcastDelivery = new SendNextBroadcastDeliveryService(
+        createBroadcastDeliveryPersistence(pool),
+        telegramSender,
+        idGenerator,
+        {
+          leaseSeconds: notificationConfig.broadcastDeliveryLeaseSeconds,
+          maxAttempts: notificationConfig.broadcastDeliveryMaxAttempts,
+          retryBaseSeconds:
+            notificationConfig.broadcastDeliveryRetryBaseSeconds,
+          retryMaxSeconds:
+            notificationConfig.broadcastDeliveryRetryMaxSeconds,
+          autoPauseMinimumAttempts:
+            notificationConfig.broadcastAutoPauseMinimumAttempts,
+          autoPauseFailurePercent:
+            notificationConfig.broadcastAutoPauseFailurePercent
+        }
+      );
+      broadcastDeliveryLoop = (async () => {
+        while (!abortController.signal.aborted) {
+          try {
+            const result = await sendBroadcastDelivery.execute({
+              workerId,
+              at: new Date()
+            });
+            if (result.state !== "idle") {
+              lastBroadcastDeliveryAt = new Date().toISOString();
+            }
+            if (
+              result.state === "completed"
+              || result.state === "paused"
+              || result.state === "failed"
+            ) {
+              logger.info("broadcast delivery processed", {
+                state: result.state,
+                broadcastId: result.broadcastId,
+                deliveryId: result.deliveryId
+              });
+            }
+          } catch (error) {
+            logger.error("broadcast delivery failed", {
+              errorType: error instanceof Error ? error.name : "UnknownError"
+            });
+          }
+          try {
+            await delay(
+              notificationConfig.broadcastDeliveryPollIntervalMs,
+              undefined,
+              { signal: abortController.signal }
+            );
+          } catch (error) {
+            if (!abortController.signal.aborted) {
+              throw error;
+            }
+          }
+        }
+      })();
     } else {
       logger.info("telegram notification consumer disabled", {
         queue: OUTBOX_DISPATCH_QUEUE
@@ -294,6 +422,64 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextOrderExpirySweepAt = Date.now() + config.orderExpiryPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextSegmentAudienceSnapshotSweepAt) {
+        currentJobId = segmentAudienceSnapshotWorkload;
+
+        try {
+          const result = await buildSegmentAudienceSnapshots.execute({
+            at: new Date(),
+            batchSize: config.segmentAudienceSnapshotBatchSize
+          });
+          lastSegmentAudienceSnapshotSweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("segment audience snapshots materialized", {
+              claimed: result.claimed,
+              completed: result.completed,
+              capturedMembers: result.capturedMembers
+            });
+          }
+        } catch (error) {
+          logger.error("segment audience snapshot batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextSegmentAudienceSnapshotSweepAt =
+            Date.now() + config.segmentAudienceSnapshotPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextBroadcastPreparationSweepAt) {
+        currentJobId = broadcastPreparationWorkload;
+
+        try {
+          const result = await prepareBroadcastDeliveries.execute({
+            at: new Date(),
+            batchSize: config.broadcastPreparationBatchSize
+          });
+          lastBroadcastPreparationSweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("broadcast deliveries prepared", {
+              claimed: result.claimed,
+              prepared: result.prepared,
+              plannedRecipients: result.plannedRecipients,
+              reachableRecipients: result.reachableRecipients,
+              skippedRecipients: result.skippedRecipients
+            });
+          }
+        } catch (error) {
+          logger.error("broadcast delivery preparation failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextBroadcastPreparationSweepAt =
+            Date.now() + config.broadcastPreparationPollIntervalMs;
         }
       }
 
@@ -367,6 +553,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     await recordHeartbeat();
+    await broadcastDeliveryLoop;
     await boss.stop({ graceful: true, timeout: 30_000 });
     await pool.close();
     logger.info("worker stopped", { version: config.appVersion, workerId });

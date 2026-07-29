@@ -5,6 +5,8 @@ import type {
 } from "@ticket-platform/contracts";
 import {
   SCENARIO_NODE_TYPES,
+  scenarioAddCategoryRequest,
+  scenarioSetStatusRequest,
   validateScenarioGraph,
   type ScenarioGraph,
   type ScenarioValidationIssue
@@ -30,6 +32,13 @@ type ScenarioFailure =
   | "version_not_draft";
 
 export interface AdminEventScenarioManagementRepository {
+  findUnavailableUserClassificationCodes(input: {
+    readonly statusCodes: readonly string[];
+    readonly categoryCodes: readonly string[];
+  }): Promise<{
+    readonly statusCodes: readonly string[];
+    readonly categoryCodes: readonly string[];
+  }>;
   saveDraft(input: {
     readonly eventId: string;
     readonly expectedLockVersion: number;
@@ -109,6 +118,10 @@ export class SaveAdminEventScenarioDraftService {
     const title = bounded(input.scenario.title, 1, 250);
     const graph = parseGraph(input.scenario);
     const validation = validateScenarioGraph(graph);
+    const validationIssues = [
+      ...validation.issues,
+      ...await classificationReferenceIssues(this.repository, graph)
+    ];
     const proposedScenarioId = this.idGenerator.newId();
     const proposedVersionId = this.idGenerator.newId();
     requireAdminEventUuid(proposedScenarioId);
@@ -126,7 +139,7 @@ export class SaveAdminEventScenarioDraftService {
       proposedVersionId,
       title,
       graph,
-      validationIssues: validation.issues,
+      validationIssues,
       audit
     });
     if (result.status !== "saved") {
@@ -138,7 +151,7 @@ export class SaveAdminEventScenarioDraftService {
       status: "draft",
       versionStatus: "draft",
       lockVersion: result.lockVersion,
-      validationIssues: validation.issues,
+      validationIssues,
       updatedAt: audit.occurredAt.toISOString()
     };
   }
@@ -170,8 +183,12 @@ export class PublishAdminEventScenarioVersionService {
       throwScenarioFailure(loaded.status);
     }
     const validation = validateScenarioGraph(loaded.graph);
-    if (!validation.valid) {
-      throw new AdminScenarioValidationFailedError(validation.issues);
+    const validationIssues = [
+      ...validation.issues,
+      ...await classificationReferenceIssues(this.repository, loaded.graph)
+    ];
+    if (validationIssues.length > 0) {
+      throw new AdminScenarioValidationFailedError(validationIssues);
     }
     const audit = buildAdminEventAuditContext(
       input.actor,
@@ -183,7 +200,7 @@ export class PublishAdminEventScenarioVersionService {
       eventId: input.eventId,
       scenarioVersionId: input.scenarioVersionId,
       expectedLockVersion: input.expectedLockVersion,
-      validationIssues: validation.issues,
+      validationIssues,
       audit
     });
     if (result.status !== "published") {
@@ -199,6 +216,56 @@ export class PublishAdminEventScenarioVersionService {
       updatedAt: audit.occurredAt.toISOString()
     };
   }
+}
+
+async function classificationReferenceIssues(
+  repository: AdminEventScenarioManagementRepository,
+  graph: ScenarioGraph
+): Promise<readonly ScenarioValidationIssue[]> {
+  const statuses = new Map<string, string[]>();
+  const categories = new Map<string, string[]>();
+  for (const node of graph.nodes) {
+    const status = scenarioSetStatusRequest(node);
+    if (status) {
+      statuses.set(status.statusCode, [
+        ...(statuses.get(status.statusCode) ?? []),
+        node.id
+      ]);
+    }
+    const category = scenarioAddCategoryRequest(node);
+    if (category) {
+      categories.set(category.categoryCode, [
+        ...(categories.get(category.categoryCode) ?? []),
+        node.id
+      ]);
+    }
+  }
+  if (statuses.size === 0 && categories.size === 0) {
+    return [];
+  }
+  const unavailable =
+    await repository.findUnavailableUserClassificationCodes({
+      statusCodes: [...statuses.keys()],
+      categoryCodes: [...categories.keys()]
+    });
+  return [
+    ...unavailable.statusCodes.flatMap((code) =>
+      (statuses.get(code) ?? []).map((nodeId) => ({
+        code: "USER_CLASSIFICATION_CONFIGURATION_INVALID" as const,
+        message: `Статус «${code}» отсутствует или отключён.`,
+        nodeId,
+        edgeId: null
+      }))
+    ),
+    ...unavailable.categoryCodes.flatMap((code) =>
+      (categories.get(code) ?? []).map((nodeId) => ({
+        code: "USER_CLASSIFICATION_CONFIGURATION_INVALID" as const,
+        message: `Категория «${code}» отсутствует или отключена.`,
+        nodeId,
+        edgeId: null
+      }))
+    )
+  ];
 }
 
 function parseGraph(

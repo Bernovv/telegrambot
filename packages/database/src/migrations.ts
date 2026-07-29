@@ -74,5 +74,45 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260726200000_application_migration_checksums",
     description: "Create append-only SHA-256 evidence for applied application migrations",
     destructive: false
+  },
+  {
+    id: "20260728120000_internal_zero_due_payments",
+    description: "Allow audited internal confirmation for orders with zero external due",
+    destructive: false
+  },
+  {
+    id: "20260728160000_scenario_wallet_credit",
+    description: "Allow bounded idempotent wallet credits from published scenario nodes",
+    destructive: false
+  },
+  {
+    id: "20260728200000_user_statuses_categories",
+    description: "Create protected user status and category catalogs with append-only assignment history",
+    destructive: false
+  },
+  {
+    id: "20260729120000_segment_versions",
+    description: "Create saved segments with mutable drafts and immutable published versions",
+    destructive: false
+  },
+  {
+    id: "20260729160000_segment_audience_snapshots",
+    description: "Create immutable recipient snapshots for published segment versions",
+    destructive: false
+  },
+  {
+    id: "20260729200000_broadcast_versions",
+    description: "Create broadcast drafts with immutable content and audience versions",
+    destructive: false
+  },
+  {
+    id: "20260730120000_broadcast_scheduling_delivery_ledger",
+    description: "Add immutable broadcast schedules and recipient delivery preparation",
+    destructive: false
+  },
+  {
+    id: "20260730160000_broadcast_delivery_execution",
+    description: "Add leased rate-limited broadcast delivery execution and progress",
+    destructive: false
   }
 ];

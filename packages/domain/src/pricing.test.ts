@@ -35,6 +35,17 @@ describe("calculatePrice", () => {
     assert.equal(childResult.lineTotal, 98_000n);
   });
 
+  it("preserves an explicit zero-price rule for a free product", () => {
+    const result = calculatePrice(
+      input("standard", 1),
+      [rule({ id: "free", unitPrice: 0n })]
+    );
+
+    assert.equal(result.unitPrice, 0n);
+    assert.equal(result.lineTotal, 0n);
+    assert.equal(result.snapshot.unitPriceKopecks, "0");
+  });
+
   it("uses priority, specificity, valid-from, then deterministic ID ordering", () => {
     const result = calculatePrice(input("standard", 1), [
       rule({ id: "old", priority: 10, specificity: 1, validFrom: new Date("2026-01-01"), unitPrice: 250_000n }),

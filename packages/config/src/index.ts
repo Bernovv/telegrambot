@@ -108,16 +108,28 @@ export interface WorkerConfig extends AppConfig {
   readonly workerHeartbeatIntervalMs: number;
   readonly orderExpiryBatchSize: number;
   readonly orderExpiryPollIntervalMs: number;
+  readonly segmentAudienceSnapshotBatchSize: number;
+  readonly segmentAudienceSnapshotPollIntervalMs: number;
+  readonly broadcastPreparationBatchSize: number;
+  readonly broadcastPreparationPollIntervalMs: number;
   readonly tbankReconciliation: TBankReconciliationConfig;
   readonly telegramNotifications:
     | { readonly enabled: false }
     | {
         readonly enabled: true;
         readonly botToken: string;
+        readonly httpTimeoutSeconds: number;
         readonly adminChatId: string;
         readonly ticketTokenSecret: string;
         readonly leaseSeconds: number;
         readonly localConcurrency: number;
+        readonly broadcastDeliveryLeaseSeconds: number;
+        readonly broadcastDeliveryPollIntervalMs: number;
+        readonly broadcastDeliveryMaxAttempts: number;
+        readonly broadcastDeliveryRetryBaseSeconds: number;
+        readonly broadcastDeliveryRetryMaxSeconds: number;
+        readonly broadcastAutoPauseMinimumAttempts: number;
+        readonly broadcastAutoPauseFailurePercent: number;
       };
 }
 
@@ -266,33 +278,95 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     "TELEGRAM_NOTIFICATIONS_ENABLED"
   );
   const telegramNotifications: WorkerConfig["telegramNotifications"] = notificationsEnabled
-    ? {
-        enabled: true,
-        botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
-        adminChatId: parseTelegramChatId(
-          env.ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID,
-          "ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID"
-        ),
-        ticketTokenSecret: parseSecret(
-          env.ORDER_TOKEN_SECRET
-            ?? (appConfig.appEnv === "production"
-              ? undefined
-              : "local-only-order-token-secret-change-me"),
-          "ORDER_TOKEN_SECRET"
-        ),
-        leaseSeconds: parseBoundedInteger(
+    ? (() => {
+        const broadcastRetryBaseSeconds = parseBoundedInteger(
+          env.BROADCAST_DELIVERY_RETRY_BASE_SECONDS ?? "5",
+          "BROADCAST_DELIVERY_RETRY_BASE_SECONDS",
+          1,
+          300
+        );
+        const httpTimeoutSeconds = parseBoundedInteger(
+          env.TELEGRAM_HTTP_TIMEOUT_SECONDS ?? "20",
+          "TELEGRAM_HTTP_TIMEOUT_SECONDS",
+          5,
+          300
+        );
+        const leaseSeconds = parseBoundedInteger(
           env.NOTIFICATION_DELIVERY_LEASE_SECONDS ?? "60",
           "NOTIFICATION_DELIVERY_LEASE_SECONDS",
           10,
           3_600
-        ),
-        localConcurrency: parseBoundedInteger(
-          env.NOTIFICATION_WORKER_CONCURRENCY ?? "2",
-          "NOTIFICATION_WORKER_CONCURRENCY",
-          1,
-          20
-        )
-      }
+        );
+        const broadcastDeliveryLeaseSeconds = parseBoundedInteger(
+          env.BROADCAST_DELIVERY_LEASE_SECONDS ?? "60",
+          "BROADCAST_DELIVERY_LEASE_SECONDS",
+          10,
+          3_600
+        );
+        if (
+          leaseSeconds < httpTimeoutSeconds + 5
+          || broadcastDeliveryLeaseSeconds < httpTimeoutSeconds + 5
+        ) {
+          throw new Error(
+            "Telegram delivery leases must exceed TELEGRAM_HTTP_TIMEOUT_SECONDS by at least 5 seconds"
+          );
+        }
+        return {
+          enabled: true,
+          botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN"),
+          httpTimeoutSeconds,
+          adminChatId: parseTelegramChatId(
+            env.ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID,
+            "ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID"
+          ),
+          ticketTokenSecret: parseSecret(
+            env.ORDER_TOKEN_SECRET
+              ?? (appConfig.appEnv === "production"
+                ? undefined
+                : "local-only-order-token-secret-change-me"),
+            "ORDER_TOKEN_SECRET"
+          ),
+          leaseSeconds,
+          localConcurrency: parseBoundedInteger(
+            env.NOTIFICATION_WORKER_CONCURRENCY ?? "2",
+            "NOTIFICATION_WORKER_CONCURRENCY",
+            1,
+            20
+          ),
+          broadcastDeliveryLeaseSeconds,
+          broadcastDeliveryPollIntervalMs: parseBoundedInteger(
+            env.BROADCAST_DELIVERY_POLL_INTERVAL_MS ?? "50",
+            "BROADCAST_DELIVERY_POLL_INTERVAL_MS",
+            25,
+            60_000
+          ),
+          broadcastDeliveryMaxAttempts: parseBoundedInteger(
+            env.BROADCAST_DELIVERY_MAX_ATTEMPTS ?? "5",
+            "BROADCAST_DELIVERY_MAX_ATTEMPTS",
+            1,
+            20
+          ),
+          broadcastDeliveryRetryBaseSeconds: broadcastRetryBaseSeconds,
+          broadcastDeliveryRetryMaxSeconds: parseBoundedInteger(
+            env.BROADCAST_DELIVERY_RETRY_MAX_SECONDS ?? "300",
+            "BROADCAST_DELIVERY_RETRY_MAX_SECONDS",
+            broadcastRetryBaseSeconds,
+            86_400
+          ),
+          broadcastAutoPauseMinimumAttempts: parseBoundedInteger(
+            env.BROADCAST_AUTO_PAUSE_MINIMUM_ATTEMPTS ?? "20",
+            "BROADCAST_AUTO_PAUSE_MINIMUM_ATTEMPTS",
+            10,
+            100_000
+          ),
+          broadcastAutoPauseFailurePercent: parseBoundedInteger(
+            env.BROADCAST_AUTO_PAUSE_FAILURE_PERCENT ?? "30",
+            "BROADCAST_AUTO_PAUSE_FAILURE_PERCENT",
+            1,
+            100
+          )
+        };
+      })()
     : { enabled: false };
 
   if (env.PG_BOSS_MIGRATE && env.PG_BOSS_MIGRATE !== "false") {
@@ -351,6 +425,30 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     orderExpiryPollIntervalMs: parseBoundedInteger(
       env.ORDER_EXPIRY_POLL_INTERVAL_MS ?? "5000",
       "ORDER_EXPIRY_POLL_INTERVAL_MS",
+      1_000,
+      60_000
+    ),
+    segmentAudienceSnapshotBatchSize: parseBoundedInteger(
+      env.SEGMENT_AUDIENCE_SNAPSHOT_BATCH_SIZE ?? "1",
+      "SEGMENT_AUDIENCE_SNAPSHOT_BATCH_SIZE",
+      1,
+      10
+    ),
+    segmentAudienceSnapshotPollIntervalMs: parseBoundedInteger(
+      env.SEGMENT_AUDIENCE_SNAPSHOT_POLL_INTERVAL_MS ?? "2000",
+      "SEGMENT_AUDIENCE_SNAPSHOT_POLL_INTERVAL_MS",
+      1_000,
+      60_000
+    ),
+    broadcastPreparationBatchSize: parseBoundedInteger(
+      env.BROADCAST_PREPARATION_BATCH_SIZE ?? "1",
+      "BROADCAST_PREPARATION_BATCH_SIZE",
+      1,
+      10
+    ),
+    broadcastPreparationPollIntervalMs: parseBoundedInteger(
+      env.BROADCAST_PREPARATION_POLL_INTERVAL_MS ?? "2000",
+      "BROADCAST_PREPARATION_POLL_INTERVAL_MS",
       1_000,
       60_000
     ),

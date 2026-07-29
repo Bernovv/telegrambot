@@ -2,7 +2,15 @@
 
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
-import { AdminApiError, getUser } from "@/lib/admin-api";
+import {
+  AdminApiError,
+  assignUserCategory,
+  assignUserStatus,
+  getUser,
+  getUserClassificationCatalog,
+  removeUserCategory,
+  removeUserStatus
+} from "@/lib/admin-api";
 import {
   formatCompactDate,
   formatDateTime,
@@ -11,7 +19,8 @@ import {
   orderStatusTone
 } from "@/lib/format";
 import type { AdminUserDetail } from "@ticket-platform/contracts";
-import { ArrowLeft, ExternalLink, WalletCards } from "lucide-react";
+import type { AdminUserClassificationCatalog } from "@ticket-platform/contracts/admin-user-classification";
+import { ArrowLeft, ExternalLink, Plus, WalletCards, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -19,14 +28,25 @@ import { useCallback, useEffect, useState } from "react";
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [user, setUser] = useState<AdminUserDetail | null>(null);
+  const [catalog, setCatalog] =
+    useState<AdminUserClassificationCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statusCode, setStatusCode] = useState("");
+  const [categoryCode, setCategoryCode] = useState("");
+  const [classificationReason, setClassificationReason] = useState("");
+  const [classificationBusy, setClassificationBusy] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      setUser(await getUser(id, signal));
+      const [nextUser, nextCatalog] = await Promise.all([
+        getUser(id, signal),
+        getUserClassificationCatalog(signal)
+      ]);
+      setUser(nextUser);
+      setCatalog(nextCatalog);
     } catch (caught) {
       if (!signal?.aborted) {
         setError(
@@ -47,6 +67,30 @@ export default function UserDetailPage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  const mutateClassification = useCallback(async (
+    work: () => Promise<unknown>
+  ) => {
+    if (classificationReason.trim().length < 3) {
+      setError("Укажите причину изменения не короче трёх символов.");
+      return;
+    }
+    setClassificationBusy(true);
+    setError(null);
+    try {
+      await work();
+      setClassificationReason("");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof AdminApiError
+          ? caught.message
+          : "Не удалось изменить классификацию."
+      );
+    } finally {
+      setClassificationBusy(false);
+    }
+  }, [classificationReason, load]);
 
   if (loading && !user) {
     return <PageLoading label="Загружаем карточку пользователя" />;
@@ -157,6 +201,154 @@ export default function UserDetailPage() {
           </div>
         </section>
       </div>
+
+      <section className="data-section">
+        <div className="section-title-row">
+          <div>
+            <h2>Статусы и категории</h2>
+            <span>{user.classificationHistory.length} записей истории</span>
+          </div>
+          <Link className="secondary-button compact-button" href="/classification">
+            Справочники
+          </Link>
+        </div>
+        <div className="classification-actions">
+          <label>
+            <span>Причина изменения</span>
+            <input
+              value={classificationReason}
+              maxLength={500}
+              onChange={(event) => setClassificationReason(event.target.value)}
+              placeholder="Например: подтверждено оператором"
+            />
+          </label>
+          <div>
+            <select
+              aria-label="Статус"
+              value={statusCode}
+              onChange={(event) => setStatusCode(event.target.value)}
+            >
+              <option value="">Выберите статус</option>
+              {catalog?.statuses.filter((item) => item.isActive).map((item) => (
+                <option key={item.id} value={item.code}>
+                  {item.displayName}
+                </option>
+              ))}
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              title="Назначить статус"
+              disabled={!statusCode || classificationBusy}
+              onClick={() => void mutateClassification(
+                () => assignUserStatus(id, {
+                  code: statusCode,
+                  reason: classificationReason
+                })
+              )}
+            >
+              <Plus size={17} />
+              <span className="sr-only">Назначить статус</span>
+            </button>
+          </div>
+          <div>
+            <select
+              aria-label="Категория"
+              value={categoryCode}
+              onChange={(event) => setCategoryCode(event.target.value)}
+            >
+              <option value="">Выберите категорию</option>
+              {catalog?.categories.filter((item) => item.isActive).map((item) => (
+                <option key={item.id} value={item.code}>
+                  {item.displayName}
+                </option>
+              ))}
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              title="Добавить категорию"
+              disabled={!categoryCode || classificationBusy}
+              onClick={() => void mutateClassification(
+                () => assignUserCategory(id, {
+                  code: categoryCode,
+                  reason: classificationReason
+                })
+              )}
+            >
+              <Plus size={17} />
+              <span className="sr-only">Добавить категорию</span>
+            </button>
+          </div>
+        </div>
+        {user.activeStatuses.length === 0
+          && user.activeCategories.length === 0 ? (
+            <p className="section-empty">Активных назначений нет.</p>
+          ) : (
+            <div className="user-classification-summary">
+              {user.activeStatuses.map((assignment) => (
+                  <div key={`status:${assignment.code}:${assignment.assignedAt}`}>
+                    <span
+                      className="classification-swatch"
+                      style={{ backgroundColor: assignment.color }}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <strong>{assignment.displayName}</strong>
+                      <small>
+                        {assignment.code} · {assignment.source} ·{" "}
+                        {formatDateTime(assignment.assignedAt)}
+                      </small>
+                    </div>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Снять статус"
+                      disabled={classificationBusy}
+                      onClick={() => void mutateClassification(
+                        () => removeUserStatus(id, assignment.code, {
+                          reason: classificationReason
+                        })
+                      )}
+                    >
+                      <X size={16} />
+                      <span className="sr-only">Снять статус</span>
+                    </button>
+                  </div>
+              ))}
+              {user.activeCategories.map((assignment) => (
+                <div key={`category:${assignment.code}:${assignment.assignedAt}`}>
+                  <span
+                    className="classification-swatch"
+                    style={{ backgroundColor: assignment.color }}
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <strong>{assignment.displayName}</strong>
+                    <small>
+                      {assignment.code} · {assignment.source} ·{" "}
+                      {formatDateTime(assignment.assignedAt)}
+                    </small>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title="Снять категорию"
+                    disabled={classificationBusy}
+                    onClick={() => void mutateClassification(
+                      () => removeUserCategory(id, assignment.code, {
+                        reason: classificationReason
+                      })
+                    )}
+                  >
+                    <X size={16} />
+                    <span className="sr-only">Снять категорию</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+      </section>
 
       <section className="data-section">
         <div className="section-title-row">

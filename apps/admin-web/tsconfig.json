@@ -34,6 +34,15 @@
       ],
       "@ticket-platform/contracts/admin-events": [
         "../../packages/contracts/src/admin-events.ts"
+      ],
+      "@ticket-platform/contracts/admin-user-classification": [
+        "../../packages/contracts/src/admin-user-classification.ts"
+      ],
+      "@ticket-platform/contracts/admin-segments": [
+        "../../packages/contracts/src/admin-segments.ts"
+      ],
+      "@ticket-platform/contracts/admin-broadcasts": [
+        "../../packages/contracts/src/admin-broadcasts.ts"
       ]
     }
   },
