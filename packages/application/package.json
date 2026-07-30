@@ -15,6 +15,7 @@
   "dependencies": {
     "@ticket-platform/contracts": "workspace:*",
     "@ticket-platform/domain": "workspace:*",
-    "@ticket-platform/scenario-engine": "workspace:*"
+    "@ticket-platform/scenario-engine": "workspace:*",
+    "csv-parse": "7.0.1"
   }
 }

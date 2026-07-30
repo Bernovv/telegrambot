@@ -43,10 +43,18 @@ import {
   RequestAdminSegmentAudienceSnapshotService,
   ListAdminBroadcastsService,
   GetAdminBroadcastService,
+  AnalyzeAdminUserImportService,
+  DecideAdminUserImportRowService,
+  ListAdminUserImportRowsService,
+  PreviewAdminUserImportService,
   CreateAdminBroadcastService,
   UpdateAdminBroadcastDraftService,
   PublishAdminBroadcastDraftService,
-  ScheduleAdminBroadcastService,
+    ScheduleAdminBroadcastService,
+    PauseAdminBroadcastService,
+    ResumeAdminBroadcastService,
+    CancelAdminBroadcastService,
+    RequestAdminBroadcastTestSendService,
   PreviewAdminSegmentService,
   PublishAdminEventOfferVersionService,
   PublishAdminEventService,
@@ -87,6 +95,10 @@ import {
   createAdminSavedSegmentPersistence,
   createSegmentAudienceSnapshotPersistence,
   createAdminBroadcastPersistence,
+  createBroadcastTestDeliveryPersistence,
+  createAdminUserImportMatchingPersistence,
+  createAdminUserImportDecisionPersistence,
+  createAdminUserImportPreviewPersistence,
   createNodePostgresPool,
   createPostgresHealthProbes,
   createPhonePersistence,
@@ -275,6 +287,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
     const adminBroadcasts = adminAuth
       ? (() => {
           const repository = createAdminBroadcastPersistence(pool);
+          const testDeliveries =
+            createBroadcastTestDeliveryPersistence(pool);
           return {
             list: new ListAdminBroadcastsService(repository),
             get: new GetAdminBroadcastService(repository),
@@ -287,9 +301,43 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
               repository,
               idGenerator
             ),
-            schedule: new ScheduleAdminBroadcastService(
-              repository,
+             schedule: new ScheduleAdminBroadcastService(
+               repository,
+               idGenerator
+              ),
+             pause: new PauseAdminBroadcastService(repository, idGenerator),
+             resume: new ResumeAdminBroadcastService(repository, idGenerator),
+             cancel: new CancelAdminBroadcastService(repository, idGenerator),
+             requestTestSend: new RequestAdminBroadcastTestSendService(
+               testDeliveries,
+               idGenerator
+             )
+          };
+        })()
+      : undefined;
+    const adminImports = adminAuth
+      ? (() => {
+          const matching = createAdminUserImportMatchingPersistence(pool);
+          return {
+            previewUsers: new PreviewAdminUserImportService(
+              createAdminUserImportPreviewPersistence(pool),
+              new LibPhoneNumberNormalizer(
+                "defaultCountry" in config.telegramWebhook
+                  ? config.telegramWebhook.defaultCountry
+                  : env.TELEGRAM_DEFAULT_COUNTRY ?? "RU"
+              ),
               idGenerator
+            ),
+            analyzeUsers: new AnalyzeAdminUserImportService(
+              matching,
+              idGenerator
+            ),
+            decideUserRow: new DecideAdminUserImportRowService(
+              createAdminUserImportDecisionPersistence(pool),
+              idGenerator
+            ),
+            listUserRows: new ListAdminUserImportRowsService(
+              matching
             )
           };
         })()
@@ -601,7 +649,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       appVersion: config.appVersion,
       bodyLimitBytes: Math.max(
         config.telegramWebhook.bodyLimitBytes,
-        config.tbankPayments.bodyLimitBytes
+        config.tbankPayments.bodyLimitBytes,
+        750_000
       ),
       readiness,
       ...(adminAuth ? { adminAuth } : {}),
@@ -612,6 +661,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminUserClassification ? { adminUserClassification } : {}),
       ...(adminSegments ? { adminSegments } : {}),
       ...(adminBroadcasts ? { adminBroadcasts } : {}),
+      ...(adminImports ? { adminImports } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

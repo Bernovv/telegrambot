@@ -19,6 +19,7 @@ describe("PostgresBroadcastDeliveryRepository", () => {
           id: broadcastId,
           rate_per_second: 10,
           next_delivery_at: null,
+          schema_version: 2,
           content
         }]);
       }
@@ -31,6 +32,7 @@ describe("PostgresBroadcastDeliveryRepository", () => {
           user_id: userId,
           telegram_identity_id: identityId,
           recipient_external_user_id: "123456789",
+          personalization_context: personalizationContext,
           attempt_count: 0
         }]);
       }
@@ -43,6 +45,7 @@ describe("PostgresBroadcastDeliveryRepository", () => {
           user_id: userId,
           telegram_identity_id: identityId,
           recipient_external_user_id: "123456789",
+          personalization_context: personalizationContext,
           attempt_count: 1
         }]);
       }
@@ -65,7 +68,9 @@ describe("PostgresBroadcastDeliveryRepository", () => {
       userId,
       telegramIdentityId: identityId,
       recipientId: "123456789",
+      schemaVersion: 2,
       content,
+      personalizationContext,
       attemptCount: 1
     });
     assert.ok(connection.queries.some(({ text }) =>
@@ -86,11 +91,11 @@ describe("PostgresBroadcastDeliveryRepository", () => {
   it("marks a blocked recipient and automatically pauses a failing campaign", async () => {
     const connection = new FakeConnection((text) => {
       if (
-        text.includes("select id")
+        text.includes("select lifecycle_status")
         && text.includes("from public.broadcasts")
         && text.includes("for update")
       ) {
-        return rows([{ id: broadcastId }]);
+        return rows([{ lifecycle_status: "sending" }]);
       }
       if (text.includes("returning attempted_recipient_count")) {
         return rows([{
@@ -127,6 +132,54 @@ describe("PostgresBroadcastDeliveryRepository", () => {
       text.includes("insert into public.outbox_events")
       && values[2] === "BroadcastAutoPaused"
     ));
+  });
+
+  it("settles an in-flight failure after cancellation without another retry", async () => {
+    const connection = new FakeConnection((text) => {
+      if (text.includes("select lifecycle_status")) {
+        return rows([{ lifecycle_status: "cancelled" }]);
+      }
+      if (text.includes("returning attempted_recipient_count")) {
+        return rows([{
+          attempted_recipient_count: "1",
+          failed_recipient_count: "1"
+        }]);
+      }
+      if (
+        text.includes("from public.broadcast_deliveries")
+        && text.includes("status in")
+      ) {
+        return rows([]);
+      }
+      if (
+        text.includes("update public.broadcasts")
+        && text.includes("lifecycle_status = 'completed'")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      return affected();
+    });
+    const repository = new PostgresBroadcastDeliveryRepository(
+      new FakePool(connection)
+    );
+
+    const result = await repository.markFailed({
+      delivery,
+      workerId: "worker-1",
+      failedAt: claimedAt,
+      errorCode: "TelegramTransportError",
+      retryAt: new Date("2026-07-30T12:00:05.000Z"),
+      blocked: false,
+      autoPauseMinimumAttempts: 20,
+      autoPauseFailurePercent: 30,
+      lifecycleEventId: eventId
+    });
+
+    assert.deepEqual(result, { broadcastStatus: "cancelled" });
+    const deliveryUpdate = connection.queries.find(({ text }) =>
+      text.includes("update public.broadcast_deliveries")
+    );
+    assert.equal(deliveryUpdate?.values[3], null);
   });
 });
 
@@ -174,12 +227,20 @@ const content = {
   disableLinkPreview: true,
   buttons: [{ label: "Открыть", url: "https://example.com/event" }]
 };
+const personalizationContext = {
+  firstName: "Иван",
+  lastName: "Петров",
+  displayName: "Иван Петров",
+  telegramUsername: "ivan_petrov"
+};
 const delivery: ClaimedBroadcastDelivery = {
   deliveryId,
   broadcastId,
   userId,
   telegramIdentityId: identityId,
   recipientId: "123456789",
+  schemaVersion: 2,
   content,
+  personalizationContext,
   attemptCount: 1
 };

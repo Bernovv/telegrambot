@@ -13,6 +13,10 @@ import type {
   AdminSegmentAudienceSnapshotSummary
 } from "@ticket-platform/contracts";
 import type { SqlConnection, SqlConnectionPool } from "./postgres.js";
+import {
+  mapBroadcastTestDelivery,
+  type BroadcastTestDeliveryRow
+} from "./broadcast-test-delivery-persistence.js";
 
 interface BroadcastRow {
   readonly id: string;
@@ -28,6 +32,7 @@ interface BroadcastRow {
   readonly send_started_at: Date | string | null;
   readonly completed_at: Date | string | null;
   readonly paused_at: Date | string | null;
+  readonly cancelled_at: Date | string | null;
   readonly auto_pause_reason: string | null;
   readonly planned_recipient_count: string | null;
   readonly reachable_recipient_count: string | null;
@@ -79,7 +84,8 @@ implements AdminBroadcastRepository {
                 broadcasts.scheduled_at, broadcasts.schedule_timezone,
                 broadcasts.rate_per_second, broadcasts.prepared_at,
                 broadcasts.send_started_at, broadcasts.completed_at,
-                broadcasts.paused_at, broadcasts.auto_pause_reason,
+                broadcasts.paused_at, broadcasts.cancelled_at,
+                broadcasts.auto_pause_reason,
                 broadcasts.planned_recipient_count::text,
                 broadcasts.reachable_recipient_count::text,
                 broadcasts.skipped_recipient_count::text,
@@ -132,7 +138,7 @@ implements AdminBroadcastRepository {
            name, audience_snapshot_id, content, created_by_admin_id,
            created_at, updated_at
          ) values (
-           $1, $2, 1, 'draft', 1,
+           $1, $2, 1, 'draft', 3,
            $3, $4, $5::jsonb, $6,
            $7, $7
          )`,
@@ -200,6 +206,7 @@ implements AdminBroadcastRepository {
            set name = $2,
                audience_snapshot_id = $3,
                content = $4::jsonb,
+               schema_version = 3,
                updated_at = $5
            where id = $1 and status = 'draft'`,
           [
@@ -222,7 +229,7 @@ implements AdminBroadcastRepository {
              name, audience_snapshot_id, content, created_by_admin_id,
              created_at, updated_at
            ) values (
-             $1, $2, $3, 'draft', 1,
+             $1, $2, $3, 'draft', 3,
              $4, $5, $6::jsonb, $7,
              $8, $8
            )`,
@@ -473,6 +480,72 @@ implements AdminBroadcastRepository {
     });
   }
 
+  control(input: Parameters<AdminBroadcastRepository["control"]>[0]) {
+    return this.write(async (connection) => {
+      const broadcast = await lockBroadcast(connection, input.broadcastId);
+      if (!broadcast) {
+        return { status: "not_found" as const };
+      }
+      if (broadcast.lock_version !== input.expectedLockVersion) {
+        return { status: "version_conflict" as const };
+      }
+      const targetStatus = controlTarget(
+        input.action,
+        broadcast.lifecycle_status
+      );
+      if (!targetStatus) {
+        return { status: "invalid_transition" as const };
+      }
+      const updated = await connection.query<{
+        readonly lock_version: number;
+      }>(
+        `update public.broadcasts
+         set lifecycle_status = $2,
+             paused_at = case when $2 = 'paused' then $3 else null end,
+             cancelled_at = case when $2 = 'cancelled' then $3
+                            else cancelled_at end,
+             auto_pause_reason = null,
+             lock_version = lock_version + 1,
+             updated_at = $3
+         where id = $1
+         returning lock_version`,
+        [input.broadcastId, targetStatus, input.audit.occurredAt]
+      );
+      const lockVersion = updated.rows[0]?.lock_version;
+      if (!lockVersion) {
+        throw new Error("Broadcast control lost its locked aggregate");
+      }
+      await appendAudit(
+        connection,
+        input.audit,
+        `broadcast.${controlPastTense(input.action)}`,
+        input.broadcastId,
+        {
+          lifecycleStatus: broadcast.lifecycle_status,
+          lockVersion: broadcast.lock_version
+        },
+        {
+          lifecycleStatus: targetStatus,
+          lockVersion
+        }
+      );
+      await appendControlEvent(connection, {
+        eventId: input.lifecycleEventId,
+        broadcastId: input.broadcastId,
+        eventType: controlEventType(input.action),
+        previousStatus: broadcast.lifecycle_status,
+        lifecycleStatus: targetStatus,
+        occurredAt: input.audit.occurredAt
+      });
+      return {
+        status: "controlled" as const,
+        value: requireBroadcast(
+          await readBroadcast(connection, input.broadcastId)
+        )
+      };
+    });
+  }
+
   private async read<TResult>(
     work: (connection: SqlConnection) => Promise<TResult>
   ): Promise<TResult> {
@@ -524,7 +597,8 @@ const BROADCAST_SELECT = `
   select id, name, lock_version, lifecycle_status,
          published_version_id, scheduled_version_id, scheduled_at,
          schedule_timezone, rate_per_second, prepared_at,
-         send_started_at, completed_at, paused_at, auto_pause_reason,
+         send_started_at, completed_at, paused_at, cancelled_at,
+         auto_pause_reason,
          planned_recipient_count::text, reachable_recipient_count::text,
          skipped_recipient_count::text, attempted_recipient_count::text,
          sent_recipient_count::text, failed_recipient_count::text, updated_at
@@ -585,6 +659,18 @@ async function readBroadcast(
   const published = versions.rows.find(
     (row) => row.id === broadcast.published_version_id
   );
+  const testDeliveries = await connection.query<BroadcastTestDeliveryRow>(
+    `select id, broadcast_id, broadcast_version_id, version_number,
+            schema_version, recipient_external_user_id, content,
+            personalization_context, status,
+            provider_message_id, error_code,
+            requested_at, started_at, finished_at
+     from public.broadcast_test_deliveries
+     where broadcast_id = $1
+     order by requested_at desc, id desc
+     limit 10`,
+    [broadcastId]
+  );
   return {
     id: broadcast.id,
     name: broadcast.name,
@@ -593,6 +679,7 @@ async function readBroadcast(
     draft: draft ? mapVersion(draft) : null,
     published: published ? mapVersion(published) : null,
     schedule: mapSchedule(broadcast),
+    testDeliveries: testDeliveries.rows.map(mapBroadcastTestDelivery),
     updatedAt: asIso(broadcast.updated_at)
   };
 }
@@ -682,6 +769,7 @@ function mapSchedule(row: BroadcastRow): AdminBroadcastSchedule | null {
     sendStartedAt: row.send_started_at ? asIso(row.send_started_at) : null,
     completedAt: row.completed_at ? asIso(row.completed_at) : null,
     pausedAt: row.paused_at ? asIso(row.paused_at) : null,
+    cancelledAt: row.cancelled_at ? asIso(row.cancelled_at) : null,
     autoPauseReason: row.auto_pause_reason,
     plannedRecipientCount: row.planned_recipient_count,
     reachableRecipientCount: row.reachable_recipient_count,
@@ -694,7 +782,7 @@ function mapSchedule(row: BroadcastRow): AdminBroadcastSchedule | null {
 
 function mapVersion(row: BroadcastVersionRow): AdminBroadcastVersion {
   if (
-    row.schema_version !== 1
+    ![1, 2, 3].includes(row.schema_version)
     || !["draft", "published"].includes(row.status)
   ) {
     throw new Error("Broadcast version metadata is invalid");
@@ -703,7 +791,7 @@ function mapVersion(row: BroadcastVersionRow): AdminBroadcastVersion {
     id: row.id,
     versionNumber: row.version_number,
     status: row.status as AdminBroadcastVersionStatus,
-    schemaVersion: 1,
+    schemaVersion: row.schema_version as 1 | 2 | 3,
     name: row.name,
     audienceSnapshot: mapSnapshot(row),
     content: readContent(row.content),
@@ -852,6 +940,73 @@ function appendScheduleEvent(
       input.occurredAt
     ]
   );
+}
+
+function appendControlEvent(
+  connection: SqlConnection,
+  input: {
+    readonly eventId: string;
+    readonly broadcastId: string;
+    readonly eventType:
+      | "BroadcastPaused"
+      | "BroadcastResumed"
+      | "BroadcastCancelled";
+    readonly previousStatus: string;
+    readonly lifecycleStatus: string;
+    readonly occurredAt: Date;
+  }
+): Promise<unknown> {
+  return connection.query(
+    `insert into public.outbox_events (
+       event_id, aggregate_type, aggregate_id, event_type,
+       schema_version, payload, occurred_at
+     ) values ($1, 'broadcast', $2, $3, 1, $4::jsonb, $5)`,
+    [
+      input.eventId,
+      input.broadcastId,
+      input.eventType,
+      JSON.stringify({
+        broadcastId: input.broadcastId,
+        previousStatus: input.previousStatus,
+        lifecycleStatus: input.lifecycleStatus
+      }),
+      input.occurredAt
+    ]
+  );
+}
+
+function controlTarget(action: string, status: string): string | null {
+  if (action === "pause" && ["preparing", "sending"].includes(status)) {
+    return "paused";
+  }
+  if (action === "resume" && status === "paused") {
+    return "sending";
+  }
+  if (
+    action === "cancel"
+    && ["scheduled", "preparing", "sending", "paused"].includes(status)
+  ) {
+    return "cancelled";
+  }
+  return null;
+}
+
+function controlPastTense(action: string): string {
+  return action === "pause"
+    ? "paused"
+    : action === "resume"
+      ? "resumed"
+      : "cancelled";
+}
+
+function controlEventType(
+  action: string
+): "BroadcastPaused" | "BroadcastResumed" | "BroadcastCancelled" {
+  return action === "pause"
+    ? "BroadcastPaused"
+    : action === "resume"
+      ? "BroadcastResumed"
+      : "BroadcastCancelled";
 }
 
 function requireBroadcast(value: AdminBroadcast | null): AdminBroadcast {

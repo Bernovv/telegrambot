@@ -114,5 +114,40 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260730160000_broadcast_delivery_execution",
     description: "Add leased rate-limited broadcast delivery execution and progress",
     destructive: false
+  },
+  {
+    id: "20260730200000_broadcast_manual_lifecycle_control",
+    description: "Add audited manual pause, resume, and cancellation metadata for broadcasts",
+    destructive: false
+  },
+  {
+    id: "20260730220000_broadcast_test_deliveries",
+    description: "Add protected asynchronous Telegram test deliveries for broadcast content",
+    destructive: false
+  },
+  {
+    id: "20260731000000_broadcast_personalization_v2",
+    description: "Add versioned broadcast personalization with immutable recipient context snapshots",
+    destructive: false
+  },
+  {
+    id: "20260731040000_broadcast_photo_media_v3",
+    description: "Allow one validated photo in immutable broadcast content schema v3",
+    destructive: false
+  },
+  {
+    id: "20260731100000_user_import_staging",
+    description: "Create append-only checksum-deduplicated CSV user import staging",
+    destructive: false
+  },
+  {
+    id: "20260731160000_user_import_identity_matching",
+    description: "Create immutable user import identity-match analyses and external identity directory",
+    destructive: false
+  },
+  {
+    id: "20260731200000_user_import_row_decisions",
+    description: "Create append-only optimistic administrator decisions for ambiguous import rows",
+    destructive: false
   }
 ];

@@ -20,7 +20,14 @@ const claimed: ClaimedBroadcastDelivery = {
   userId: "019d0000-0000-7000-8000-000000000003",
   telegramIdentityId: "019d0000-0000-7000-8000-000000000004",
   recipientId: "123456789",
+  schemaVersion: 1,
   content,
+  personalizationContext: {
+    firstName: null,
+    lastName: null,
+    displayName: null,
+    telegramUsername: null
+  },
   attemptCount: 1
 };
 const policy = {
@@ -56,6 +63,41 @@ describe("SendNextBroadcastDeliveryService", () => {
     assert.deepEqual(calls[0], ["claim", "worker-1", at, 60]);
     assert.deepEqual(calls[1], ["send", claimed.recipientId, content]);
     assert.equal((calls[2] as { providerMessageId: string }).providerMessageId, "777");
+  });
+
+  it("renders schema v2 from the immutable delivery context", async () => {
+    let renderedText = "";
+    const personalized: ClaimedBroadcastDelivery = {
+      ...claimed,
+      schemaVersion: 2,
+      content: {
+        ...content,
+        text: "Привет, {{first_name}}!",
+        personalization: { fallback: "участник" }
+      },
+      personalizationContext: {
+        firstName: "Иван",
+        lastName: null,
+        displayName: null,
+        telegramUsername: null
+      }
+    };
+    const service = new SendNextBroadcastDeliveryService(
+      repositoryStub([], personalized),
+      {
+        async sendBroadcastMessage(_recipientId, actualContent) {
+          renderedText = actualContent.text;
+          return { providerMessageId: "779" };
+        }
+      },
+      idGenerator,
+      policy
+    );
+
+    const result = await service.execute({ workerId: "worker-1", at });
+
+    assert.equal(result.state, "sent");
+    assert.equal(renderedText, "Привет, Иван!");
   });
 
   it("honors Telegram retry_after and schedules a retry", async () => {

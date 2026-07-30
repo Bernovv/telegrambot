@@ -57,11 +57,23 @@ import type {
 import type {
   AdminBroadcast,
   AdminBroadcastSummary,
+  AdminBroadcastTestDelivery,
+  ControlAdminBroadcastRequest,
   CreateAdminBroadcastRequest,
   PublishAdminBroadcastDraftRequest,
+  RequestAdminBroadcastTestSendRequest,
   ScheduleAdminBroadcastRequest,
   UpdateAdminBroadcastDraftRequest
 } from "@ticket-platform/contracts/admin-broadcasts";
+import type {
+  AnalyzeAdminUserImportRequest,
+  AnalyzeAdminUserImportResponse,
+  AdminUserImportMatchRowPage,
+  CreateAdminUserImportPreviewRequest,
+  CreateAdminUserImportPreviewResponse,
+  DecideAdminUserImportRowRequest,
+  DecideAdminUserImportRowResponse
+} from "@ticket-platform/contracts/admin-imports";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -94,6 +106,52 @@ export class AdminApiError extends Error {
   ) {
     super(message);
   }
+}
+
+export function previewAdminUserImport(
+  input: CreateAdminUserImportPreviewRequest
+): Promise<CreateAdminUserImportPreviewResponse> {
+  return requestAdminMutation("imports/users/preview", "POST", input);
+}
+
+export function analyzeAdminUserImport(
+  batchId: string,
+  input: AnalyzeAdminUserImportRequest
+): Promise<AnalyzeAdminUserImportResponse> {
+  return requestAdminMutation(
+    `imports/users/${encodeURIComponent(batchId)}/analyze`,
+    "POST",
+    input
+  );
+}
+
+export function decideAdminUserImportRow(
+  analysisId: string,
+  rowNumber: number,
+  input: DecideAdminUserImportRowRequest
+): Promise<DecideAdminUserImportRowResponse> {
+  return requestAdminMutation(
+    `imports/users/analyses/${encodeURIComponent(analysisId)}`
+      + `/rows/${rowNumber}/decision`,
+    "POST",
+    input
+  );
+}
+
+export function listAdminUserImportRows(
+  analysisId: string,
+  afterRowNumber: number,
+  signal?: AbortSignal
+): Promise<AdminUserImportMatchRowPage> {
+  const query = new URLSearchParams({
+    afterRowNumber: String(afterRowNumber),
+    limit: "200"
+  });
+  return requestAdminApi(
+    `imports/users/analyses/${encodeURIComponent(analysisId)}`
+      + `/rows?${query.toString()}`,
+    signal
+  );
 }
 
 export function listUsers(
@@ -500,6 +558,50 @@ export function scheduleAdminBroadcast(
 ): Promise<AdminBroadcast> {
   return requestAdminMutation(
     `broadcasts/${encodeURIComponent(broadcastId)}/schedule`,
+    "POST",
+    input
+  );
+}
+
+export function pauseAdminBroadcast(
+  broadcastId: string,
+  input: ControlAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return controlAdminBroadcast(broadcastId, "pause", input);
+}
+
+export function resumeAdminBroadcast(
+  broadcastId: string,
+  input: ControlAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return controlAdminBroadcast(broadcastId, "resume", input);
+}
+
+export function cancelAdminBroadcast(
+  broadcastId: string,
+  input: ControlAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return controlAdminBroadcast(broadcastId, "cancel", input);
+}
+
+export function requestAdminBroadcastTestSend(
+  broadcastId: string,
+  input: RequestAdminBroadcastTestSendRequest
+): Promise<AdminBroadcastTestDelivery> {
+  return requestAdminMutation(
+    `broadcasts/${encodeURIComponent(broadcastId)}/test-send`,
+    "POST",
+    input
+  );
+}
+
+function controlAdminBroadcast(
+  broadcastId: string,
+  action: "pause" | "resume" | "cancel",
+  input: ControlAdminBroadcastRequest
+): Promise<AdminBroadcast> {
+  return requestAdminMutation(
+    `broadcasts/${encodeURIComponent(broadcastId)}/${action}`,
     "POST",
     input
   );

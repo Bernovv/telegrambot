@@ -19,17 +19,25 @@ import {
   AdminBroadcastAudienceSnapshotUnavailableError,
   AdminBroadcastDraftExistsError,
   AdminBroadcastDraftNotFoundError,
+  AdminBroadcastInvalidTransitionError,
   AdminBroadcastNotEditableError,
   AdminBroadcastNotFoundError,
   AdminBroadcastPublishedVersionUnavailableError,
+  AdminBroadcastTestRecipientUnavailableError,
+  AdminBroadcastTestSendNotFoundError,
+  AdminBroadcastTestSendVersionConflictError,
   AdminBroadcastVersionConflictError,
-  InvalidAdminBroadcastError
+  InvalidAdminBroadcastError,
+  InvalidAdminBroadcastTestSendError
 } from "@ticket-platform/application";
 import type {
   AdminBroadcast,
   AdminBroadcastSummary,
+  AdminBroadcastTestDelivery,
+  ControlAdminBroadcastRequest,
   CreateAdminBroadcastRequest,
   PublishAdminBroadcastDraftRequest,
+  RequestAdminBroadcastTestSendRequest,
   ScheduleAdminBroadcastRequest,
   UpdateAdminBroadcastDraftRequest
 } from "@ticket-platform/contracts";
@@ -43,6 +51,13 @@ const ADMIN_BROADCASTS = Symbol("ADMIN_BROADCASTS");
 const contentSchema = z.object({
   text: z.string().trim().min(1).max(4_000),
   disableLinkPreview: z.boolean(),
+  personalization: z.object({
+    fallback: z.string().trim().min(1).max(64)
+  }).strict().optional(),
+  media: z.object({
+    kind: z.literal("photo"),
+    url: z.string().trim().min(1).max(2_048)
+  }).strict().optional(),
   buttons: z.array(z.object({
     label: z.string().trim().min(1).max(64),
     url: z.string().trim().min(1).max(2_048)
@@ -66,6 +81,15 @@ const scheduleSchema = z.object({
   scheduledAt: z.string().datetime(),
   timezone: z.string().trim().min(1).max(100),
   ratePerSecond: z.number().int().min(1).max(25),
+  reason: z.string().trim().min(1).max(500)
+}).strict();
+const controlSchema = z.object({
+  expectedLockVersion: z.number().int().min(1),
+  reason: z.string().trim().min(1).max(500)
+}).strict();
+const testSendSchema = z.object({
+  expectedLockVersion: z.number().int().min(1),
+  recipientTelegramUserId: z.string().regex(/^\d{1,20}$/),
   reason: z.string().trim().min(1).max(500)
 }).strict();
 
@@ -114,6 +138,26 @@ export interface AdminBroadcastHandlers {
       readonly metadata: ReturnType<typeof mutationMetadata>;
     }): Promise<AdminBroadcast>;
   };
+  readonly pause: AdminBroadcastControlHandler;
+  readonly resume: AdminBroadcastControlHandler;
+  readonly cancel: AdminBroadcastControlHandler;
+  readonly requestTestSend: {
+    execute(input: {
+      readonly actor: Actor;
+      readonly broadcastId: string;
+      readonly request: RequestAdminBroadcastTestSendRequest;
+      readonly metadata: ReturnType<typeof mutationMetadata>;
+    }): Promise<AdminBroadcastTestDelivery>;
+  };
+}
+
+interface AdminBroadcastControlHandler {
+  execute(input: {
+    readonly actor: Actor;
+    readonly broadcastId: string;
+    readonly request: ControlAdminBroadcastRequest;
+    readonly metadata: ReturnType<typeof mutationMetadata>;
+  }): Promise<AdminBroadcast>;
 }
 
 @Controller("api/v1/broadcasts")
@@ -236,6 +280,81 @@ export class AdminBroadcastsController {
       throw mapError(error);
     }
   }
+
+  @Post(":broadcastId/pause")
+  @RequireAdminPermission("broadcasts.send")
+  pause(
+    @Param("broadcastId") broadcastId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ): Promise<AdminBroadcast> {
+    return this.control("pause", broadcastId, body, request);
+  }
+
+  @Post(":broadcastId/resume")
+  @RequireAdminPermission("broadcasts.send")
+  resume(
+    @Param("broadcastId") broadcastId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ): Promise<AdminBroadcast> {
+    return this.control("resume", broadcastId, body, request);
+  }
+
+  @Post(":broadcastId/cancel")
+  @RequireAdminPermission("broadcasts.send")
+  cancel(
+    @Param("broadcastId") broadcastId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ): Promise<AdminBroadcast> {
+    return this.control("cancel", broadcastId, body, request);
+  }
+
+  @Post(":broadcastId/test-send")
+  @RequireAdminPermission("broadcasts.send")
+  async requestTestSend(
+    @Param("broadcastId") broadcastId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ): Promise<AdminBroadcastTestDelivery> {
+    const parsed = testSendSchema.safeParse(body);
+    if (!parsed.success) {
+      throw invalidBroadcast();
+    }
+    try {
+      return await this.handlers.requestTestSend.execute({
+        actor: requireActor(request),
+        broadcastId,
+        request: parsed.data,
+        metadata: mutationMetadata(request)
+      });
+    } catch (error) {
+      throw mapError(error);
+    }
+  }
+
+  private async control(
+    action: "pause" | "resume" | "cancel",
+    broadcastId: string,
+    body: unknown,
+    request: AuthenticatedAdminRequest
+  ): Promise<AdminBroadcast> {
+    const parsed = controlSchema.safeParse(body);
+    if (!parsed.success) {
+      throw invalidBroadcast();
+    }
+    try {
+      return await this.handlers[action].execute({
+        actor: requireActor(request),
+        broadcastId,
+        request: parsed.data,
+        metadata: mutationMetadata(request)
+      });
+    } catch (error) {
+      throw mapError(error);
+    }
+  }
 }
 
 @Module({})
@@ -286,19 +405,34 @@ function invalidBroadcast(): BadRequestException {
 }
 
 function mapError(error: unknown): unknown {
-  if (error instanceof InvalidAdminBroadcastError) {
+  if (
+    error instanceof InvalidAdminBroadcastError
+    || error instanceof InvalidAdminBroadcastTestSendError
+  ) {
     return invalidBroadcast();
   }
-  if (error instanceof AdminBroadcastNotFoundError) {
+  if (
+    error instanceof AdminBroadcastNotFoundError
+    || error instanceof AdminBroadcastTestSendNotFoundError
+  ) {
     return new NotFoundException({
       code: "ADMIN_BROADCAST_NOT_FOUND",
       title: "Broadcast was not found"
     });
   }
-  if (error instanceof AdminBroadcastVersionConflictError) {
+  if (
+    error instanceof AdminBroadcastVersionConflictError
+    || error instanceof AdminBroadcastTestSendVersionConflictError
+  ) {
     return new ConflictException({
       code: "ADMIN_BROADCAST_VERSION_CONFLICT",
       title: "Broadcast was changed by another administrator"
+    });
+  }
+  if (error instanceof AdminBroadcastInvalidTransitionError) {
+    return new ConflictException({
+      code: "ADMIN_BROADCAST_INVALID_TRANSITION",
+      title: "Broadcast lifecycle transition is not allowed"
     });
   }
   if (error instanceof AdminBroadcastDraftNotFoundError) {
@@ -311,6 +445,12 @@ function mapError(error: unknown): unknown {
     return new UnprocessableEntityException({
       code: "ADMIN_BROADCAST_AUDIENCE_SNAPSHOT_UNAVAILABLE",
       title: "Broadcast requires a ready audience snapshot"
+    });
+  }
+  if (error instanceof AdminBroadcastTestRecipientUnavailableError) {
+    return new UnprocessableEntityException({
+      code: "ADMIN_BROADCAST_TEST_RECIPIENT_UNAVAILABLE",
+      title: "Telegram test recipient is unavailable"
     });
   }
   if (

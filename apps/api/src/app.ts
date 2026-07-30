@@ -61,6 +61,10 @@ import {
   type AdminBroadcastHandlers
 } from "./admin-broadcasts-api.js";
 import {
+  AdminImportsApiModule,
+  type AdminImportHandlers
+} from "./admin-imports-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -130,6 +134,7 @@ export interface ApiApplicationOptions {
   readonly adminUserClassification?: AdminUserClassificationHandlers;
   readonly adminSegments?: AdminSegmentsHandlers;
   readonly adminBroadcasts?: AdminBroadcastHandlers;
+  readonly adminImports?: AdminImportHandlers;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -176,6 +181,9 @@ class ApiModule {
           : []),
         ...(options.adminBroadcasts
           ? [AdminBroadcastsApiModule.register(options.adminBroadcasts)]
+          : []),
+        ...(options.adminImports
+          ? [AdminImportsApiModule.register(options.adminImports)]
           : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(

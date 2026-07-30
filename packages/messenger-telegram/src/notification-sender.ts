@@ -20,8 +20,11 @@ export interface TelegramNotificationApi {
   ): Promise<{ readonly message_id: number }>;
   sendPhoto(
     chatId: string | number,
-    photo: InputFile,
-    options: { readonly caption: string }
+    photo: InputFile | string,
+    options: {
+      readonly caption: string;
+      readonly reply_markup?: InlineKeyboard;
+    }
   ): Promise<{ readonly message_id: number }>;
 }
 
@@ -134,8 +137,17 @@ export class GrammyTextNotificationSender {
     content: AdminBroadcastContent
   ): Promise<{ readonly providerMessageId: string }> {
     validateRecipient(recipientId);
-    if (!content.text || content.text.length > 4_096) {
+    if (
+      !content.text
+      || content.text.length > (content.media ? 1_024 : 4_096)
+    ) {
       throw new Error("Telegram broadcast text is invalid");
+    }
+    if (content.media && content.media.kind !== "photo") {
+      throw new TelegramBroadcastSendError(
+        "permanent",
+        "TelegramBroadcastMediaInvalid"
+      );
     }
     if (content.buttons.length > 20) {
       throw new Error("Telegram broadcast buttons are invalid");
@@ -153,12 +165,23 @@ export class GrammyTextNotificationSender {
     }
 
     try {
-      const message = await this.api.sendMessage(recipientId, content.text, {
-        ...(content.buttons.length > 0 ? { reply_markup: keyboard } : {}),
-        ...(content.disableLinkPreview
-          ? { link_preview_options: { is_disabled: true as const } }
-          : {})
-      });
+      const message = content.media
+        ? await this.api.sendPhoto(
+            recipientId,
+            validateBroadcastPhotoUrl(content.media.url),
+            {
+              caption: content.text,
+              ...(content.buttons.length > 0
+                ? { reply_markup: keyboard }
+                : {})
+            }
+          )
+        : await this.api.sendMessage(recipientId, content.text, {
+            ...(content.buttons.length > 0 ? { reply_markup: keyboard } : {}),
+            ...(content.disableLinkPreview
+              ? { link_preview_options: { is_disabled: true as const } }
+              : {})
+          });
       validateMessageId(message.message_id);
       return { providerMessageId: String(message.message_id) };
     } catch (error) {
@@ -260,4 +283,29 @@ function validateButtonText(text: string): void {
   if (!text || text.length > 64) {
     throw new Error("Telegram scenario button text is invalid");
   }
+}
+
+function validateBroadcastPhotoUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new TelegramBroadcastSendError(
+      "permanent",
+      "TelegramBroadcastMediaInvalid"
+    );
+  }
+  if (
+    parsed.protocol !== "https:"
+    || !parsed.hostname
+    || parsed.username
+    || parsed.password
+    || parsed.toString().length > 2_048
+  ) {
+    throw new TelegramBroadcastSendError(
+      "permanent",
+      "TelegramBroadcastMediaInvalid"
+    );
+  }
+  return parsed.toString();
 }

@@ -3,10 +3,15 @@ import { describe, it } from "node:test";
 import type { AdminBroadcast } from "@ticket-platform/contracts";
 import {
   AdminBroadcastVersionConflictError,
+  AdminBroadcastInvalidTransitionError,
+  CancelAdminBroadcastService,
   CreateAdminBroadcastService,
+  PauseAdminBroadcastService,
   PublishAdminBroadcastDraftService,
   ScheduleAdminBroadcastService,
+  ResumeAdminBroadcastService,
   UpdateAdminBroadcastDraftService,
+  InvalidAdminBroadcastError,
   type AdminBroadcastRepository
 } from "./admin-broadcasts.js";
 
@@ -27,7 +32,12 @@ describe("administrator broadcast versions", () => {
         audienceSnapshotId: snapshotId,
         content: {
           text: "  Регистрация открыта  ",
-          disableLinkPreview: true,
+          disableLinkPreview: false,
+          personalization: { fallback: " участник " },
+          media: {
+            kind: "photo",
+            url: " https://cdn.example.com/broadcasts/meeting.jpg "
+          },
           buttons: [{
             label: "  Открыть  ",
             url: "https://example.com/register"
@@ -42,13 +52,58 @@ describe("administrator broadcast versions", () => {
     assert.equal(received?.name, "Анонс встречи");
     assert.deepEqual(received?.content, {
       text: "Регистрация открыта",
-      disableLinkPreview: true,
+      disableLinkPreview: false,
+      personalization: { fallback: "участник" },
+      media: {
+        kind: "photo",
+        url: "https://cdn.example.com/broadcasts/meeting.jpg"
+      },
       buttons: [{
         label: "Открыть",
         url: "https://example.com/register"
       }]
     });
     assert.equal(received?.audit.reason, "Первый черновик");
+  });
+
+  it("rejects unsafe photo URLs and oversized captions", async () => {
+    const service = new CreateAdminBroadcastService(
+      repository({}),
+      ids(broadcastId, versionId, auditId)
+    );
+    for (const content of [
+      {
+        text: "Анонс",
+        disableLinkPreview: false,
+        personalization: { fallback: "гость" },
+        media: { kind: "photo" as const, url: "http://example.com/photo.jpg" },
+        buttons: []
+      },
+      {
+        text: "а".repeat(1_001),
+        disableLinkPreview: false,
+        personalization: { fallback: "гость" },
+        media: {
+          kind: "photo" as const,
+          url: "https://cdn.example.com/photo.jpg"
+        },
+        buttons: []
+      }
+    ]) {
+      await assert.rejects(
+        service.execute({
+          actor,
+          request: {
+            name: "Анонс встречи",
+            audienceSnapshotId: snapshotId,
+            content,
+            reason: "Проверка фото"
+          },
+          metadata
+        }),
+        InvalidAdminBroadcastError
+      );
+    }
   });
 
   it("publishes with a unique outbox event and exposes stale updates", async () => {
@@ -119,6 +174,59 @@ describe("administrator broadcast versions", () => {
       AdminBroadcastVersionConflictError
     );
   });
+
+  it("controls an active campaign with a reason and unique lifecycle event", async () => {
+    const actions: string[] = [];
+    const controlledRepository = repository({
+      async control(input) {
+        actions.push(input.action, input.lifecycleEventId, input.audit.reason);
+        return {
+          status: "controlled",
+          value: {
+            ...scheduledBroadcast,
+            lifecycleStatus: input.action === "cancel"
+              ? "cancelled"
+              : input.action === "pause"
+                ? "paused"
+                : "sending"
+          }
+        };
+      }
+    });
+    const request = {
+      expectedLockVersion: 3,
+      reason: "  Р РЈС‡РЅРѕРµ СѓРїСЂР°РІР»РµРЅРёРµ  "
+    };
+
+    await new PauseAdminBroadcastService(
+      controlledRepository,
+      ids(eventId, auditId)
+    ).execute({ actor, broadcastId, request, metadata });
+    await new ResumeAdminBroadcastService(
+      controlledRepository,
+      ids(eventId, auditId)
+    ).execute({ actor, broadcastId, request, metadata });
+    await new CancelAdminBroadcastService(
+      controlledRepository,
+      ids(eventId, auditId)
+    ).execute({ actor, broadcastId, request, metadata });
+
+    assert.deepEqual(actions, [
+      "pause", eventId, "Р РЈС‡РЅРѕРµ СѓРїСЂР°РІР»РµРЅРёРµ",
+      "resume", eventId, "Р РЈС‡РЅРѕРµ СѓРїСЂР°РІР»РµРЅРёРµ",
+      "cancel", eventId, "Р РЈС‡РЅРѕРµ СѓРїСЂР°РІР»РµРЅРёРµ"
+    ]);
+
+    const invalid = new ResumeAdminBroadcastService(repository({
+      async control() {
+        return { status: "invalid_transition" };
+      }
+    }), ids(eventId, auditId));
+    await assert.rejects(
+      invalid.execute({ actor, broadcastId, request, metadata }),
+      AdminBroadcastInvalidTransitionError
+    );
+  });
 });
 
 function repository(
@@ -142,6 +250,9 @@ function repository(
     },
     async schedule() {
       return { status: "scheduled", value: scheduledBroadcast };
+    },
+    async control() {
+      return { status: "controlled", value: scheduledBroadcast };
     },
     ...overrides
   };
@@ -199,6 +310,7 @@ const broadcast: AdminBroadcast = {
   draft,
   published: null,
   schedule: null,
+  testDeliveries: [],
   updatedAt: "2026-07-29T08:00:00.000Z"
 };
 
@@ -226,6 +338,7 @@ const scheduledBroadcast: AdminBroadcast = {
     sendStartedAt: null,
     completedAt: null,
     pausedAt: null,
+    cancelledAt: null,
     autoPauseReason: null,
     plannedRecipientCount: null,
     reachableRecipientCount: null,

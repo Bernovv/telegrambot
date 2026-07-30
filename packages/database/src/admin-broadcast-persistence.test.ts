@@ -154,6 +154,55 @@ describe("PostgresAdminBroadcastRepository", () => {
     });
     assert.equal(connection.queries.at(-1)?.text, "commit");
   });
+
+  it("pauses a locked campaign with audit and outbox in one transaction", async () => {
+    const connection = new FakeConnection((text) => {
+      if (text.includes("from public.broadcasts") && text.includes("for update")) {
+        return rows([{ ...scheduledBroadcastRow(), lifecycle_status: "sending" }]);
+      }
+      if (text.includes("returning lock_version")) {
+        return rows([{ lock_version: 4 }]);
+      }
+      if (text.includes("from public.broadcasts") && !text.includes("for update")) {
+        return rows([{
+          ...scheduledBroadcastRow(),
+          lock_version: 4,
+          lifecycle_status: "paused",
+          paused_at: audit.occurredAt
+        }]);
+      }
+      if (text.includes("from public.broadcast_versions")) {
+        return rows([versionRow("published", new Date("2026-07-29T09:00:00.000Z"))]);
+      }
+      return affected();
+    });
+    const repository = new PostgresAdminBroadcastRepository(new FakePool(connection));
+
+    const result = await repository.control({
+      broadcastId,
+      expectedLockVersion: 3,
+      action: "pause",
+      lifecycleEventId: eventId,
+      audit
+    });
+
+    assert.equal(result.status, "controlled");
+    const auditQuery = connection.queries.find((query) =>
+      query.text.includes("insert into public.audit_log")
+    );
+    const outbox = connection.queries.find((query) =>
+      query.text.includes("insert into public.outbox_events")
+      && query.values[2] === "BroadcastPaused"
+    );
+    assert.equal(auditQuery?.values[3], "broadcast.paused");
+    assert.equal(outbox?.values[0], eventId);
+    assert.deepEqual(JSON.parse(String(outbox?.values[3])), {
+      broadcastId,
+      previousStatus: "sending",
+      lifecycleStatus: "paused"
+    });
+    assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
 });
 
 class FakePool implements SqlConnectionPool {
@@ -199,6 +248,7 @@ function broadcastRow(
     send_started_at: null,
     completed_at: null,
     paused_at: null,
+    cancelled_at: null,
     auto_pause_reason: null,
     planned_recipient_count: null,
     reachable_recipient_count: null,

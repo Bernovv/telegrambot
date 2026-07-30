@@ -7,13 +7,36 @@ export interface AdminBroadcastLinkButton {
   readonly url: string;
 }
 
+export type AdminBroadcastPersonalizationToken =
+  | "first_name"
+  | "last_name"
+  | "display_name"
+  | "telegram_username";
+
+export interface AdminBroadcastPersonalization {
+  readonly fallback: string;
+}
+
+export interface AdminBroadcastPhoto {
+  readonly kind: "photo";
+  readonly url: string;
+}
+
 export interface AdminBroadcastContent {
   readonly text: string;
   readonly disableLinkPreview: boolean;
   readonly buttons: readonly AdminBroadcastLinkButton[];
+  readonly personalization?: AdminBroadcastPersonalization | undefined;
+  readonly media?: AdminBroadcastPhoto | undefined;
 }
 
 export type AdminBroadcastVersionStatus = "draft" | "published";
+export type AdminBroadcastTestDeliveryStatus =
+  | "queued"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "uncertain";
 export type AdminBroadcastLifecycleStatus =
   | "draft"
   | "scheduled"
@@ -33,6 +56,7 @@ export interface AdminBroadcastSchedule {
   readonly sendStartedAt: string | null;
   readonly completedAt: string | null;
   readonly pausedAt: string | null;
+  readonly cancelledAt: string | null;
   readonly autoPauseReason: string | null;
   readonly plannedRecipientCount: string | null;
   readonly reachableRecipientCount: string | null;
@@ -46,13 +70,26 @@ export interface AdminBroadcastVersion {
   readonly id: string;
   readonly versionNumber: number;
   readonly status: AdminBroadcastVersionStatus;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2 | 3;
   readonly name: string;
   readonly audienceSnapshot: AdminSegmentAudienceSnapshotSummary;
   readonly content: AdminBroadcastContent;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly publishedAt: string | null;
+}
+
+export interface AdminBroadcastTestDelivery {
+  readonly id: string;
+  readonly broadcastVersionId: string;
+  readonly versionNumber: number;
+  readonly recipientTelegramUserId: string;
+  readonly status: AdminBroadcastTestDeliveryStatus;
+  readonly providerMessageId: string | null;
+  readonly errorCode: string | null;
+  readonly requestedAt: string;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
 }
 
 export interface AdminBroadcastSummary {
@@ -75,6 +112,7 @@ export interface AdminBroadcast {
   readonly draft: AdminBroadcastVersion | null;
   readonly published: AdminBroadcastVersion | null;
   readonly schedule: AdminBroadcastSchedule | null;
+  readonly testDeliveries: readonly AdminBroadcastTestDelivery[];
   readonly updatedAt: string;
 }
 
@@ -103,5 +141,16 @@ export interface ScheduleAdminBroadcastRequest {
   readonly scheduledAt: string;
   readonly timezone: string;
   readonly ratePerSecond: number;
+  readonly reason: string;
+}
+
+export interface ControlAdminBroadcastRequest {
+  readonly expectedLockVersion: number;
+  readonly reason: string;
+}
+
+export interface RequestAdminBroadcastTestSendRequest {
+  readonly expectedLockVersion: number;
+  readonly recipientTelegramUserId: string;
   readonly reason: string;
 }

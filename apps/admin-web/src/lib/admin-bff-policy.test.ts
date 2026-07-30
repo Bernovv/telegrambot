@@ -70,6 +70,63 @@ test("allowlists only implemented administrator API methods and paths", () => {
   );
   assert.equal(isAllowedAdminApiPath("POST", "broadcasts"), true);
   assert.equal(
+    isAllowedAdminApiPath("POST", "imports/users/preview"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath("GET", "imports/users/preview"),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "imports/users/analyses/00000000-0000-4000-8000-000000000101/rows"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "imports/users/analyses/all/rows"
+    ),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "imports/users/analyses/00000000-0000-4000-8000-000000000101/rows/2/decision"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "imports/users/analyses/00000000-0000-4000-8000-000000000101/rows/5001/decision"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "imports/users/analyses/00000000-0000-4000-8000-000000000101/rows/5002/decision"
+    ),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "imports/users/00000000-0000-4000-8000-000000000101/analyze"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "imports/users/00000000-0000-4000-8000-000000000101/analyze"
+    ),
+    false
+  );
+  assert.equal(
     isAllowedAdminApiPath(
       "PATCH",
       "broadcasts/00000000-0000-4000-8000-000000000101/draft"
@@ -90,6 +147,22 @@ test("allowlists only implemented administrator API methods and paths", () => {
     ),
     true
   );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "broadcasts/00000000-0000-4000-8000-000000000101/test-send"
+    ),
+    true
+  );
+  for (const action of ["pause", "resume", "cancel"]) {
+    assert.equal(
+      isAllowedAdminApiPath(
+        "POST",
+        `broadcasts/00000000-0000-4000-8000-000000000101/${action}`
+      ),
+      true
+    );
+  }
   assert.equal(
     isAllowedAdminApiPath(
       "POST",
@@ -191,7 +264,7 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("PATCH", "events/all/general"), false);
 });
 
-test("allows a larger body only for bounded document and graph payloads", () => {
+test("allows larger bodies only for bounded document, graph, and CSV payloads", () => {
   assert.equal(
     getAdminMutationBodyLimit(
       "events/00000000-0000-4000-8000-000000000101/offer-versions"
@@ -203,6 +276,10 @@ test("allows a larger body only for bounded document and graph payloads", () => 
       "events/00000000-0000-4000-8000-000000000101/scenario-drafts"
     ),
     262_144
+  );
+  assert.equal(
+    getAdminMutationBodyLimit("imports/users/preview"),
+    750_000
   );
   assert.equal(
     getAdminMutationBodyLimit(

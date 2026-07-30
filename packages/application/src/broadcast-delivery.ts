@@ -1,4 +1,9 @@
 import type { AdminBroadcastContent } from "@ticket-platform/contracts";
+import {
+  InvalidBroadcastPersonalizationError,
+  renderBroadcastContent,
+  type BroadcastPersonalizationContext
+} from "./broadcast-personalization.js";
 import type { IdGenerator } from "./identity.js";
 
 export type BroadcastDeliveryFailureCategory =
@@ -24,12 +29,14 @@ export interface ClaimedBroadcastDelivery {
   readonly userId: string;
   readonly telegramIdentityId: string;
   readonly recipientId: string;
+  readonly schemaVersion: 1 | 2 | 3;
   readonly content: AdminBroadcastContent;
+  readonly personalizationContext: BroadcastPersonalizationContext;
   readonly attemptCount: number;
 }
 
 export interface BroadcastDeliveryCompletion {
-  readonly broadcastStatus: "sending" | "paused" | "completed";
+  readonly broadcastStatus: "sending" | "paused" | "completed" | "cancelled";
 }
 
 export interface BroadcastDeliveryRepository {
@@ -73,6 +80,7 @@ export interface SendNextBroadcastDeliveryResult {
     | "retry_scheduled"
     | "failed"
     | "paused"
+    | "cancelled"
     | "completed";
   readonly broadcastId?: string;
   readonly deliveryId?: string;
@@ -128,12 +136,24 @@ export class SendNextBroadcastDeliveryService {
 
     let sent: { readonly providerMessageId: string };
     try {
+      const content = renderBroadcastContent(
+        delivery.content,
+        delivery.schemaVersion,
+        delivery.personalizationContext
+      );
       sent = await this.sender.sendBroadcastMessage(
         delivery.recipientId,
-        delivery.content
+        content
       );
     } catch (error) {
-      const failure = normalizeFailure(error);
+      const failure = error instanceof InvalidBroadcastPersonalizationError
+        ? new BroadcastDeliverySendError(
+            "permanent",
+            error.reason === "output_too_long"
+              ? "BroadcastPersonalizationOutputTooLong"
+              : "BroadcastPersonalizationInvalid"
+          )
+        : normalizeFailure(error);
       const retryAt = retryAtFor(
         failure,
         delivery.attemptCount,
@@ -152,7 +172,9 @@ export class SendNextBroadcastDeliveryService {
         lifecycleEventId: this.idGenerator.newId()
       });
       return {
-        state: completion.broadcastStatus === "paused"
+        state: completion.broadcastStatus === "cancelled"
+          ? "cancelled"
+          : completion.broadcastStatus === "paused"
           ? "paused"
           : completion.broadcastStatus === "completed"
             ? "completed"
@@ -172,7 +194,11 @@ export class SendNextBroadcastDeliveryService {
       lifecycleEventId: this.idGenerator.newId()
     });
     return {
-      state: completion.broadcastStatus === "completed" ? "completed" : "sent",
+      state: completion.broadcastStatus === "completed"
+        ? "completed"
+        : completion.broadcastStatus === "cancelled"
+          ? "cancelled"
+          : "sent",
       broadcastId: delivery.broadcastId,
       deliveryId: delivery.deliveryId
     };

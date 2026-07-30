@@ -58,6 +58,9 @@ describe("GrammyTextNotificationSender", () => {
         throw new Error("Unexpected text call");
       },
       async sendPhoto(chatId, photo, options) {
+        if (typeof photo === "string") {
+          throw new Error("Unexpected remote photo");
+        }
         const raw = await photo.toRaw();
         assert.ok(raw instanceof Uint8Array);
         calls.push({
@@ -151,6 +154,49 @@ describe("GrammyTextNotificationSender", () => {
       url: "https://example.com/event"
     }]]);
     assert.deepEqual(options.link_preview_options, { is_disabled: true });
+  });
+
+  it("sends a broadcast photo with its caption and links", async () => {
+    const calls: unknown[] = [];
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage() {
+        throw new Error("Unexpected text call");
+      },
+      async sendPhoto(chatId, photo, options) {
+        calls.push({ chatId, photo, options });
+        return { message_id: 46 };
+      }
+    });
+
+    const result = await sender.sendBroadcastMessage("123456789", {
+      text: "Программа у воды",
+      disableLinkPreview: false,
+      media: {
+        kind: "photo",
+        url: "https://cdn.example.com/broadcasts/program.jpg"
+      },
+      buttons: [{ label: "Открыть", url: "https://example.com/event" }]
+    });
+
+    assert.deepEqual(result, { providerMessageId: "46" });
+    const call = calls[0] as {
+      chatId: string;
+      photo: string;
+      options: {
+        caption: string;
+        reply_markup: { inline_keyboard: unknown };
+      };
+    };
+    assert.equal(call.chatId, "123456789");
+    assert.equal(
+      call.photo,
+      "https://cdn.example.com/broadcasts/program.jpg"
+    );
+    assert.equal(call.options.caption, "Программа у воды");
+    assert.deepEqual(call.options.reply_markup.inline_keyboard, [[{
+      text: "Открыть",
+      url: "https://example.com/event"
+    }]]);
   });
 
   it("classifies Telegram rate limits, blocked users and transport failures", () => {

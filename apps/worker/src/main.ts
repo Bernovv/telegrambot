@@ -16,6 +16,7 @@ import {
   BuildSegmentAudienceSnapshotsBatchService,
   PrepareBroadcastDeliveriesBatchService,
   SendNextBroadcastDeliveryService,
+  SendNextBroadcastTestDeliveryService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
@@ -31,6 +32,7 @@ import {
   createSegmentAudienceSnapshotPersistence,
   createBroadcastPreparationPersistence,
   createBroadcastDeliveryPersistence,
+  createBroadcastTestDeliveryPersistence,
   PostgresOutboxDispatchRepository,
   PostgresWorkerHeartbeatRepository
 } from "@ticket-platform/database";
@@ -321,19 +323,50 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
             notificationConfig.broadcastAutoPauseFailurePercent
         }
       );
+      const sendBroadcastTestDelivery =
+        new SendNextBroadcastTestDeliveryService(
+          createBroadcastTestDeliveryPersistence(pool),
+          telegramSender,
+          idGenerator,
+          notificationConfig.broadcastDeliveryLeaseSeconds
+        );
       broadcastDeliveryLoop = (async () => {
+        let testFirst = true;
         while (!abortController.signal.aborted) {
           try {
-            const result = await sendBroadcastDelivery.execute({
+            const sendTest = () => sendBroadcastTestDelivery.execute({
               workerId,
               at: new Date()
             });
+            const sendCampaign = () => sendBroadcastDelivery.execute({
+              workerId,
+              at: new Date()
+            });
+            let testResult: Awaited<ReturnType<typeof sendTest>>;
+            let result: Awaited<ReturnType<typeof sendCampaign>>;
+            if (testFirst) {
+              testResult = await sendTest();
+              result = await sendCampaign();
+            } else {
+              result = await sendCampaign();
+              testResult = await sendTest();
+            }
+            testFirst = !testFirst;
+            if (testResult.state !== "idle") {
+              lastBroadcastDeliveryAt = new Date().toISOString();
+              logger.info("broadcast test delivery processed", {
+                state: testResult.state,
+                broadcastId: testResult.broadcastId,
+                deliveryId: testResult.deliveryId
+              });
+            }
             if (result.state !== "idle") {
               lastBroadcastDeliveryAt = new Date().toISOString();
             }
             if (
               result.state === "completed"
               || result.state === "paused"
+              || result.state === "cancelled"
               || result.state === "failed"
             ) {
               logger.info("broadcast delivery processed", {

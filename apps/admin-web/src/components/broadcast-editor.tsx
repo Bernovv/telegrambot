@@ -3,12 +3,16 @@
 import { PageError, PageLoading } from "@/components/page-state";
 import {
   AdminApiError,
+  cancelAdminBroadcast,
   createAdminBroadcast,
   getAdminBroadcast,
   listAdminBroadcasts,
   listAdminSavedSegments,
   listAdminSegmentAudienceSnapshots,
   publishAdminBroadcastDraft,
+  pauseAdminBroadcast,
+  requestAdminBroadcastTestSend,
+  resumeAdminBroadcast,
   scheduleAdminBroadcast,
   updateAdminBroadcastDraft
 } from "@/lib/admin-api";
@@ -23,13 +27,18 @@ import type {
   AdminSegmentAudienceSnapshotSummary
 } from "@ticket-platform/contracts/admin-segments";
 import {
+  Ban,
+  Braces,
+  CalendarClock,
   FilePlus2,
   FolderOpen,
-  CalendarClock,
   Link2,
+  Pause,
+  Play,
   Plus,
   Rocket,
   Save,
+  Send,
   Trash2,
   UsersRound
 } from "lucide-react";
@@ -39,8 +48,25 @@ interface DraftButton extends AdminBroadcastLinkButton {
   readonly id: string;
 }
 
+type PersonalizationToken =
+  | "first_name"
+  | "last_name"
+  | "display_name"
+  | "telegram_username";
+
+const PERSONALIZATION_TOKENS: readonly {
+  readonly value: PersonalizationToken;
+  readonly label: string;
+}[] = [
+  { value: "first_name", label: "Имя" },
+  { value: "last_name", label: "Фамилия" },
+  { value: "display_name", label: "Отображаемое имя" },
+  { value: "telegram_username", label: "Имя пользователя Telegram" }
+];
+
 export function BroadcastEditor() {
   const buttonSequence = useRef(1);
+  const messageTextRef = useRef<HTMLTextAreaElement>(null);
   const [broadcasts, setBroadcasts] =
     useState<readonly AdminBroadcastSummary[]>([]);
   const [segments, setSegments] =
@@ -54,11 +80,19 @@ export function BroadcastEditor() {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [disableLinkPreview, setDisableLinkPreview] = useState(false);
+  const [photoEnabled, setPhotoEnabled] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [personalizationFallback, setPersonalizationFallback] =
+    useState("гость");
+  const [personalizationToken, setPersonalizationToken] =
+    useState<PersonalizationToken>("first_name");
   const [buttons, setButtons] = useState<readonly DraftButton[]>([]);
   const [reason, setReason] = useState("");
   const [scheduledLocal, setScheduledLocal] = useState("");
   const [scheduleTimezone, setScheduleTimezone] = useState("Europe/Moscow");
   const [ratePerSecond, setRatePerSecond] = useState(10);
+  const [testRecipientTelegramUserId, setTestRecipientTelegramUserId] =
+    useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +121,25 @@ export function BroadcastEditor() {
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (
+      !selectedBroadcast
+      || !selectedBroadcast.testDeliveries.some(
+        (delivery) =>
+          delivery.status === "queued" || delivery.status === "sending"
+      )
+    ) {
+      return;
+    }
+    const broadcastId = selectedBroadcast.id;
+    const timer = window.setTimeout(() => {
+      void getAdminBroadcast(broadcastId)
+        .then(setSelectedBroadcast)
+        .catch((caught) => setError(message(caught)));
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [selectedBroadcast]);
 
   if (loading) {
     return <PageLoading label="Загружаем редактор рассылок" />;
@@ -138,6 +191,11 @@ export function BroadcastEditor() {
     setName(version.name);
     setText(version.content.text);
     setDisableLinkPreview(version.content.disableLinkPreview);
+    setPhotoEnabled(Boolean(version.content.media));
+    setPhotoUrl(version.content.media?.url ?? "");
+    setPersonalizationFallback(
+      version.content.personalization?.fallback ?? "гость"
+    );
     setButtons(version.content.buttons.map((button) => ({
       ...button,
       id: `button-${buttonSequence.current++}`
@@ -180,6 +238,10 @@ export function BroadcastEditor() {
     setName("");
     setText("");
     setDisableLinkPreview(false);
+    setPhotoEnabled(false);
+    setPhotoUrl("");
+    setPersonalizationFallback("гость");
+    setPersonalizationToken("first_name");
     setButtons([]);
     setReason("");
     setScheduledLocal(defaultScheduleLocal());
@@ -206,10 +268,24 @@ export function BroadcastEditor() {
   }
 
   function validateDraft(): boolean {
-    if (!name.trim() || !text.trim() || !snapshotId || !reason.trim()) {
+    if (
+      !name.trim()
+      || !text.trim()
+      || !snapshotId
+      || !reason.trim()
+      || !personalizationFallback.trim()
+    ) {
       setError(
         "Укажите название, текст, готовый снимок аудитории и причину изменения."
       );
+      return false;
+    }
+    if (photoEnabled && !photoUrl.trim()) {
+      setError("Укажите HTTPS-адрес фото.");
+      return false;
+    }
+    if (photoEnabled && text.trim().length > 1_000) {
+      setError("Подпись к фото не может быть длиннее 1000 символов.");
       return false;
     }
     if (buttons.some((button) => !button.label.trim() || !button.url.trim())) {
@@ -233,7 +309,13 @@ export function BroadcastEditor() {
       const content = {
         text,
         disableLinkPreview,
-        buttons: buttons.map(({ label, url }) => ({ label, url }))
+        buttons: buttons.map(({ label, url }) => ({ label, url })),
+        personalization: {
+          fallback: personalizationFallback
+        },
+        ...(photoEnabled
+          ? { media: { kind: "photo" as const, url: photoUrl } }
+          : {})
       };
       const broadcast = selectedBroadcast
         ? await updateAdminBroadcastDraft(selectedBroadcast.id, {
@@ -321,11 +403,89 @@ export function BroadcastEditor() {
     }
   }
 
+  async function controlBroadcast(action: "pause" | "resume" | "cancel") {
+    if (!selectedBroadcast || !reason.trim()) {
+      setError("Укажите причину управления рассылкой.");
+      return;
+    }
+    const execute = action === "pause"
+      ? pauseAdminBroadcast
+      : action === "resume"
+        ? resumeAdminBroadcast
+        : cancelAdminBroadcast;
+    setBusy(true);
+    setError(null);
+    try {
+      const broadcast = await execute(selectedBroadcast.id, {
+        expectedLockVersion: selectedBroadcast.lockVersion,
+        reason
+      });
+      await applyBroadcast(broadcast);
+      setReason("");
+      await refreshBroadcasts();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestTestSend() {
+    if (
+      !selectedBroadcast
+      || !testRecipientTelegramUserId.trim()
+      || !reason.trim()
+    ) {
+      setError(
+        "Укажите Telegram ID тестового получателя и причину отправки."
+      );
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await requestAdminBroadcastTestSend(selectedBroadcast.id, {
+        expectedLockVersion: selectedBroadcast.lockVersion,
+        recipientTelegramUserId: testRecipientTelegramUserId.trim(),
+        reason
+      });
+      await applyBroadcast(
+        await getAdminBroadcast(selectedBroadcast.id)
+      );
+      setReason("");
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function insertPersonalizationToken() {
+    if (editorLocked) {
+      return;
+    }
+    const token = `{{${personalizationToken}}}`;
+    const textarea = messageTextRef.current;
+    const start = textarea?.selectionStart ?? text.length;
+    const end = textarea?.selectionEnd ?? start;
+    const next = `${text.slice(0, start)}${token}${text.slice(end)}`.slice(
+      0,
+      photoEnabled ? 1_000 : 4_000
+    );
+    setText(next);
+    window.requestAnimationFrame(() => {
+      const position = Math.min(start + token.length, next.length);
+      textarea?.focus();
+      textarea?.setSelectionRange(position, position);
+    });
+  }
+
   const selectedSnapshot = snapshots.find(
     (snapshot) => snapshot.id === snapshotId
   );
   const editorLocked = selectedBroadcast !== null
     && selectedBroadcast.lifecycleStatus !== "draft";
+  const messageTextLimit = photoEnabled ? 1_000 : 4_000;
 
   return (
     <>
@@ -442,19 +602,84 @@ export function BroadcastEditor() {
           <label className="field field-full">
             <span>Текст сообщения</span>
             <textarea
+              ref={messageTextRef}
               value={text}
               rows={9}
-              maxLength={4000}
+              maxLength={messageTextLimit}
               disabled={busy || editorLocked}
               onChange={(event) => setText(event.target.value)}
             />
-            <small>{text.length} из 4000 символов</small>
+            <small>{text.length} из {messageTextLimit} символов</small>
           </label>
           <label className="check-field field-full">
             <input
               type="checkbox"
-              checked={disableLinkPreview}
+              checked={photoEnabled}
               disabled={busy || editorLocked}
+              onChange={(event) => {
+                setPhotoEnabled(event.target.checked);
+                if (event.target.checked) {
+                  setDisableLinkPreview(false);
+                  setText((current) => current.slice(0, 1_000));
+                }
+              }}
+            />
+            Добавить фото
+          </label>
+          {photoEnabled ? (
+            <label className="field field-full">
+              <span>HTTPS-адрес фото</span>
+              <input
+                type="url"
+                value={photoUrl}
+                maxLength={2048}
+                disabled={busy || editorLocked}
+                onChange={(event) => setPhotoUrl(event.target.value)}
+              />
+            </label>
+          ) : null}
+          <label className="field">
+            <span>Запасное обращение</span>
+            <input
+              value={personalizationFallback}
+              maxLength={64}
+              disabled={busy || editorLocked}
+              onChange={(event) =>
+                setPersonalizationFallback(event.target.value)}
+            />
+          </label>
+          <div className="field">
+            <span>Переменная получателя</span>
+            <div className="broadcast-personalization-control">
+              <select
+                value={personalizationToken}
+                disabled={busy || editorLocked}
+                onChange={(event) => setPersonalizationToken(
+                  event.target.value as PersonalizationToken
+                )}
+              >
+                {PERSONALIZATION_TOKENS.map((token) => (
+                  <option key={token.value} value={token.value}>
+                    {token.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy || editorLocked}
+                onClick={insertPersonalizationToken}
+              >
+                <Braces size={17} />
+                Вставить
+              </button>
+            </div>
+          </div>
+          <label className="check-field field-full">
+            <input
+              type="checkbox"
+              checked={disableLinkPreview}
+              disabled={busy || editorLocked || photoEnabled}
               onChange={(event) => setDisableLinkPreview(event.target.checked)}
             />
             Отключить предпросмотр ссылок Telegram
@@ -570,6 +795,65 @@ export function BroadcastEditor() {
         <div className="broadcast-schedule">
           <div className="broadcast-buttons-heading">
             <div>
+              <Send size={17} />
+              <strong>Тестовая отправка</strong>
+            </div>
+          </div>
+          <div className="broadcast-form-grid">
+            <label className="field">
+              <span>Telegram ID получателя</span>
+              <input
+                inputMode="numeric"
+                pattern="[0-9]{1,20}"
+                value={testRecipientTelegramUserId}
+                disabled={busy || !selectedBroadcast}
+                onChange={(event) => setTestRecipientTelegramUserId(
+                  event.target.value.replace(/\D/g, "").slice(0, 20)
+                )}
+              />
+            </label>
+            <div className="field broadcast-test-action">
+              <span>Текущая сохранённая версия</span>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={
+                  busy
+                  || !selectedBroadcast
+                  || !testRecipientTelegramUserId
+                  || !reason.trim()
+                }
+                onClick={() => void requestTestSend()}
+              >
+                <Send size={17} />
+                Отправить тест
+              </button>
+            </div>
+          </div>
+          {selectedBroadcast?.testDeliveries.length ? (
+            <div className="broadcast-test-history">
+              {selectedBroadcast.testDeliveries.map((delivery) => (
+                <div className="broadcast-test-row" key={delivery.id}>
+                  <span className="status-pill">
+                    {testDeliveryLabel(delivery.status)}
+                  </span>
+                  <span>v{delivery.versionNumber}</span>
+                  <span>{delivery.recipientTelegramUserId}</span>
+                  <span>{formatCompactDate(delivery.requestedAt)}</span>
+                  {delivery.errorCode ? (
+                    <span className="broadcast-test-error">
+                      {delivery.errorCode}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="broadcast-schedule">
+          <div className="broadcast-buttons-heading">
+            <div>
               <CalendarClock size={17} />
               <strong>Расписание подготовки</strong>
             </div>
@@ -649,6 +933,45 @@ export function BroadcastEditor() {
               <CalendarClock size={17} />
               Запланировать
             </button>
+            {selectedBroadcast
+              && ["preparing", "sending"].includes(
+                selectedBroadcast.lifecycleStatus
+              ) ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy || !reason.trim()}
+                  onClick={() => void controlBroadcast("pause")}
+                >
+                  <Pause size={17} />
+                  Приостановить
+                </button>
+              ) : null}
+            {selectedBroadcast?.lifecycleStatus === "paused" ? (
+              <button
+                className="primary-button"
+                type="button"
+                disabled={busy || !reason.trim()}
+                onClick={() => void controlBroadcast("resume")}
+              >
+                <Play size={17} />
+                Продолжить
+              </button>
+            ) : null}
+            {selectedBroadcast
+              && ["scheduled", "preparing", "sending", "paused"].includes(
+                selectedBroadcast.lifecycleStatus
+              ) ? (
+                <button
+                  className="secondary-button broadcast-cancel-button"
+                  type="button"
+                  disabled={busy || !reason.trim()}
+                  onClick={() => void controlBroadcast("cancel")}
+                >
+                  <Ban size={17} />
+                  Отменить
+                </button>
+              ) : null}
           </div>
         </div>
       </section>
@@ -703,6 +1026,23 @@ function lifecycleLabel(status: AdminBroadcast["lifecycleStatus"]): string {
       return "Отменена";
     case "failed":
       return "Ошибка";
+  }
+}
+
+function testDeliveryLabel(
+  status: AdminBroadcast["testDeliveries"][number]["status"]
+): string {
+  switch (status) {
+    case "queued":
+      return "В очереди";
+    case "sending":
+      return "Отправляется";
+    case "sent":
+      return "Отправлено";
+    case "failed":
+      return "Ошибка";
+    case "uncertain":
+      return "Требует проверки";
   }
 }
 

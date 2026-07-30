@@ -9,6 +9,8 @@ describe("administrator broadcasts HTTP contract", () => {
     const permissions: AdminPermission[] = [];
     let received: unknown;
     let scheduleReceived: unknown;
+    let testSendReceived: unknown;
+    const controls: unknown[] = [];
     const app = await createApiApplication({
       appVersion: "test",
       bodyLimitBytes: 65_536,
@@ -51,6 +53,15 @@ describe("administrator broadcasts HTTP contract", () => {
             scheduleReceived = input.request;
             return broadcast;
           }
+        },
+        pause: { async execute(input) { controls.push(["pause", input.request]); return broadcast; } },
+        resume: { async execute(input) { controls.push(["resume", input.request]); return broadcast; } },
+        cancel: { async execute(input) { controls.push(["cancel", input.request]); return broadcast; } },
+        requestTestSend: {
+          async execute(input) {
+            testSendReceived = input.request;
+            return testDelivery;
+          }
         }
       }
     });
@@ -62,7 +73,12 @@ describe("administrator broadcasts HTTP contract", () => {
         audienceSnapshotId: snapshotId,
         content: {
           text: "Регистрация открыта",
-          disableLinkPreview: true,
+          disableLinkPreview: false,
+          personalization: { fallback: "участник" },
+          media: {
+            kind: "photo",
+            url: "https://cdn.example.com/broadcasts/meeting.jpg"
+          },
           buttons: [{
             label: "Открыть",
             url: "https://example.com/register"
@@ -101,18 +117,58 @@ describe("administrator broadcasts HTTP contract", () => {
         headers: { authorization: "Bearer valid" },
         payload: schedulePayload
       });
+      const controlPayload = {
+        expectedLockVersion: 3,
+        reason: "РЈРїСЂР°РІР»РµРЅРёРµ РєР°РјРїР°РЅРёРµР№"
+      };
+      const controlResponses = await Promise.all(
+        ["pause", "resume", "cancel"].map((action) => fastify.inject({
+          method: "POST",
+          url: `/api/v1/broadcasts/${broadcastId}/${action}`,
+          headers: { authorization: "Bearer valid" },
+          payload: controlPayload
+        }))
+      );
+      const testSendPayload = {
+        expectedLockVersion: 1,
+        recipientTelegramUserId: "123456789",
+        reason: "Проверка перед публикацией"
+      };
+      const testSend = await fastify.inject({
+        method: "POST",
+        url: `/api/v1/broadcasts/${broadcastId}/test-send`,
+        headers: { authorization: "Bearer valid" },
+        payload: testSendPayload
+      });
 
       assert.equal(valid.statusCode, 201);
       assert.equal(valid.json().id, broadcastId);
       assert.equal(invalid.statusCode, 400);
       assert.equal(scheduled.statusCode, 201);
+      assert.equal(testSend.statusCode, 201);
+      assert.equal(testSend.json().status, "queued");
+      assert.deepEqual(controlResponses.map((response) => response.statusCode), [
+        201,
+        201,
+        201
+      ]);
       assert.deepEqual(permissions, [
+        "broadcasts.send",
+        "broadcasts.send",
+        "broadcasts.send",
+        "broadcasts.send",
         "broadcasts.send",
         "broadcasts.send",
         "broadcasts.send"
       ]);
       assert.deepEqual(received, payload);
       assert.deepEqual(scheduleReceived, schedulePayload);
+      assert.deepEqual(controls, [
+        ["pause", controlPayload],
+        ["resume", controlPayload],
+        ["cancel", controlPayload]
+      ]);
+      assert.deepEqual(testSendReceived, testSendPayload);
     } finally {
       await app.close();
     }
@@ -135,6 +191,20 @@ const adminId = "00000000-0000-4000-8000-000000000101";
 const broadcastId = "00000000-0000-4000-8000-000000000801";
 const versionId = "00000000-0000-4000-8000-000000000802";
 const snapshotId = "00000000-0000-4000-8000-000000000804";
+const testDeliveryId = "00000000-0000-4000-8000-000000000807";
+
+const testDelivery = {
+  id: testDeliveryId,
+  broadcastVersionId: versionId,
+  versionNumber: 1,
+  recipientTelegramUserId: "123456789",
+  status: "queued" as const,
+  providerMessageId: null,
+  errorCode: null,
+  requestedAt: "2026-07-29T08:02:00.000Z",
+  startedAt: null,
+  finishedAt: null
+};
 
 const broadcast = {
   id: broadcastId,
@@ -171,5 +241,6 @@ const broadcast = {
   },
   published: null,
   schedule: null,
+  testDeliveries: [],
   updatedAt: "2026-07-29T08:00:00.000Z"
 };

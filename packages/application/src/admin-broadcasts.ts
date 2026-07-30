@@ -3,6 +3,7 @@ import type {
   AdminBroadcastContent,
   AdminBroadcastSummary,
   AdminRequestActor,
+  ControlAdminBroadcastRequest,
   CreateAdminBroadcastRequest,
   PublishAdminBroadcastDraftRequest,
   ScheduleAdminBroadcastRequest,
@@ -13,6 +14,9 @@ import {
   type AdminEventAuditContext,
   type AdminEventMutationMetadata
 } from "./admin-event-management.js";
+import {
+  normalizeBroadcastPersonalization
+} from "./broadcast-personalization.js";
 import type { IdGenerator } from "./identity.js";
 
 const UUID_PATTERN =
@@ -25,7 +29,10 @@ type BroadcastFailure =
   | "snapshot_not_ready"
   | "not_editable"
   | "published_not_found"
-  | "draft_exists";
+  | "draft_exists"
+  | "invalid_transition";
+
+export type AdminBroadcastControlAction = "pause" | "resume" | "cancel";
 
 export interface AdminBroadcastRepository {
   list(): Promise<readonly AdminBroadcastSummary[]>;
@@ -79,6 +86,21 @@ export interface AdminBroadcastRepository {
   }): Promise<
     | { readonly status: "scheduled"; readonly value: AdminBroadcast }
     | { readonly status: BroadcastFailure }
+  >;
+  control(input: {
+    readonly broadcastId: string;
+    readonly expectedLockVersion: number;
+    readonly action: AdminBroadcastControlAction;
+    readonly lifecycleEventId: string;
+    readonly audit: AdminEventAuditContext;
+  }): Promise<
+    | { readonly status: "controlled"; readonly value: AdminBroadcast }
+    | {
+        readonly status:
+          | "not_found"
+          | "version_conflict"
+          | "invalid_transition";
+      }
   >;
 }
 
@@ -135,6 +157,13 @@ export class AdminBroadcastDraftExistsError extends Error {
   constructor() {
     super("Administrator broadcast draft must be published before scheduling");
     this.name = "AdminBroadcastDraftExistsError";
+  }
+}
+
+export class AdminBroadcastInvalidTransitionError extends Error {
+  constructor() {
+    super("Administrator broadcast lifecycle transition is not allowed");
+    this.name = "AdminBroadcastInvalidTransitionError";
   }
 }
 
@@ -313,6 +342,88 @@ export class ScheduleAdminBroadcastService {
   }
 }
 
+export class PauseAdminBroadcastService {
+  constructor(
+    private readonly repository: AdminBroadcastRepository,
+    private readonly idGenerator: IdGenerator
+  ) {}
+
+  execute(input: AdminBroadcastControlServiceInput): Promise<AdminBroadcast> {
+    return controlBroadcast(
+      this.repository,
+      this.idGenerator,
+      "pause",
+      input
+    );
+  }
+}
+
+export class ResumeAdminBroadcastService {
+  constructor(
+    private readonly repository: AdminBroadcastRepository,
+    private readonly idGenerator: IdGenerator
+  ) {}
+
+  execute(input: AdminBroadcastControlServiceInput): Promise<AdminBroadcast> {
+    return controlBroadcast(
+      this.repository,
+      this.idGenerator,
+      "resume",
+      input
+    );
+  }
+}
+
+export class CancelAdminBroadcastService {
+  constructor(
+    private readonly repository: AdminBroadcastRepository,
+    private readonly idGenerator: IdGenerator
+  ) {}
+
+  execute(input: AdminBroadcastControlServiceInput): Promise<AdminBroadcast> {
+    return controlBroadcast(
+      this.repository,
+      this.idGenerator,
+      "cancel",
+      input
+    );
+  }
+}
+
+interface AdminBroadcastControlServiceInput {
+  readonly actor: AdminRequestActor;
+  readonly broadcastId: string;
+  readonly request: ControlAdminBroadcastRequest;
+  readonly metadata: AdminEventMutationMetadata;
+}
+
+async function controlBroadcast(
+  repository: AdminBroadcastRepository,
+  idGenerator: IdGenerator,
+  action: AdminBroadcastControlAction,
+  input: AdminBroadcastControlServiceInput
+): Promise<AdminBroadcast> {
+  requirePermission(input.actor);
+  requireUuid(input.broadcastId);
+  requireLockVersion(input.request.expectedLockVersion);
+  const result = await repository.control({
+    broadcastId: input.broadcastId,
+    expectedLockVersion: input.request.expectedLockVersion,
+    action,
+    lifecycleEventId: requireUuid(idGenerator.newId()),
+    audit: buildAudit(
+      input.actor,
+      input.request.reason,
+      input.metadata,
+      idGenerator
+    )
+  });
+  if (result.status !== "controlled") {
+    throwFailure(result.status);
+  }
+  return result.value;
+}
+
 function parseDefinition(input: {
   readonly name: string;
   readonly audienceSnapshotId: string;
@@ -331,10 +442,13 @@ function parseDefinition(input: {
 
 function parseContent(content: AdminBroadcastContent): AdminBroadcastContent {
   const text = content.text.trim();
+  const media = parseMedia(content.media);
   if (
     text.length < 1
     || text.length > 4_000
+    || (media && text.length > 1_000)
     || typeof content.disableLinkPreview !== "boolean"
+    || (media && content.disableLinkPreview)
     || content.buttons.length > 8
   ) {
     throw new InvalidAdminBroadcastError();
@@ -361,7 +475,49 @@ function parseContent(content: AdminBroadcastContent): AdminBroadcastContent {
   if (new Set(buttons.map((button) => button.url)).size !== buttons.length) {
     throw new InvalidAdminBroadcastError();
   }
-  return { text, disableLinkPreview: content.disableLinkPreview, buttons };
+  let personalization;
+  try {
+    personalization = normalizeBroadcastPersonalization({
+      ...content,
+      text
+    });
+  } catch {
+    throw new InvalidAdminBroadcastError();
+  }
+  return {
+    text,
+    disableLinkPreview: content.disableLinkPreview,
+    buttons,
+    personalization,
+    ...(media ? { media } : {})
+  };
+}
+
+function parseMedia(
+  media: AdminBroadcastContent["media"]
+): AdminBroadcastContent["media"] {
+  if (!media) {
+    return undefined;
+  }
+  if (media.kind !== "photo") {
+    throw new InvalidAdminBroadcastError();
+  }
+  const url = bounded(media.url, 1, 2_048);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new InvalidAdminBroadcastError();
+  }
+  if (
+    parsed.protocol !== "https:"
+    || !parsed.hostname
+    || parsed.username
+    || parsed.password
+  ) {
+    throw new InvalidAdminBroadcastError();
+  }
+  return { kind: "photo", url: parsed.toString() };
 }
 
 function buildAudit(
@@ -398,6 +554,8 @@ function throwFailure(status: BroadcastFailure): never {
       throw new AdminBroadcastPublishedVersionUnavailableError();
     case "draft_exists":
       throw new AdminBroadcastDraftExistsError();
+    case "invalid_transition":
+      throw new AdminBroadcastInvalidTransitionError();
   }
 }
 

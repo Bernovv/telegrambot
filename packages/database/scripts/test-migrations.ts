@@ -156,6 +156,13 @@ async function verifyMigrations(
       readonly broadcasts: string | null;
       readonly broadcast_deliveries: string | null;
       readonly broadcast_delivery_rate_gate: string | null;
+      readonly broadcast_cancelled_at: boolean;
+      readonly broadcast_test_deliveries: string | null;
+      readonly broadcast_personalization_v2: boolean;
+      readonly broadcast_media_v3: boolean;
+      readonly user_import_batches: string | null;
+      readonly user_import_match_analyses: string | null;
+      readonly user_import_row_decisions: string | null;
       readonly pgboss_version: string | null;
     }>(
       `select
@@ -176,6 +183,48 @@ async function verifyMigrations(
          to_regclass('public.broadcast_deliveries')::text as broadcast_deliveries,
          to_regclass('public.broadcast_delivery_rate_gate')::text
            as broadcast_delivery_rate_gate,
+         exists (
+           select 1 from information_schema.columns
+           where table_schema = 'public'
+             and table_name = 'broadcasts'
+             and column_name = 'cancelled_at'
+         ) as broadcast_cancelled_at,
+         to_regclass('public.broadcast_test_deliveries')::text
+           as broadcast_test_deliveries,
+         (
+           exists (
+             select 1 from information_schema.columns
+             where table_schema = 'public'
+               and table_name = 'broadcast_deliveries'
+               and column_name = 'personalization_context'
+           )
+           and exists (
+             select 1 from information_schema.columns
+             where table_schema = 'public'
+               and table_name = 'broadcast_test_deliveries'
+               and column_name = 'schema_version'
+           )
+         ) as broadcast_personalization_v2,
+         (
+           exists (
+             select 1
+             from pg_constraint
+             where conname = 'broadcast_versions_schema_check'
+               and position('3' in pg_get_constraintdef(oid)) > 0
+           )
+           and exists (
+             select 1
+             from pg_constraint
+             where conname = 'broadcast_test_deliveries_schema_check'
+               and position('3' in pg_get_constraintdef(oid)) > 0
+           )
+         ) as broadcast_media_v3,
+         to_regclass('public.user_import_batches')::text
+           as user_import_batches,
+         to_regclass('public.user_import_match_analyses')::text
+           as user_import_match_analyses,
+         to_regclass('public.user_import_row_decisions')::text
+           as user_import_row_decisions,
          to_regclass('pgboss.version')::text as pgboss_version`
     );
     const row = schema.rows[0];
@@ -239,6 +288,61 @@ async function verifyMigrations(
       !== Boolean(row.broadcast_delivery_rate_gate)
     ) {
       throw new Error("Broadcast execution schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastControl = expectedVersions.includes("20260730200000");
+    if (includesBroadcastControl !== row.broadcast_cancelled_at) {
+      throw new Error("Broadcast control schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastTests = expectedVersions.includes("20260730220000");
+    if (
+      includesBroadcastTests
+      !== Boolean(row.broadcast_test_deliveries)
+    ) {
+      throw new Error("Broadcast test delivery schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastPersonalization =
+      expectedVersions.includes("20260731000000");
+    if (
+      includesBroadcastPersonalization
+      !== row.broadcast_personalization_v2
+    ) {
+      throw new Error("Broadcast personalization schema presence does not match the migration sequence");
+    }
+
+    const includesBroadcastMedia =
+      expectedVersions.includes("20260731040000");
+    if (includesBroadcastMedia !== row.broadcast_media_v3) {
+      throw new Error("Broadcast media schema presence does not match the migration sequence");
+    }
+
+    const includesUserImportStaging =
+      expectedVersions.includes("20260731100000");
+    if (
+      includesUserImportStaging
+      !== Boolean(row.user_import_batches)
+    ) {
+      throw new Error("User import staging schema presence does not match the migration sequence");
+    }
+
+    const includesUserImportMatching =
+      expectedVersions.includes("20260731160000");
+    if (
+      includesUserImportMatching
+      !== Boolean(row.user_import_match_analyses)
+    ) {
+      throw new Error("User import matching schema presence does not match the migration sequence");
+    }
+
+    const includesUserImportDecisions =
+      expectedVersions.includes("20260731200000");
+    if (
+      includesUserImportDecisions
+      !== Boolean(row.user_import_row_decisions)
+    ) {
+      throw new Error("User import decision schema presence does not match the migration sequence");
     }
   } finally {
     await client.end();

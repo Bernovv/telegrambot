@@ -1,7 +1,8 @@
 import type {
   BroadcastDeliveryCompletion,
   BroadcastDeliveryRepository,
-  ClaimedBroadcastDelivery
+  ClaimedBroadcastDelivery,
+  BroadcastPersonalizationContext
 } from "@ticket-platform/application";
 import type { AdminBroadcastContent } from "@ticket-platform/contracts";
 import type {
@@ -13,6 +14,7 @@ interface BroadcastClaimRow {
   readonly id: string;
   readonly rate_per_second: number;
   readonly next_delivery_at: Date | string | null;
+  readonly schema_version: number;
   readonly content: unknown;
 }
 
@@ -21,6 +23,7 @@ interface DeliveryClaimRow {
   readonly user_id: string;
   readonly telegram_identity_id: string;
   readonly recipient_external_user_id: string;
+  readonly personalization_context: unknown;
   readonly attempt_count: number;
 }
 
@@ -60,6 +63,7 @@ implements BroadcastDeliveryRepository {
         `select broadcasts.id,
                 broadcasts.rate_per_second,
                 broadcasts.next_delivery_at,
+                versions.schema_version,
                 versions.content
          from public.broadcasts broadcasts
          join public.broadcast_versions versions
@@ -84,7 +88,8 @@ implements BroadcastDeliveryRepository {
 
       const delivery = (await connection.query<DeliveryClaimRow>(
         `select id, user_id, telegram_identity_id,
-                recipient_external_user_id, attempt_count
+                recipient_external_user_id, personalization_context,
+                attempt_count
          from public.broadcast_deliveries
          where broadcast_id = $1
            and (
@@ -129,7 +134,8 @@ implements BroadcastDeliveryRepository {
              updated_at = $3
          where id = $1
          returning id, user_id, telegram_identity_id,
-                   recipient_external_user_id, attempt_count`,
+                   recipient_external_user_id, personalization_context,
+                   attempt_count`,
         [
           delivery.id,
           input.workerId,
@@ -178,7 +184,11 @@ implements BroadcastDeliveryRepository {
         userId: claimed.user_id,
         telegramIdentityId: claimed.telegram_identity_id,
         recipientId: claimed.recipient_external_user_id,
+        schemaVersion: readSchemaVersion(campaign.schema_version),
         content: readContent(campaign.content),
+        personalizationContext: readPersonalizationContext(
+          delivery.personalization_context
+        ),
         attemptCount: claimed.attempt_count
       };
     });
@@ -192,7 +202,10 @@ implements BroadcastDeliveryRepository {
     readonly lifecycleEventId: string;
   }): Promise<BroadcastDeliveryCompletion> {
     return this.transaction(async (connection) => {
-      await lockCampaign(connection, input.delivery.broadcastId);
+      const campaignStatus = await lockCampaignForResult(
+        connection,
+        input.delivery.broadcastId
+      );
       const result = await connection.query(
         `update public.broadcast_deliveries
          set status = 'sent',
@@ -231,7 +244,9 @@ implements BroadcastDeliveryRepository {
         input.sentAt,
         input.lifecycleEventId
       );
-      return { broadcastStatus: completed ? "completed" : "sending" };
+      return {
+        broadcastStatus: completed ? "completed" : campaignStatus
+      };
     });
   }
 
@@ -247,7 +262,11 @@ implements BroadcastDeliveryRepository {
     readonly lifecycleEventId: string;
   }): Promise<BroadcastDeliveryCompletion> {
     return this.transaction(async (connection) => {
-      await lockCampaign(connection, input.delivery.broadcastId);
+      const campaignStatus = await lockCampaignForResult(
+        connection,
+        input.delivery.broadcastId
+      );
+      const retryAt = campaignStatus === "cancelled" ? null : input.retryAt;
       const result = await connection.query(
         `update public.broadcast_deliveries
          set status = case when $4::timestamptz is null
@@ -265,7 +284,7 @@ implements BroadcastDeliveryRepository {
           input.delivery.deliveryId,
           input.workerId,
           input.errorCode,
-          input.retryAt,
+          retryAt,
           input.failedAt,
           input.delivery.broadcastId
         ]
@@ -290,7 +309,7 @@ implements BroadcastDeliveryRepository {
         );
       }
 
-      if (input.retryAt) {
+      if (retryAt) {
         await connection.query(
           `update public.broadcasts
            set next_delivery_at = least(
@@ -301,11 +320,11 @@ implements BroadcastDeliveryRepository {
            where id = $1`,
           [
             input.delivery.broadcastId,
-            input.retryAt,
+            retryAt,
             input.failedAt
           ]
         );
-        return { broadcastStatus: "sending" };
+        return { broadcastStatus: campaignStatus };
       }
 
       const progress = (await connection.query<CampaignProgressRow>(
@@ -322,6 +341,8 @@ implements BroadcastDeliveryRepository {
       }
 
       if (
+        campaignStatus === "sending"
+        &&
         BigInt(progress.attempted_recipient_count)
           >= BigInt(input.autoPauseMinimumAttempts)
         && BigInt(progress.failed_recipient_count) * 100n
@@ -361,7 +382,9 @@ implements BroadcastDeliveryRepository {
         input.failedAt,
         input.lifecycleEventId
       );
-      return { broadcastStatus: completed ? "completed" : "sending" };
+      return {
+        broadcastStatus: completed ? "completed" : campaignStatus
+      };
     });
   }
 
@@ -391,21 +414,28 @@ export function createBroadcastDeliveryPersistence(
   return new PostgresBroadcastDeliveryRepository(pool);
 }
 
-async function lockCampaign(
+async function lockCampaignForResult(
   connection: SqlConnection,
   broadcastId: string
-): Promise<void> {
-  const result = await connection.query(
-    `select id
+): Promise<"sending" | "paused" | "cancelled"> {
+  const result = await connection.query<{
+    readonly lifecycle_status: "sending" | "paused" | "cancelled";
+  }>(
+    `select lifecycle_status
      from public.broadcasts
      where id = $1
-       and lifecycle_status = 'sending'
+       and lifecycle_status in ('sending', 'paused', 'cancelled')
      for update`,
     [broadcastId]
   );
   if (result.rowCount !== 1) {
-    throw new Error("Broadcast campaign is no longer sending");
+    throw new Error("Broadcast campaign no longer accepts delivery results");
   }
+  const status = result.rows[0]?.lifecycle_status;
+  if (!status) {
+    throw new Error("Broadcast campaign lifecycle status is missing");
+  }
+  return status;
 }
 
 async function completeIfFinished(
@@ -508,6 +538,39 @@ function readContent(value: unknown): AdminBroadcastContent {
     disableLinkPreview: content.disableLinkPreview,
     buttons
   };
+}
+
+function readSchemaVersion(value: number): 1 | 2 | 3 {
+  if (value !== 1 && value !== 2 && value !== 3) {
+    throw new Error("Broadcast content schema version is invalid");
+  }
+  return value;
+}
+
+function readPersonalizationContext(
+  value: unknown
+): BroadcastPersonalizationContext {
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Broadcast personalization context is invalid");
+  }
+  const record = parsed as Readonly<Record<string, unknown>>;
+  return {
+    firstName: optionalString(record.firstName),
+    lastName: optionalString(record.lastName),
+    displayName: optionalString(record.displayName),
+    telegramUsername: optionalString(record.telegramUsername)
+  };
+}
+
+function optionalString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string" || value.length > 500) {
+    throw new Error("Broadcast personalization value is invalid");
+  }
+  return value;
 }
 
 function record(value: unknown): Record<string, unknown> {
