@@ -14,14 +14,22 @@ import type {
   OutreachCampaignSummary,
   OutreachChannel,
   OutreachContactStatus,
+  OutreachCustomFieldDefinition,
+  OutreachCustomFieldType,
   OutreachImportResult,
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
   OutreachPipelineColumn,
   OutreachPipelineStage,
+  OutreachTaskBoardItem,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
+
+// A column not yet saved has no stage id: the server assigns one on create.
+export type OutreachPipelineColumnDraft = Omit<OutreachPipelineColumn, "stage" | "position"> & {
+  readonly stage?: OutreachPipelineStage;
+};
 import type {
   AdminEventDetail,
   AdminEventCatalogMutationResult,
@@ -144,12 +152,63 @@ export function listOutreachPipelineColumns(
 
 export function updateOutreachPipelineColumns(
   campaignId: string,
-  columns: readonly OutreachPipelineColumn[]
+  columns: readonly OutreachPipelineColumnDraft[]
 ): Promise<{ readonly updated: boolean }> {
   return requestAdminMutation(
     `outreach/campaigns/${encodeURIComponent(campaignId)}/pipeline`,
     "PATCH",
     { columns }
+  );
+}
+
+export function listOutreachCustomFieldDefinitions(
+  campaignId: string,
+  signal?: AbortSignal
+): Promise<readonly OutreachCustomFieldDefinition[]> {
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/custom-fields`,
+    signal
+  );
+}
+
+export function createOutreachCustomFieldDefinition(input: {
+  readonly campaignId?: string;
+  readonly label: string;
+  readonly type: OutreachCustomFieldType;
+  readonly options?: readonly string[];
+}): Promise<OutreachCustomFieldDefinition> {
+  return requestAdminMutation("outreach/custom-fields", "POST", input);
+}
+
+export function deleteOutreachCustomFieldDefinition(
+  fieldId: string
+): Promise<{ readonly deleted: boolean }> {
+  return requestAdminMutation(
+    `outreach/custom-fields/${encodeURIComponent(fieldId)}/delete`,
+    "POST",
+    {}
+  );
+}
+
+export function setOutreachCustomFieldValue(
+  campaignContactId: string,
+  fieldId: string,
+  value: string | null
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}/custom-fields/${encodeURIComponent(fieldId)}`,
+    "PATCH",
+    { value }
+  );
+}
+
+export function listOutreachTaskBoard(
+  onlyMine: boolean,
+  signal?: AbortSignal
+): Promise<readonly OutreachTaskBoardItem[]> {
+  return requestAdminApi(
+    `outreach/tasks/board?mine=${onlyMine ? "true" : "false"}`,
+    signal
   );
 }
 

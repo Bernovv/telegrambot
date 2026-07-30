@@ -25,7 +25,12 @@ export const OUTREACH_CHANNELS = [
   "other"
 ] as const;
 
-export const OUTREACH_PIPELINE_STAGES = [
+// Pipeline stages are fully manager-editable (add/remove/rename/reorder), so
+// there is no longer a fixed literal union of stage ids. A campaign's real
+// stage list always comes from OutreachPipelineColumn[]. This constant only
+// seeds the default stages a brand-new campaign starts with (mirrored by the
+// database seed trigger) and is used as a fallback/reference in the UI.
+export const OUTREACH_DEFAULT_PIPELINE_STAGES = [
   "new",
   "first_contact",
   "dialogue",
@@ -34,6 +39,14 @@ export const OUTREACH_PIPELINE_STAGES = [
   "won",
   "lost"
 ] as const;
+
+export const OUTREACH_PIPELINE_COLUMN_OUTCOMES = [
+  "open",
+  "won",
+  "lost"
+] as const;
+
+export const OUTREACH_MAX_PIPELINE_COLUMNS = 20;
 
 export const OUTREACH_LOST_REASONS = [
   "declined",
@@ -50,15 +63,38 @@ export const OUTREACH_TASK_STATUSES = [
   "cancelled"
 ] as const;
 
+export const OUTREACH_TASK_URGENCIES = [
+  "overdue",
+  "today",
+  "tomorrow",
+  "this_week",
+  "later",
+  "completed"
+] as const;
+
+export const OUTREACH_CUSTOM_FIELD_TYPES = [
+  "text",
+  "number",
+  "date",
+  "select"
+] as const;
+
 export type OutreachCampaignStatus =
   typeof OUTREACH_CAMPAIGN_STATUSES[number];
 export type OutreachContactStatus =
   typeof OUTREACH_CONTACT_STATUSES[number];
 export type OutreachChannel = typeof OUTREACH_CHANNELS[number];
-export type OutreachPipelineStage = typeof OUTREACH_PIPELINE_STAGES[number];
+// Any stage id currently configured for the campaign (see
+// OutreachPipelineColumn.stage). Kept as a distinct alias, not a literal
+// union, so call sites document intent without hard-coding stage names.
+export type OutreachPipelineStage = string;
+export type OutreachPipelineColumnOutcome =
+  typeof OUTREACH_PIPELINE_COLUMN_OUTCOMES[number];
 export type OutreachLostReason = typeof OUTREACH_LOST_REASONS[number];
 export type OutreachTaskType = typeof OUTREACH_TASK_TYPES[number];
 export type OutreachTaskStatus = typeof OUTREACH_TASK_STATUSES[number];
+export type OutreachTaskUrgency = typeof OUTREACH_TASK_URGENCIES[number];
+export type OutreachCustomFieldType = typeof OUTREACH_CUSTOM_FIELD_TYPES[number];
 
 export interface OutreachCampaignSummary {
   readonly id: string;
@@ -82,6 +118,46 @@ export interface OutreachPipelineColumn {
   readonly stage: OutreachPipelineStage;
   readonly label: string;
   readonly position: number;
+  readonly outcome: OutreachPipelineColumnOutcome;
+}
+
+export interface OutreachCustomFieldDefinition {
+  readonly id: string;
+  // null means the field applies to every campaign; otherwise it only
+  // applies to that one campaign, mirroring amoCRM's per-pipeline fields.
+  readonly campaignId: string | null;
+  readonly key: string;
+  readonly label: string;
+  readonly type: OutreachCustomFieldType;
+  readonly options: readonly string[] | null;
+  readonly position: number;
+}
+
+export interface OutreachCustomFieldValue {
+  readonly fieldId: string;
+  readonly key: string;
+  readonly label: string;
+  readonly type: OutreachCustomFieldType;
+  readonly options: readonly string[] | null;
+  // Always the display/edit string form: numbers and dates are serialized
+  // (e.g. "2026-08-01"); the API validates/parses by field type on write.
+  readonly value: string | null;
+}
+
+export interface OutreachTaskBoardItem {
+  readonly id: string;
+  readonly campaignContactId: string;
+  readonly campaignId: string;
+  readonly campaignName: string;
+  readonly contactName: string | null;
+  readonly contactPhone: string | null;
+  readonly assignedAdminId: string;
+  readonly assignedAdminName: string;
+  readonly type: OutreachTaskType;
+  readonly text: string;
+  readonly dueAt: string;
+  readonly status: OutreachTaskStatus;
+  readonly urgency: OutreachTaskUrgency;
 }
 
 export interface OutreachCampaignContactSummary {
@@ -104,6 +180,7 @@ export interface OutreachCampaignContactSummary {
   readonly lastChannel: OutreachChannel | null;
   readonly lastResult: OutreachContactStatus | null;
   readonly openTask: OutreachTask | null;
+  readonly customFields: readonly OutreachCustomFieldValue[];
 }
 
 export interface OutreachCampaignContactPage {

@@ -82,7 +82,11 @@ describe("administrator outreach HTTP contract", () => {
     }
   });
 
-  it("validates lost-stage reasons and delegates a valid stage move", async () => {
+  it("delegates a free-form stage move and maps a service rejection to 400", async () => {
+    // Stage ids are manager-defined (see updatePipelineColumns), so the API
+    // layer only validates the id's storage format; whether a lost reason is
+    // required depends on that stage's outcome flag, which only the service
+    // (backed by the campaign's pipeline columns) can resolve.
     const requests: unknown[] = [];
     const app = await createApiApplication({
       appVersion: "test",
@@ -92,6 +96,9 @@ describe("administrator outreach HTTP contract", () => {
       adminOutreach: handler({
         async updateContactStage(input) {
           requests.push(input);
+          if (!input.lostReason) {
+            throw new Error("Outreach lost reason is required");
+          }
           return { updated: true };
         }
       })
@@ -101,20 +108,86 @@ describe("administrator outreach HTTP contract", () => {
       const invalid = await inject(app, {
         method: "PATCH",
         url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
-        payload: { stage: "lost" }
+        payload: { stage: "closed_lost" }
       });
       const valid = await inject(app, {
         method: "PATCH",
         url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
-        payload: { stage: "lost", lostReason: "declined" }
+        payload: { stage: "closed_lost", lostReason: "declined" }
       });
       assert.equal(invalid.statusCode, 400);
       assert.equal(valid.statusCode, 200);
-      assert.equal(requests.length, 1);
+      assert.equal(requests.length, 2);
       assert.equal(
-        (requests[0] as { readonly lostReason: string }).lostReason,
+        (requests[1] as { readonly lostReason: string }).lostReason,
         "declined"
       );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a malformed stage id and accepts a manager-defined one", async () => {
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async updateContactStage() { return { updated: true }; }
+      })
+    });
+    await app.init();
+    try {
+      const invalid = await inject(app, {
+        method: "PATCH",
+        url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
+        payload: { stage: "Стадия с пробелами!" }
+      });
+      const valid = await inject(app, {
+        method: "PATCH",
+        url: `/api/v1/outreach/campaign-contacts/${CAMPAIGN_CONTACT_ID}/stage`,
+        payload: { stage: "s_1234567890abcdef" }
+      });
+      assert.equal(invalid.statusCode, 400);
+      assert.equal(valid.statusCode, 200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts add/remove/rename pipeline column payloads without a fixed count", async () => {
+    let received:
+      Parameters<AdminOutreachHandler["updatePipelineColumns"]>[0] | undefined;
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async updatePipelineColumns(input) {
+          received = input;
+          return { updated: true };
+        }
+      })
+    });
+    await app.init();
+    try {
+      const response = await inject(app, {
+        method: "PATCH",
+        url: `/api/v1/outreach/campaigns/${CAMPAIGN_ID}/pipeline`,
+        payload: {
+          columns: [
+            { stage: "new", label: "Новые", outcome: "open" },
+            { label: "Новая колонка без stage", outcome: "won" }
+          ]
+        }
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(received?.columns.length, 2);
+      assert.equal(received?.columns[0]?.stage, "new");
+      assert.equal(received?.columns[1]?.stage, undefined);
+      assert.equal(received?.columns[1]?.outcome, "won");
     } finally {
       await app.close();
     }
@@ -176,6 +249,21 @@ function handler(
     async updateCampaign() { return campaign; },
     async listPipelineColumns() { return []; },
     async updatePipelineColumns() { return { updated: false }; },
+    async listCustomFieldDefinitions() { return []; },
+    async createCustomFieldDefinition(input) {
+      return {
+        id: "00000000-0000-4000-8000-000000000901",
+        campaignId: input.campaignId ?? null,
+        key: "f_test",
+        label: input.label,
+        type: input.type,
+        options: input.options ?? null,
+        position: 1
+      };
+    },
+    async deleteCustomFieldDefinition() { return { deleted: false }; },
+    async setCustomFieldValue() { return { updated: false }; },
+    async listTaskBoard() { return []; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
     async importContacts() {

@@ -19,8 +19,10 @@ import {
   OUTREACH_CAMPAIGN_STATUSES,
   OUTREACH_CHANNELS,
   OUTREACH_CONTACT_STATUSES,
+  OUTREACH_CUSTOM_FIELD_TYPES,
   OUTREACH_LOST_REASONS,
-  OUTREACH_PIPELINE_STAGES,
+  OUTREACH_MAX_PIPELINE_COLUMNS,
+  OUTREACH_PIPELINE_COLUMN_OUTCOMES,
   OUTREACH_TASK_TYPES
 } from "@ticket-platform/contracts";
 import { z } from "zod";
@@ -37,7 +39,11 @@ const activityResult = z.enum(
   OUTREACH_CONTACT_STATUSES.filter((status) => status !== "new")
 );
 const channel = z.enum(OUTREACH_CHANNELS);
-const pipelineStage = z.enum(OUTREACH_PIPELINE_STAGES);
+// Stages are manager-defined ids (see newStageId in the application layer),
+// not a fixed literal list, so only the storage format is validated here.
+const pipelineStage = z.string().regex(/^[a-z0-9_]{1,40}$/);
+const pipelineColumnOutcome = z.enum(OUTREACH_PIPELINE_COLUMN_OUTCOMES);
+const customFieldType = z.enum(OUTREACH_CUSTOM_FIELD_TYPES);
 const lostReason = z.enum(OUTREACH_LOST_REASONS);
 const taskType = z.enum(OUTREACH_TASK_TYPES);
 
@@ -90,16 +96,12 @@ const activityBody = z.object({
   lostReason: lostReason.optional(),
   note: z.string().trim().max(2000).optional(),
   nextContactAt: z.iso.datetime({ offset: true }).optional()
-}).strict().superRefine((value, context) => {
-  validateLostStage(value.stage, value.lostReason, context);
-});
+}).strict();
 
 const stageBody = z.object({
   stage: pipelineStage,
   lostReason: lostReason.optional()
-}).strict().superRefine((value, context) => {
-  validateLostStage(value.stage, value.lostReason, context);
-});
+}).strict();
 
 const taskBody = z.object({
   assignedAdminId: uuid.optional(),
@@ -122,11 +124,28 @@ const manualContactBody = z.object({
 );
 
 const pipelineBody = z.object({
+  // Omitting stage adds a new column; the order of this array becomes the
+  // new column positions, so add/remove/rename/reorder are all one call.
   columns: z.array(z.object({
-    stage: pipelineStage,
+    stage: pipelineStage.optional(),
     label: z.string().trim().min(1).max(60),
-    position: z.number().int().min(1).max(7)
-  }).strict()).length(OUTREACH_PIPELINE_STAGES.length)
+    outcome: pipelineColumnOutcome
+  }).strict()).min(1).max(OUTREACH_MAX_PIPELINE_COLUMNS)
+}).strict();
+
+const createCustomFieldBody = z.object({
+  campaignId: uuid.optional(),
+  label: z.string().trim().min(1).max(80),
+  type: customFieldType,
+  options: z.array(z.string().trim().min(1).max(100)).max(50).optional()
+}).strict();
+
+const customFieldValueBody = z.object({
+  value: z.string().trim().max(500).nullable()
+}).strict();
+
+const taskBoardQuery = z.object({
+  mine: z.enum(["true", "false"]).optional()
 }).strict();
 
 export type AdminOutreachHandler = Pick<
@@ -137,6 +156,11 @@ export type AdminOutreachHandler = Pick<
   | "updateCampaign"
   | "listPipelineColumns"
   | "updatePipelineColumns"
+  | "listCustomFieldDefinitions"
+  | "createCustomFieldDefinition"
+  | "deleteCustomFieldDefinition"
+  | "setCustomFieldValue"
+  | "listTaskBoard"
   | "listContacts"
   | "getContact"
   | "importContacts"
@@ -365,7 +389,11 @@ export class AdminOutreachController {
       this.handler.updatePipelineColumns({
         actor: requireActor(request),
         campaignId,
-        columns: parsed.columns,
+        columns: parsed.columns.map((column) => ({
+          ...(column.stage === undefined ? {} : { stage: column.stage }),
+          label: column.label,
+          outcome: column.outcome
+        })),
         now: new Date()
       })
     );
@@ -486,6 +514,99 @@ export class AdminOutreachController {
     );
   }
 
+  @Get("campaigns/:id/custom-fields")
+  @RequireAdminPermission("outreach.read")
+  listCustomFieldDefinitions(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    return this.handler.listCustomFieldDefinitions({
+      actor: requireActor(request),
+      campaignId
+    });
+  }
+
+  @Post("custom-fields")
+  @RequireAdminPermission("outreach.write")
+  createCustomFieldDefinition(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(createCustomFieldBody, body);
+    return executeOutreach(() =>
+      this.handler.createCustomFieldDefinition({
+        actor: requireActor(request),
+        ...(parsed.campaignId === undefined
+          ? {}
+          : { campaignId: parsed.campaignId }),
+        label: parsed.label,
+        type: parsed.type,
+        ...(parsed.options === undefined ? {} : { options: parsed.options }),
+        now: new Date()
+      })
+    );
+  }
+
+  @Post("custom-fields/:id/delete")
+  @RequireAdminPermission("outreach.write")
+  async deleteCustomFieldDefinition(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const fieldId = parse(uuid, id);
+    const result = await executeOutreach(() =>
+      this.handler.deleteCustomFieldDefinition({
+        actor: requireActor(request),
+        fieldId
+      })
+    );
+    if (!result.deleted) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Patch("campaign-contacts/:id/custom-fields/:fieldId")
+  @RequireAdminPermission("outreach.write")
+  async setCustomFieldValue(
+    @Param("id") id: string,
+    @Param("fieldId") fieldId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignContactId = parse(uuid, id);
+    const parsedFieldId = parse(uuid, fieldId);
+    const parsed = parse(customFieldValueBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.setCustomFieldValue({
+        actor: requireActor(request),
+        campaignContactId,
+        fieldId: parsedFieldId,
+        value: parsed.value,
+        now: new Date()
+      })
+    );
+    if (!result.updated) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Get("tasks/board")
+  @RequireAdminPermission("outreach.read")
+  listTaskBoard(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(taskBoardQuery, query);
+    return this.handler.listTaskBoard({
+      actor: requireActor(request),
+      ...(parsed.mine === undefined ? {} : { onlyMine: parsed.mine === "true" }),
+      now: new Date()
+    });
+  }
+
   @Get("campaigns/:id/export")
   @RequireAdminPermission("outreach.read")
   async exportCampaign(
@@ -524,27 +645,6 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     });
   }
   return result.data;
-}
-
-function validateLostStage(
-  stage: string | undefined,
-  reason: string | undefined,
-  context: z.RefinementCtx
-): void {
-  if (stage === "lost" && !reason) {
-    context.addIssue({
-      code: "custom",
-      path: ["lostReason"],
-      message: "Lost reason is required"
-    });
-  }
-  if (stage !== "lost" && reason) {
-    context.addIssue({
-      code: "custom",
-      path: ["lostReason"],
-      message: "Lost reason is only valid for lost stage"
-    });
-  }
 }
 
 function requireActor(

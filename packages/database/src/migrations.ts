@@ -119,5 +119,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260730100000_outreach_pipeline_columns",
     description: "Add per-campaign labels and ordering for outreach pipeline columns",
     destructive: false
+  },
+  {
+    id: "20260730150000_outreach_flexible_pipeline_fields",
+    description: "Let managers add/remove/rename outreach pipeline stages with a won/lost outcome flag, and add custom contact fields",
+    destructive: false
   }
 ];

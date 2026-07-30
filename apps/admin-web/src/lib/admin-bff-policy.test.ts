@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
-  isTrustedMutationOrigin
+  isFileDownloadPath,
+  isTrustedMutationOrigin,
+  isValidIdempotencyKey,
+  requiresIdempotencyKey
 } from "./admin-bff-policy";
 
 test("allowlists only implemented administrator API methods and paths", () => {
@@ -145,6 +148,71 @@ test("allowlists only implemented administrator API methods and paths", () => {
   );
   assert.equal(isAllowedAdminApiPath("POST", "orders"), false);
   assert.equal(isAllowedAdminApiPath("PATCH", "events/all/general"), false);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000101/manual-payment"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/participants/export"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/custom-fields"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "outreach/custom-fields"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/custom-fields/00000000-0000-4000-8000-000000000101/delete"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "outreach/campaign-contacts/00000000-0000-4000-8000-000000000101/custom-fields/00000000-0000-4000-8000-000000000201"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("GET", "outreach/tasks/board"), true);
+});
+
+test("requires an idempotency key only on money-moving proxy paths", () => {
+  assert.equal(
+    requiresIdempotencyKey(
+      "orders/00000000-0000-4000-8000-000000000101/manual-payment"
+    ),
+    true
+  );
+  assert.equal(
+    requiresIdempotencyKey(
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/pipeline"
+    ),
+    false
+  );
+  assert.equal(isValidIdempotencyKey("a".repeat(20)), true);
+  assert.equal(isValidIdempotencyKey(null), false);
+  assert.equal(isValidIdempotencyKey("short"), false);
+});
+
+test("only the participants export streams as a file download", () => {
+  assert.equal(
+    isFileDownloadPath(
+      "events/00000000-0000-4000-8000-000000000101/participants/export"
+    ),
+    true
+  );
+  assert.equal(isFileDownloadPath("outreach/campaigns"), false);
 });
 
 test("allows a larger body only for bounded document and graph payloads", () => {

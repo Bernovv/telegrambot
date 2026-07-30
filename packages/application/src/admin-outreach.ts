@@ -1,4 +1,8 @@
-import { OUTREACH_PIPELINE_STAGES } from "@ticket-platform/contracts";
+import {
+  OUTREACH_CUSTOM_FIELD_TYPES,
+  OUTREACH_MAX_PIPELINE_COLUMNS,
+  OUTREACH_PIPELINE_COLUMN_OUTCOMES
+} from "@ticket-platform/contracts";
 import type {
   AdminRequestActor,
   OutreachCampaignContactDetail,
@@ -8,13 +12,18 @@ import type {
   OutreachCampaignSummary,
   OutreachChannel,
   OutreachContactStatus,
+  OutreachCustomFieldDefinition,
+  OutreachCustomFieldType,
   OutreachImportResult,
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
   OutreachPipelineColumn,
+  OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
-  OutreachTaskType
+  OutreachTaskBoardItem,
+  OutreachTaskType,
+  OutreachTaskUrgency
 } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
 import type { PhoneNormalizer } from "./phone.js";
@@ -68,11 +77,47 @@ export interface AdminOutreachRepository {
   listPipelineColumns(
     campaignId: string
   ): Promise<readonly OutreachPipelineColumn[]>;
+  // Replaces the campaign's entire column set: rows whose stage id is not in
+  // `columns` are deleted (fails with "stage_in_use" if contacts still sit in
+  // them), rows with a matching stage id are updated, and the remainder are
+  // inserted as brand-new stages. This is how add/remove/rename/reorder are
+  // all expressed as one call.
   updatePipelineColumns(input: {
     readonly campaignId: string;
     readonly columns: readonly OutreachPipelineColumn[];
     readonly now: Date;
+  }): Promise<"updated" | "not_found" | "stage_in_use">;
+  // Looks up the won/lost/open outcome of one stage, scoped through a
+  // campaign contact so the caller does not need to know the campaign id.
+  // Returns null when that stage no longer exists for the contact's campaign.
+  getPipelineColumnOutcome(input: {
+    readonly campaignContactId: string;
+    readonly stage: string;
+  }): Promise<OutreachPipelineColumnOutcome | null>;
+  listCustomFieldDefinitions(
+    campaignId: string
+  ): Promise<readonly OutreachCustomFieldDefinition[]>;
+  createCustomFieldDefinition(input: {
+    readonly id: string;
+    readonly campaignId: string | null;
+    readonly key: string;
+    readonly label: string;
+    readonly type: OutreachCustomFieldType;
+    readonly options: readonly string[] | null;
+    readonly createdByAdminId: string;
+    readonly now: Date;
+  }): Promise<OutreachCustomFieldDefinition>;
+  deleteCustomFieldDefinition(fieldId: string): Promise<boolean>;
+  setCustomFieldValue(input: {
+    readonly campaignContactId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+    readonly now: Date;
   }): Promise<boolean>;
+  listTaskBoard(input: {
+    readonly assignedAdminId: string | null;
+    readonly now: Date;
+  }): Promise<readonly Omit<OutreachTaskBoardItem, "urgency">[]>;
   listContacts(input: {
     readonly campaignId: string;
     readonly search: string | null;
@@ -231,32 +276,158 @@ export class AdminOutreachService {
   async updatePipelineColumns(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
-    readonly columns: readonly OutreachPipelineColumn[];
+    readonly columns: readonly {
+      // Omit stage (or pass one unknown to this campaign) to add a new
+      // column; an existing stage id renames/reorders/re-flags that column.
+      readonly stage?: string;
+      readonly label: string;
+      readonly outcome: OutreachPipelineColumnOutcome;
+    }[];
     readonly now: Date;
   }): Promise<{ readonly updated: boolean }> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.campaignId);
-    const expectedStages = new Set<string>(OUTREACH_PIPELINE_STAGES);
     if (
-      input.columns.length !== OUTREACH_PIPELINE_STAGES.length
-      || new Set(input.columns.map((column) => column.stage)).size
-        !== OUTREACH_PIPELINE_STAGES.length
-      || input.columns.some((column) => !expectedStages.has(column.stage))
+      input.columns.length < 1
+      || input.columns.length > OUTREACH_MAX_PIPELINE_COLUMNS
     ) {
-      throw new Error("Outreach pipeline columns are invalid");
+      throw new Error("Outreach pipeline column count is invalid");
     }
-    const columns = input.columns.map((column, index) => ({
-      stage: column.stage,
-      label: requiredText(column.label, 60, "Outreach pipeline column label"),
-      position: index + 1
-    }));
+    const allowedOutcomes = new Set<string>(OUTREACH_PIPELINE_COLUMN_OUTCOMES);
+    const seenStages = new Set<string>();
+    const columns: OutreachPipelineColumn[] = input.columns.map(
+      (column, index) => {
+        if (!allowedOutcomes.has(column.outcome)) {
+          throw new Error("Outreach pipeline column outcome is invalid");
+        }
+        const stage = column.stage && STAGE_ID_PATTERN.test(column.stage)
+          ? column.stage
+          : newStageId(this.idGenerator);
+        if (seenStages.has(stage)) {
+          throw new Error("Outreach pipeline column ids must be unique");
+        }
+        seenStages.add(stage);
+        return {
+          stage,
+          label: requiredText(column.label, 60, "Outreach pipeline column label"),
+          outcome: column.outcome,
+          position: index + 1
+        };
+      }
+    );
+    const result = await this.repository.updatePipelineColumns({
+      campaignId: input.campaignId,
+      columns,
+      now: input.now
+    });
+    if (result === "stage_in_use") {
+      throw new Error(
+        "Outreach pipeline stage still has contacts assigned to it"
+      );
+    }
+    return { updated: result === "updated" };
+  }
+
+  listCustomFieldDefinitions(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+  }): Promise<readonly OutreachCustomFieldDefinition[]> {
+    requirePermission(input.actor, "outreach.read");
+    requireUuid(input.campaignId);
+    return this.repository.listCustomFieldDefinitions(input.campaignId);
+  }
+
+  async createCustomFieldDefinition(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId?: string | null;
+    readonly label: string;
+    readonly type: OutreachCustomFieldType;
+    readonly options?: readonly string[];
+    readonly now: Date;
+  }): Promise<OutreachCustomFieldDefinition> {
+    requirePermission(input.actor, "outreach.write");
+    if (input.campaignId) {
+      requireUuid(input.campaignId);
+    }
+    if (!(OUTREACH_CUSTOM_FIELD_TYPES as readonly string[]).includes(input.type)) {
+      throw new Error("Outreach custom field type is invalid");
+    }
+    const label = requiredText(input.label, 80, "Outreach custom field label");
+    let options: readonly string[] | null = null;
+    if (input.type === "select") {
+      const trimmed = [...new Set(
+        (input.options ?? [])
+          .map((option) => option.trim())
+          .filter((option) => option.length > 0)
+      )];
+      if (trimmed.length < 1 || trimmed.length > 50) {
+        throw new Error("Outreach custom field options are invalid");
+      }
+      options = trimmed;
+    } else if (input.options && input.options.length > 0) {
+      throw new Error(
+        "Outreach custom field options are only valid for a select field"
+      );
+    }
+    return this.repository.createCustomFieldDefinition({
+      id: this.idGenerator.newId(),
+      campaignId: input.campaignId ?? null,
+      key: newStageId(this.idGenerator).replace("s_", "f_"),
+      label,
+      type: input.type,
+      options,
+      createdByAdminId: input.actor.adminId,
+      now: input.now
+    });
+  }
+
+  async deleteCustomFieldDefinition(input: {
+    readonly actor: AdminRequestActor;
+    readonly fieldId: string;
+  }): Promise<{ readonly deleted: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.fieldId);
     return {
-      updated: await this.repository.updatePipelineColumns({
-        campaignId: input.campaignId,
-        columns,
+      deleted: await this.repository.deleteCustomFieldDefinition(input.fieldId)
+    };
+  }
+
+  async setCustomFieldValue(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignContactId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+    readonly now: Date;
+  }): Promise<{ readonly updated: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignContactId);
+    requireUuid(input.fieldId);
+    return {
+      updated: await this.repository.setCustomFieldValue({
+        campaignContactId: input.campaignContactId,
+        fieldId: input.fieldId,
+        value: input.value === null ? null : optionalText(input.value, 500),
         now: input.now
       })
     };
+  }
+
+  async listTaskBoard(input: {
+    readonly actor: AdminRequestActor;
+    readonly onlyMine?: boolean;
+    readonly now: Date;
+  }): Promise<readonly OutreachTaskBoardItem[]> {
+    requirePermission(input.actor, "outreach.read");
+    const rows = await this.repository.listTaskBoard({
+      assignedAdminId: input.onlyMine ? input.actor.adminId : null,
+      now: input.now
+    });
+    return rows.map((row) => ({
+      ...row,
+      urgency: row.status === "completed"
+        ? "completed"
+        : computeTaskUrgency(new Date(row.dueAt), input.now)
+    }));
   }
 
   listContacts(input: {
@@ -384,7 +555,18 @@ export class AdminOutreachService {
     requireIds(input.campaignContactIds);
     const ids = unique(input.campaignContactIds);
     validateActivity(input.channel, input.result);
-    validateStage(input.stage ?? null, input.lostReason ?? null);
+    let lostReason: OutreachLostReason | null = null;
+    if (input.stage) {
+      const outcome = await this.repository.getPipelineColumnOutcome({
+        campaignContactId: ids[0] as string,
+        stage: input.stage
+      });
+      if (outcome === null) {
+        throw new Error("Outreach pipeline stage was not found for this campaign");
+      }
+      validateLostState(outcome, input.lostReason ?? null);
+      lostReason = outcome === "lost" ? input.lostReason ?? null : null;
+    }
     const nextContactAt = input.nextContactAt ?? null;
     if (
       nextContactAt
@@ -406,7 +588,7 @@ export class AdminOutreachService {
       note: optionalText(input.note, 2000),
       batchId: ids.length > 1 ? this.idGenerator.newId() : null,
       stage: input.stage ?? null,
-      lostReason: input.stage === "lost" ? input.lostReason ?? null : null,
+      lostReason,
       nextContactAt,
       occurredAt: input.now
     });
@@ -425,14 +607,21 @@ export class AdminOutreachService {
   }): Promise<{ readonly updated: boolean }> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.campaignContactId);
-    validateStage(input.stage, input.lostReason ?? null);
+    const outcome = await this.repository.getPipelineColumnOutcome({
+      campaignContactId: input.campaignContactId,
+      stage: input.stage
+    });
+    if (outcome === null) {
+      throw new Error("Outreach pipeline stage was not found for this campaign");
+    }
+    validateLostState(outcome, input.lostReason ?? null);
     return {
       updated: await this.repository.updateContactStage({
         campaignContactId: input.campaignContactId,
         actorAdminId: input.actor.adminId,
         historyId: this.idGenerator.newId(),
         stage: input.stage,
-        lostReason: input.stage === "lost" ? input.lostReason ?? null : null,
+        lostReason: outcome === "lost" ? input.lostReason ?? null : null,
         now: input.now
       })
     };
@@ -631,16 +820,48 @@ function validateActivity(
   }
 }
 
-function validateStage(
-  stage: OutreachPipelineStage | null,
+function validateLostState(
+  outcome: OutreachPipelineColumnOutcome,
   lostReason: OutreachLostReason | null
 ): void {
-  if (stage === "lost" && !lostReason) {
+  if (outcome === "lost" && !lostReason) {
     throw new Error("Outreach lost reason is required");
   }
-  if (stage !== "lost" && lostReason) {
-    throw new Error("Outreach lost reason is only valid for a lost lead");
+  if (outcome !== "lost" && lostReason) {
+    throw new Error("Outreach lost reason is only valid for a lost-outcome stage");
   }
+}
+
+const STAGE_ID_PATTERN = /^[a-z0-9_]{1,40}$/;
+
+function newStageId(idGenerator: IdGenerator): string {
+  return `s_${idGenerator.newId().replaceAll("-", "").slice(0, 16)}`;
+}
+
+// Exported so the admin-web board can preview the same bucketing without a
+// round trip, and so it is covered directly by unit tests.
+export function computeTaskUrgency(dueAt: Date, now: Date): OutreachTaskUrgency {
+  if (dueAt.getTime() < now.getTime()) {
+    return "overdue";
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startOfToday = Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()
+  );
+  const startOfDue = Date.UTC(
+    dueAt.getUTCFullYear(), dueAt.getUTCMonth(), dueAt.getUTCDate()
+  );
+  const diffDays = Math.round((startOfDue - startOfToday) / dayMs);
+  if (diffDays <= 0) {
+    return "today";
+  }
+  if (diffDays === 1) {
+    return "tomorrow";
+  }
+  if (diffDays <= 7) {
+    return "this_week";
+  }
+  return "later";
 }
 
 function unique(values: readonly string[]): readonly string[] {

@@ -1084,7 +1084,7 @@ tbody tr:hover {
 
 .outreach-pipeline-list > div {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
 }
@@ -1096,13 +1096,86 @@ tbody tr:hover {
   text-align: center;
 }
 
-.outreach-pipeline-list input {
+.outreach-pipeline-list input,
+.outreach-pipeline-list select {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
   background: #ffffff;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
+}
+
+.outreach-field-form {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 18px;
+}
+
+.outreach-field-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.outreach-field-form input,
+.outreach-field-form select {
+  min-height: 40px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
+}
+
+.outreach-field-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0 18px 18px;
+  list-style: none;
+}
+
+.outreach-field-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.outreach-field-type,
+.outreach-field-scope {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.outreach-custom-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.outreach-custom-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.outreach-custom-fields input,
+.outreach-custom-fields select {
+  min-height: 36px;
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
 }
 
 .outreach-pipeline-list > div > div {
@@ -1328,6 +1401,38 @@ tbody tr:hover {
 
 .outreach-column-lost {
   border-top-color: #c86b6b;
+}
+
+.outreach-task-column-overdue {
+  border-top-color: #c86b6b;
+}
+
+.outreach-task-column-today {
+  border-top-color: #d5a642;
+}
+
+.outreach-task-column-tomorrow,
+.outreach-task-column-this_week {
+  border-top-color: #6d9fc2;
+}
+
+.outreach-task-column-completed {
+  border-top-color: #237453;
+}
+
+.outreach-mine-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.outreach-task-card .outreach-card-facts {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .outreach-column > header {

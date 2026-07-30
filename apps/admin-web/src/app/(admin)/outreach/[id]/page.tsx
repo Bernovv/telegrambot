@@ -7,19 +7,24 @@ import {
   assignOutreachContacts,
   completeOutreachTask,
   createOutreachContact,
+  createOutreachCustomFieldDefinition,
   createOutreachTask,
+  deleteOutreachCustomFieldDefinition,
   exportOutreachCampaign,
   getOutreachCampaign,
   getOutreachContact,
   importOutreachContacts,
   listOutreachContacts,
+  listOutreachCustomFieldDefinitions,
   listOutreachManagers,
   listOutreachPipelineColumns,
   recordOutreachActivities,
+  setOutreachCustomFieldValue,
   updateOutreachCampaign,
   updateOutreachContactStage,
   updateOutreachPipelineColumns,
-  type OutreachContactFilters
+  type OutreachContactFilters,
+  type OutreachPipelineColumnDraft
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
@@ -30,9 +35,12 @@ import type {
   OutreachCampaignSummary,
   OutreachChannel,
   OutreachContactStatus,
+  OutreachCustomFieldDefinition,
+  OutreachCustomFieldType,
   OutreachLostReason,
   OutreachManager,
   OutreachPipelineColumn,
+  OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
   OutreachTask,
   OutreachTaskType
@@ -55,6 +63,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Trash2,
   UserRoundCheck,
   X
 } from "lucide-react";
@@ -92,7 +101,10 @@ export default function OutreachCampaignPage() {
   const [pipelineColumns, setPipelineColumns] =
     useState<readonly OutreachPipelineColumn[]>(DEFAULT_PIPELINE_COLUMNS);
   const [pipelineDraft, setPipelineDraft] =
-    useState<readonly OutreachPipelineColumn[]>(DEFAULT_PIPELINE_COLUMNS);
+    useState<readonly OutreachPipelineColumnDraft[]>(DEFAULT_PIPELINE_COLUMNS);
+  const [customFields, setCustomFields] =
+    useState<readonly OutreachCustomFieldDefinition[]>([]);
+  const [fieldFormOpen, setFieldFormOpen] = useState(false);
   const [contactFormOpen, setContactFormOpen] = useState(false);
   const [pipelineSettingsOpen, setPipelineSettingsOpen] = useState(false);
   const [view, setView] = useState<ViewMode>("board");
@@ -132,12 +144,18 @@ export default function OutreachCampaignPage() {
       setCampaign(campaignResult);
       setContacts(contactResult);
       setManagers(managerResult);
-      const resolvedPipeline = pipelineResult.length === 7
+      const resolvedPipeline = pipelineResult.length > 0
         ? pipelineResult
         : DEFAULT_PIPELINE_COLUMNS;
       setPipelineColumns(resolvedPipeline);
       setPipelineDraft(resolvedPipeline);
       setSelected([]);
+      try {
+        setCustomFields(await listOutreachCustomFieldDefinitions(id, signal));
+      } catch {
+        // Custom fields are an enhancement; a failure here should not block
+        // the rest of the campaign from loading.
+      }
     } catch (caught) {
       if (!signal?.aborted) {
         setError(messageFor(caught, "Не удалось загрузить кампанию."));
@@ -172,15 +190,7 @@ export default function OutreachCampaignPage() {
           (contact) => contact.stage === column.stage
         ) ?? []
       }),
-      {
-        new: [],
-        first_contact: [],
-        dialogue: [],
-        follow_up: [],
-        interested: [],
-        won: [],
-        lost: []
-      }
+      {}
     ),
     [contacts, pipelineColumns]
   );
@@ -190,11 +200,16 @@ export default function OutreachCampaignPage() {
       ?? stageLabel(stage);
   }
 
+  function outcomeFor(stage: OutreachPipelineStage): OutreachPipelineColumnOutcome {
+    return pipelineColumns.find((column) => column.stage === stage)?.outcome
+      ?? "open";
+  }
+
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const search = formText(data, "search").trim();
-    const stage = formText(data, "stage") as OutreachPipelineStage | "";
+    const stage = formText(data, "stage");
     const assignedAdminId = formText(data, "assignedAdminId");
     setFilters({
       page: 1,
@@ -231,6 +246,31 @@ export default function OutreachCampaignPage() {
     );
   }
 
+  // Suggests where a touch result should move the card. This only guesses
+  // for the campaign's original default stage ids or by outcome flag
+  // (won/lost); once a manager renames or removes those, the suggestion
+  // simply falls back to leaving the card in its current column, and the
+  // manager drags it manually.
+  function stageForResult(
+    result: Exclude<OutreachContactStatus, "new">
+  ): OutreachPipelineStage {
+    const byId = (stage: string) =>
+      pipelineColumns.find((column) => column.stage === stage)?.stage;
+    const byOutcome = (outcome: OutreachPipelineColumnOutcome) =>
+      pipelineColumns.find((column) => column.outcome === outcome)?.stage;
+    const suggestion: Partial<Record<typeof result, string | undefined>> = {
+      sent: byId("first_contact"),
+      no_answer: byId("first_contact"),
+      answered: byId("dialogue"),
+      callback: byId("follow_up"),
+      interested: byId("interested"),
+      declined: byOutcome("lost"),
+      converted: byOutcome("won"),
+      invalid: byOutcome("lost")
+    };
+    return suggestion[result] ?? pipelineColumns[0]?.stage ?? "new";
+  }
+
   function beginAction(ids: readonly string[], channel: OutreachChannel) {
     const result = channel === "phone" ? "no_answer" : "sent";
     setActivityResult(result);
@@ -255,7 +295,7 @@ export default function OutreachCampaignPage() {
         channel: action.channel,
         result: activityResult,
         stage: activityStage,
-        ...(activityStage === "lost" && lostReason ? { lostReason } : {}),
+        ...(outcomeFor(activityStage) === "lost" && lostReason ? { lostReason } : {}),
         ...(note ? { note } : {}),
         ...(nextContactValue
           ? { nextContactAt: new Date(nextContactValue).toISOString() }
@@ -376,7 +416,7 @@ export default function OutreachCampaignPage() {
     stage: OutreachPipelineStage,
     lostReason?: OutreachLostReason
   ) {
-    if (stage === "lost" && !lostReason) {
+    if (outcomeFor(stage) === "lost" && !lostReason) {
       setStageTarget({ contactId, stage });
       return;
     }
@@ -420,7 +460,7 @@ export default function OutreachCampaignPage() {
       new FormData(event.currentTarget),
       "lostReason"
     ) as OutreachLostReason;
-    await moveStage(stageTarget.contactId, "lost", reason);
+    await moveStage(stageTarget.contactId, stageTarget.stage, reason);
   }
 
   async function submitTask(event: FormEvent<HTMLFormElement>) {
@@ -524,10 +564,40 @@ export default function OutreachCampaignPage() {
     }
     next[index] = sibling;
     next[nextIndex] = current;
-    setPipelineDraft(next.map((column, position) => ({
-      ...column,
-      position: position + 1
-    })));
+    setPipelineDraft(next);
+  }
+
+  function addPipelineColumn() {
+    if (pipelineDraft.length >= 20) {
+      setNotice("Максимум 20 колонок в одной воронке.");
+      return;
+    }
+    setPipelineDraft((current) => [
+      ...current,
+      { label: "Новая колонка", outcome: "open" }
+    ]);
+  }
+
+  function removePipelineColumn(index: number) {
+    if (pipelineDraft.length <= 1) {
+      return;
+    }
+    setPipelineDraft((current) => current.filter((_, position) => position !== index));
+  }
+
+  function renamePipelineColumn(index: number, label: string) {
+    setPipelineDraft((current) => current.map((column, position) =>
+      position === index ? { ...column, label } : column
+    ));
+  }
+
+  function setPipelineColumnOutcome(
+    index: number,
+    outcome: OutreachPipelineColumnOutcome
+  ) {
+    setPipelineDraft((current) => current.map((column, position) =>
+      position === index ? { ...column, outcome } : column
+    ));
   }
 
   async function submitPipelineSettings(event: FormEvent<HTMLFormElement>) {
@@ -536,13 +606,77 @@ export default function OutreachCampaignPage() {
     setError(null);
     try {
       await updateOutreachPipelineColumns(id, pipelineDraft);
-      setPipelineColumns(pipelineDraft);
+      await load();
       setPipelineSettingsOpen(false);
       setNotice("Настройки воронки сохранены.");
     } catch (caught) {
-      setError(messageFor(caught, "Не удалось сохранить воронку."));
+      setError(messageFor(caught, "Не удалось сохранить воронку. Если колонка ещё занята контактами, сначала переместите их."));
     } finally {
       setMutating(false);
+    }
+  }
+
+  async function submitNewField(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const label = formText(data, "label").trim();
+    const type = formText(data, "type") as OutreachCustomFieldType;
+    const scope = formText(data, "scope");
+    const options = type === "select"
+      ? formText(data, "options")
+          .split(",")
+          .map((option) => option.trim())
+          .filter((option) => option.length > 0)
+      : undefined;
+    if (!label) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      const created = await createOutreachCustomFieldDefinition({
+        ...(scope === "campaign" ? { campaignId: id } : {}),
+        label,
+        type,
+        ...(options ? { options } : {})
+      });
+      setCustomFields((current) => [...current, created]);
+      setFieldFormOpen(false);
+      setNotice("Поле добавлено.");
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось добавить поле."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeField(fieldId: string) {
+    if (!window.confirm("Удалить поле? Значения на всех карточках будут потеряны.")) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      await deleteOutreachCustomFieldDefinition(fieldId);
+      setCustomFields((current) => current.filter((field) => field.id !== fieldId));
+      setNotice("Поле удалено.");
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось удалить поле."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function updateDetailFieldValue(fieldId: string, value: string) {
+    if (!detail) {
+      return;
+    }
+    setError(null);
+    try {
+      await setOutreachCustomFieldValue(detail.id, fieldId, value.trim() || null);
+      setDetail(await getOutreachContact(detail.id));
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить значение поля."));
     }
   }
 
@@ -795,10 +929,10 @@ export default function OutreachCampaignPage() {
                 >
                   <header>
                     <span>{column.label}</span>
-                    <strong>{boardGroups[column.stage].length}</strong>
+                    <strong>{(boardGroups[column.stage] ?? []).length}</strong>
                   </header>
                   <div className="outreach-column-cards">
-                    {boardGroups[column.stage].map((contact) => (
+                    {(boardGroups[column.stage] ?? []).map((contact) => (
                       <article
                         className="outreach-lead-card"
                         key={contact.id}
@@ -845,7 +979,7 @@ export default function OutreachCampaignPage() {
                         </div>
                       </article>
                     ))}
-                    {boardGroups[column.stage].length === 0 ? (
+                    {(boardGroups[column.stage] ?? []).length === 0 ? (
                       <div className="outreach-column-empty">Перетащите контакт сюда</div>
                     ) : null}
                   </div>
@@ -903,7 +1037,7 @@ export default function OutreachCampaignPage() {
                         ) : null}
                       </td>
                       <td>
-                        <StatusPill tone={stageTone(contact.stage)}>
+                        <StatusPill tone={stageTone(outcomeFor(contact.stage))}>
                           {columnLabel(contact.stage)}
                         </StatusPill>
                       </td>
@@ -1035,7 +1169,7 @@ export default function OutreachCampaignPage() {
             <div className="section-title-row">
               <div>
                 <h2 id="pipeline-settings-title">Настройка воронки</h2>
-                <span>Переименуйте колонки или измените их порядок.</span>
+                <span>Добавляйте, удаляйте, переименовывайте колонки и меняйте их порядок.</span>
               </div>
               <button
                 className="icon-button"
@@ -1052,19 +1186,27 @@ export default function OutreachCampaignPage() {
             >
               <div className="outreach-pipeline-list">
                 {pipelineDraft.map((column, index) => (
-                  <div key={column.stage}>
+                  <div key={column.stage ?? `draft-${index}`}>
                     <span>{index + 1}</span>
                     <input
                       aria-label={`Название колонки ${index + 1}`}
                       value={column.label}
                       maxLength={60}
                       required
-                      onChange={(event) => setPipelineDraft((current) =>
-                        current.map((item) => item.stage === column.stage
-                          ? { ...item, label: event.target.value }
-                          : item)
-                      )}
+                      onChange={(event) => renamePipelineColumn(index, event.target.value)}
                     />
+                    <select
+                      aria-label={`Результат колонки ${index + 1}`}
+                      value={column.outcome}
+                      onChange={(event) => setPipelineColumnOutcome(
+                        index,
+                        event.target.value as OutreachPipelineColumnOutcome
+                      )}
+                    >
+                      <option value="open">В работе</option>
+                      <option value="won">Выигран</option>
+                      <option value="lost">Проигран</option>
+                    </select>
                     <div>
                       <button
                         type="button"
@@ -1082,18 +1224,100 @@ export default function OutreachCampaignPage() {
                       >
                         <ChevronDown size={16} />
                       </button>
+                      <button
+                        type="button"
+                        aria-label="Удалить колонку"
+                        disabled={pipelineDraft.length <= 1}
+                        onClick={() => removePipelineColumn(index)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={addPipelineColumn}
+                disabled={pipelineDraft.length >= 20}
+              >
+                <Plus size={16} /> Добавить колонку
+              </button>
               <p>
-                Переименование не меняет историю и статистику. Этапы оплаты и закрытия
-                сохраняют свой системный смысл.
+                Переименование не меняет историю и статистику. Отметьте «Выигран»/«Проигран»
+                на колонках, где сделка закрывается — на этом основана аналитика конверсии,
+                а для «Проигран» потребуется указать причину.
               </p>
               <button className="primary-button" type="submit" disabled={mutating}>
                 {mutating ? "Сохраняем…" : "Сохранить воронку"}
               </button>
             </form>
+
+            <div className="section-title-row">
+              <div>
+                <h3>Дополнительные поля карточки</h3>
+                <span>Свои поля для клиентов — как в amoCRM.</span>
+              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setFieldFormOpen((current) => !current)}
+              >
+                <Plus size={16} /> Добавить поле
+              </button>
+            </div>
+            {fieldFormOpen ? (
+              <form className="outreach-field-form" onSubmit={(event) => void submitNewField(event)}>
+                <label>
+                  <span>Название поля</span>
+                  <input name="label" maxLength={80} required />
+                </label>
+                <label>
+                  <span>Тип</span>
+                  <select name="type" defaultValue="text">
+                    <option value="text">Текст</option>
+                    <option value="number">Число</option>
+                    <option value="date">Дата</option>
+                    <option value="select">Список</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Варианты (через запятую, только для списка)</span>
+                  <input name="options" placeholder="Instagram, Сайт, Рекомендация" />
+                </label>
+                <label>
+                  <span>Область действия</span>
+                  <select name="scope" defaultValue="campaign">
+                    <option value="campaign">Только эта кампания</option>
+                    <option value="global">Все кампании</option>
+                  </select>
+                </label>
+                <button className="primary-button" type="submit" disabled={mutating}>
+                  {mutating ? "Добавляем…" : "Добавить поле"}
+                </button>
+              </form>
+            ) : null}
+            <ul className="outreach-field-list">
+              {customFields.map((field) => (
+                <li key={field.id}>
+                  <span>{field.label}</span>
+                  <span className="outreach-field-type">{fieldTypeLabel(field.type)}</span>
+                  <span className="outreach-field-scope">
+                    {field.campaignId ? "эта кампания" : "все кампании"}
+                  </span>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label={`Удалить поле ${field.label}`}
+                    onClick={() => void removeField(field.id)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </li>
+              ))}
+              {customFields.length === 0 ? <li>Пока нет ни одного поля.</li> : null}
+            </ul>
           </section>
         </div>
       ) : null}
@@ -1154,14 +1378,14 @@ export default function OutreachCampaignPage() {
                 <span>Переместить в этап</span>
                 <select
                   value={activityStage}
-                  onChange={(event) => setActivityStage(event.target.value as OutreachPipelineStage)}
+                  onChange={(event) => setActivityStage(event.target.value)}
                 >
                   {pipelineColumns.map((column) => (
                     <option key={column.stage} value={column.stage}>{column.label}</option>
                   ))}
                 </select>
               </label>
-              {activityStage === "lost" ? (
+              {outcomeFor(activityStage) === "lost" ? (
                 <label>
                   <span>Причина закрытия</span>
                   <select name="lostReason" required defaultValue="declined">
@@ -1248,10 +1472,7 @@ export default function OutreachCampaignPage() {
                 <select
                   value={detail.stage}
                   disabled={mutating}
-                  onChange={(event) => void moveStage(
-                    detail.id,
-                    event.target.value as OutreachPipelineStage
-                  )}
+                  onChange={(event) => void moveStage(detail.id, event.target.value)}
                 >
                   {pipelineColumns.map((column) => (
                     <option key={column.stage} value={column.stage}>{column.label}</option>
@@ -1279,6 +1500,33 @@ export default function OutreachCampaignPage() {
               <span>Последний результат</span><strong>{statusLabel(detail.status)}</strong>
               <span>Регистрация в боте</span><strong>{detail.linkedUserId ? "Да" : "Нет"}</strong>
             </div>
+
+            {detail.customFields.length > 0 ? (
+              <div className="outreach-custom-fields">
+                {detail.customFields.map((field) => (
+                  <label key={field.fieldId}>
+                    <span>{field.label}</span>
+                    {field.type === "select" ? (
+                      <select
+                        defaultValue={field.value ?? ""}
+                        onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
+                      >
+                        <option value="">Не выбрано</option>
+                        {(field.options ?? []).map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                        defaultValue={field.value ?? ""}
+                        onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+            ) : null}
 
             <section className="outreach-task-panel">
               <div className="outreach-task-heading">
@@ -1437,21 +1685,6 @@ function resultsFor(
     : ["sent", "answered", "callback", "interested", "declined", "converted", "invalid"];
 }
 
-function stageForResult(
-  result: Exclude<OutreachContactStatus, "new">
-): OutreachPipelineStage {
-  return {
-    sent: "first_contact",
-    no_answer: "first_contact",
-    answered: "dialogue",
-    callback: "follow_up",
-    interested: "interested",
-    declined: "lost",
-    converted: "won",
-    invalid: "lost"
-  }[result] as OutreachPipelineStage;
-}
-
 function statusLabel(status: OutreachContactStatus): string {
   return {
     new: "Не обрабатывали",
@@ -1467,7 +1700,7 @@ function statusLabel(status: OutreachContactStatus): string {
 }
 
 function stageLabel(stage: OutreachPipelineStage): string {
-  return {
+  return (({
     new: "Новые",
     first_contact: "Первичный контакт",
     dialogue: "В диалоге",
@@ -1475,7 +1708,16 @@ function stageLabel(stage: OutreachPipelineStage): string {
     interested: "Заинтересован",
     won: "Оплатил / зарегистрировался",
     lost: "Закрыто без результата"
-  }[stage];
+  }) as Record<string, string>)[stage] ?? stage;
+}
+
+function fieldTypeLabel(type: OutreachCustomFieldType): string {
+  return {
+    text: "Текст",
+    number: "Число",
+    date: "Дата",
+    select: "Список"
+  }[type];
 }
 
 function lostReasonLabel(reason: OutreachLostReason): string {
@@ -1507,16 +1749,15 @@ function channelLabel(channel: OutreachChannel): string {
   }[channel];
 }
 
+// Individual mid-pipeline stages no longer have fixed meaning once managers
+// can add/remove/rename them, so tone now follows the outcome flag only.
 function stageTone(
-  stage: OutreachPipelineStage
+  outcome: OutreachPipelineColumnOutcome
 ): "positive" | "warning" | "neutral" | "danger" {
-  if (stage === "interested" || stage === "won") {
+  if (outcome === "won") {
     return "positive";
   }
-  if (stage === "dialogue" || stage === "follow_up") {
-    return "warning";
-  }
-  if (stage === "lost") {
+  if (outcome === "lost") {
     return "danger";
   }
   return "neutral";
@@ -1537,13 +1778,13 @@ function formText(data: FormData, name: string): string {
 }
 
 const DEFAULT_PIPELINE_COLUMNS: readonly OutreachPipelineColumn[] = [
-  { stage: "new", label: "Новые", position: 1 },
-  { stage: "first_contact", label: "Первичный контакт", position: 2 },
-  { stage: "dialogue", label: "В диалоге", position: 3 },
-  { stage: "follow_up", label: "Думает / перезвонить", position: 4 },
-  { stage: "interested", label: "Заинтересован", position: 5 },
-  { stage: "won", label: "Оплатил / зарегистрировался", position: 6 },
-  { stage: "lost", label: "Закрыто без результата", position: 7 }
+  { stage: "new", label: "Новые", position: 1, outcome: "open" },
+  { stage: "first_contact", label: "Первичный контакт", position: 2, outcome: "open" },
+  { stage: "dialogue", label: "В диалоге", position: 3, outcome: "open" },
+  { stage: "follow_up", label: "Думает / перезвонить", position: 4, outcome: "open" },
+  { stage: "interested", label: "Заинтересован", position: 5, outcome: "open" },
+  { stage: "won", label: "Оплатил / зарегистрировался", position: 6, outcome: "won" },
+  { stage: "lost", label: "Закрыто без результата", position: 7, outcome: "lost" }
 ];
 
 const LOST_REASONS: readonly OutreachLostReason[] = [

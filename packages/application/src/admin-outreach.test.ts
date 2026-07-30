@@ -3,8 +3,45 @@ import { describe, it } from "node:test";
 import type { AdminRequestActor } from "@ticket-platform/contracts";
 import {
   AdminOutreachService,
+  computeTaskUrgency,
   type AdminOutreachRepository
 } from "./admin-outreach.js";
+
+describe("computeTaskUrgency", () => {
+  const now = new Date("2026-07-30T12:00:00.000Z");
+
+  it("buckets a past due time as overdue", () => {
+    assert.equal(
+      computeTaskUrgency(new Date("2026-07-30T09:00:00.000Z"), now),
+      "overdue"
+    );
+  });
+
+  it("buckets the same calendar day as today", () => {
+    assert.equal(
+      computeTaskUrgency(new Date("2026-07-30T20:00:00.000Z"), now),
+      "today"
+    );
+  });
+
+  it("buckets the next calendar day as tomorrow", () => {
+    assert.equal(
+      computeTaskUrgency(new Date("2026-07-31T08:00:00.000Z"), now),
+      "tomorrow"
+    );
+  });
+
+  it("buckets within a week as this_week and beyond as later", () => {
+    assert.equal(
+      computeTaskUrgency(new Date("2026-08-04T08:00:00.000Z"), now),
+      "this_week"
+    );
+    assert.equal(
+      computeTaskUrgency(new Date("2026-08-10T08:00:00.000Z"), now),
+      "later"
+    );
+  });
+});
 
 describe("AdminOutreachService", () => {
   it("normalizes a bounded import and assigns it to the current manager", async () => {
@@ -114,6 +151,7 @@ describe("AdminOutreachService", () => {
     let received: Parameters<AdminOutreachRepository["createTask"]>[0] | undefined;
     const service = new AdminOutreachService(
       repository({
+        async getPipelineColumnOutcome() { return "lost"; },
         async createTask(input) {
           received = input;
           return true;
@@ -153,7 +191,7 @@ describe("AdminOutreachService", () => {
       repository({
         async updatePipelineColumns(input) {
           received = input;
-          return true;
+          return "updated";
         }
       }),
       { normalize: (value) => value },
@@ -164,22 +202,120 @@ describe("AdminOutreachService", () => {
       actor: writeActor,
       campaignId: CAMPAIGN_ID,
       columns: [
-        { stage: "new", label: " Новые лиды ", position: 7 },
-        { stage: "dialogue", label: "Обсуждаем", position: 1 },
-        { stage: "first_contact", label: "Первый контакт", position: 2 },
-        { stage: "follow_up", label: "Вернуться позже", position: 3 },
-        { stage: "interested", label: "Готов купить", position: 4 },
-        { stage: "won", label: "Успешно", position: 5 },
-        { stage: "lost", label: "Закрыто", position: 6 }
+        { stage: "dialogue", label: "Обсуждаем", outcome: "open" },
+        { stage: "new", label: " Новые лиды ", outcome: "open" },
+        { stage: "won", label: "Успешно", outcome: "won" },
+        { stage: "lost", label: "Закрыто", outcome: "lost" },
+        { label: "Новая колонка", outcome: "open" }
       ],
       now
     });
 
     assert.equal(result.updated, true);
-    assert.equal(received?.columns[0]?.label, "Новые лиды");
+    assert.equal(received?.columns[0]?.stage, "dialogue");
     assert.equal(received?.columns[0]?.position, 1);
-    assert.equal(received?.columns[1]?.stage, "dialogue");
+    assert.equal(received?.columns[1]?.label, "Новые лиды");
     assert.equal(received?.columns[1]?.position, 2);
+    assert.equal(received?.columns[4]?.label, "Новая колонка");
+    assert.match(received?.columns[4]?.stage ?? "", /^s_[a-z0-9]+$/);
+  });
+
+  it("rejects a duplicate lost-stage move without a reason via the outcome lookup", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async getPipelineColumnOutcome() { return "lost"; }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.updateContactStage({
+        actor: writeActor,
+        campaignContactId: CAMPAIGN_CONTACT_ID,
+        stage: "closed_lost",
+        now
+      }),
+      /lost reason/
+    );
+  });
+
+  it("rejects moving a contact to a stage the campaign no longer has", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async getPipelineColumnOutcome() { return null; }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.updateContactStage({
+        actor: writeActor,
+        campaignContactId: CAMPAIGN_CONTACT_ID,
+        stage: "deleted_stage",
+        now
+      }),
+      /was not found/
+    );
+  });
+
+  it("requires select options and rejects options on a non-select field", async () => {
+    const service = new AdminOutreachService(
+      repository({}),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.createCustomFieldDefinition({
+        actor: writeActor,
+        label: "Источник",
+        type: "select",
+        options: [],
+        now
+      }),
+      /options are invalid/
+    );
+    await assert.rejects(
+      service.createCustomFieldDefinition({
+        actor: writeActor,
+        label: "Бюджет",
+        type: "number",
+        options: ["a"],
+        now
+      }),
+      /only valid for a select field/
+    );
+
+    const created = await service.createCustomFieldDefinition({
+      actor: writeActor,
+      label: "Источник",
+      type: "select",
+      options: [" Instagram ", "Instagram", "Сайт"],
+      now
+    });
+    assert.deepEqual(created.options, ["Instagram", "Сайт"]);
+  });
+
+  it("surfaces a friendly error when deleting a pipeline stage still in use", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async updatePipelineColumns() { return "stage_in_use"; }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.updatePipelineColumns({
+        actor: writeActor,
+        campaignId: CAMPAIGN_ID,
+        columns: [{ stage: "new", label: "Новые", outcome: "open" }],
+        now
+      }),
+      /still has contacts/
+    );
   });
 });
 
@@ -192,7 +328,23 @@ function repository(
     async createCampaign() {},
     async updateCampaign() { return false; },
     async listPipelineColumns() { return []; },
-    async updatePipelineColumns() { return false; },
+    async updatePipelineColumns() { return "updated"; },
+    async getPipelineColumnOutcome() { return "open"; },
+    async listCustomFieldDefinitions() { return []; },
+    async createCustomFieldDefinition(input) {
+      return {
+        id: input.id,
+        campaignId: input.campaignId,
+        key: input.key,
+        label: input.label,
+        type: input.type,
+        options: input.options,
+        position: 1
+      };
+    },
+    async deleteCustomFieldDefinition() { return false; },
+    async setCustomFieldValue() { return false; },
+    async listTaskBoard() { return []; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
     async importContacts(input) {

@@ -8,11 +8,16 @@ import type {
   OutreachCampaignContactDetail,
   OutreachCampaignContactSummary,
   OutreachCampaignSummary,
+  OutreachCustomFieldDefinition,
+  OutreachCustomFieldType,
+  OutreachCustomFieldValue,
   OutreachImportResult,
   OutreachManager,
   OutreachPipelineColumn,
+  OutreachPipelineColumnOutcome,
   OutreachStageHistoryEntry,
-  OutreachTask
+  OutreachTask,
+  OutreachTaskBoardItem
 } from "@ticket-platform/contracts";
 import type {
   SqlConnection,
@@ -60,7 +65,42 @@ interface ContactRow {
   readonly open_task_text: string | null;
   readonly open_task_due_at: Date | string | null;
   readonly open_task_created_at: Date | string | null;
+  readonly custom_fields: readonly CustomFieldJsonRow[] | null;
   readonly total_count?: string;
+}
+
+interface CustomFieldJsonRow {
+  readonly field_id: string;
+  readonly key: string;
+  readonly label: string;
+  readonly field_type: OutreachCustomFieldType;
+  readonly options: readonly string[] | null;
+  readonly value: string | null;
+}
+
+interface CustomFieldDefinitionRow {
+  readonly id: string;
+  readonly campaign_id: string | null;
+  readonly field_key: string;
+  readonly label: string;
+  readonly field_type: OutreachCustomFieldType;
+  readonly options: readonly string[] | null;
+  readonly position: number;
+}
+
+interface TaskBoardRow {
+  readonly id: string;
+  readonly campaign_contact_id: string;
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+  readonly contact_name: string | null;
+  readonly contact_phone: string | null;
+  readonly assigned_admin_id: string;
+  readonly assigned_admin_name: string;
+  readonly task_type: OutreachTask["type"];
+  readonly task_text: string;
+  readonly due_at: Date | string;
+  readonly status: OutreachTask["status"];
 }
 
 interface ActivityRow {
@@ -81,6 +121,7 @@ interface PipelineColumnRow {
   readonly stage: OutreachPipelineColumn["stage"];
   readonly label: string;
   readonly position: number;
+  readonly outcome: OutreachPipelineColumnOutcome;
 }
 
 interface TaskRow {
@@ -201,7 +242,7 @@ implements AdminOutreachRepository {
   ): Promise<readonly OutreachPipelineColumn[]> {
     return this.read(async (connection) => {
       const result = await connection.query<PipelineColumnRow>(
-        `select stage, label, position
+        `select stage, label, position, outcome
          from public.outreach_pipeline_columns
          where campaign_id = $1::uuid
          order by position`,
@@ -210,15 +251,35 @@ implements AdminOutreachRepository {
       return result.rows.map((row) => ({
         stage: row.stage,
         label: row.label,
-        position: row.position
+        position: row.position,
+        outcome: row.outcome
       }));
     });
   }
 
-  updatePipelineColumns(
+  async updatePipelineColumns(
     input: Parameters<AdminOutreachRepository["updatePipelineColumns"]>[0]
-  ): Promise<boolean> {
-    return this.write(async (connection) => {
+  ): Promise<"updated" | "not_found" | "stage_in_use"> {
+    // A failed delete leaves the Postgres transaction aborted: every
+    // statement after it (including COMMIT) would fail until a ROLLBACK is
+    // issued. So the foreign key violation must propagate out of `write`
+    // and let its own catch block roll back, rather than being swallowed
+    // here and treated as a normal, committable result.
+    try {
+      return await this.write((connection) => this.applyPipelineColumns(connection, input));
+    } catch (error) {
+      if (isForeignKeyViolation(error)) {
+        return "stage_in_use";
+      }
+      throw error;
+    }
+  }
+
+  private async applyPipelineColumns(
+    connection: SqlConnection,
+    input: Parameters<AdminOutreachRepository["updatePipelineColumns"]>[0]
+  ): Promise<"updated" | "not_found"> {
+    {
       const campaign = await connection.query<{ readonly id: string }>(
         `select id
          from public.outreach_campaigns
@@ -227,26 +288,270 @@ implements AdminOutreachRepository {
         [input.campaignId]
       );
       if (!campaign.rows[0]) {
-        return false;
+        return "not_found";
       }
-      for (const column of input.columns) {
+      const existing = await connection.query<{ readonly stage: string }>(
+        `select stage
+         from public.outreach_pipeline_columns
+         where campaign_id = $1::uuid`,
+        [input.campaignId]
+      );
+      const existingStages = new Set(existing.rows.map((row) => row.stage));
+      const nextStages = new Set(input.columns.map((column) => column.stage));
+      const removedStages = [...existingStages].filter(
+        (stage) => !nextStages.has(stage)
+      );
+      if (removedStages.length > 0) {
         await connection.query(
-          `update public.outreach_pipeline_columns
-           set label = $3::text,
-               position = $4::integer,
-               updated_at = $5::timestamptz
+          `delete from public.outreach_pipeline_columns
            where campaign_id = $1::uuid
-             and stage = $2::text`,
-          [
-            input.campaignId,
-            column.stage,
-            column.label,
-            column.position,
-            input.now
-          ]
+             and stage = any($2::text[])`,
+          [input.campaignId, removedStages]
         );
       }
+      for (const column of input.columns) {
+        if (existingStages.has(column.stage)) {
+          await connection.query(
+            `update public.outreach_pipeline_columns
+             set label = $3::text,
+                 position = $4::integer,
+                 outcome = $5::text,
+                 updated_at = $6::timestamptz
+             where campaign_id = $1::uuid
+               and stage = $2::text`,
+            [
+              input.campaignId,
+              column.stage,
+              column.label,
+              column.position,
+              column.outcome,
+              input.now
+            ]
+          );
+        } else {
+          await connection.query(
+            `insert into public.outreach_pipeline_columns (
+               campaign_id, stage, label, position, outcome,
+               created_at, updated_at
+             ) values (
+               $1::uuid, $2::text, $3::text, $4::integer, $5::text,
+               $6::timestamptz, $6::timestamptz
+             )`,
+            [
+              input.campaignId,
+              column.stage,
+              column.label,
+              column.position,
+              column.outcome,
+              input.now
+            ]
+          );
+        }
+      }
+      return "updated";
+    }
+  }
+
+  getPipelineColumnOutcome(
+    input: Parameters<AdminOutreachRepository["getPipelineColumnOutcome"]>[0]
+  ): Promise<OutreachPipelineColumnOutcome | null> {
+    return this.read(async (connection) => {
+      const result = await connection.query<{
+        readonly outcome: OutreachPipelineColumnOutcome;
+      }>(
+        `select pipeline_column.outcome
+         from public.outreach_campaign_contacts campaign_contact
+         join public.outreach_pipeline_columns pipeline_column
+           on pipeline_column.campaign_id = campaign_contact.campaign_id
+          and pipeline_column.stage = $2::text
+         where campaign_contact.id = $1::uuid`,
+        [input.campaignContactId, input.stage]
+      );
+      return result.rows[0]?.outcome ?? null;
+    });
+  }
+
+  listCustomFieldDefinitions(
+    campaignId: string
+  ): Promise<readonly OutreachCustomFieldDefinition[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<CustomFieldDefinitionRow>(
+        `select id, campaign_id, field_key, label, field_type, options, position
+         from public.outreach_custom_field_definitions
+         where campaign_id is null or campaign_id = $1::uuid
+         order by position, created_at`,
+        [campaignId]
+      );
+      return result.rows.map(mapCustomFieldDefinition);
+    });
+  }
+
+  createCustomFieldDefinition(
+    input: Parameters<
+      AdminOutreachRepository["createCustomFieldDefinition"]
+    >[0]
+  ): Promise<OutreachCustomFieldDefinition> {
+    return this.write(async (connection) => {
+      const position = await connection.query<{ readonly next: number }>(
+        `select coalesce(max(position), 0) + 1 as next
+         from public.outreach_custom_field_definitions
+         where campaign_id is not distinct from $1::uuid`,
+        [input.campaignId]
+      );
+      const result = await connection.query<CustomFieldDefinitionRow>(
+        `insert into public.outreach_custom_field_definitions (
+           id, campaign_id, field_key, label, field_type, options,
+           position, created_by_admin_id, created_at, updated_at
+         ) values (
+           $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::jsonb,
+           $7::integer, $8::uuid, $9::timestamptz, $9::timestamptz
+         )
+         returning id, campaign_id, field_key, label, field_type, options, position`,
+        [
+          input.id,
+          input.campaignId,
+          input.key,
+          input.label,
+          input.type,
+          input.options === null ? null : JSON.stringify(input.options),
+          position.rows[0]?.next ?? 1,
+          input.createdByAdminId,
+          input.now
+        ]
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new Error("Outreach custom field creation failed");
+      }
+      return mapCustomFieldDefinition(row);
+    });
+  }
+
+  deleteCustomFieldDefinition(fieldId: string): Promise<boolean> {
+    return this.write(async (connection) => {
+      await connection.query(
+        `delete from public.outreach_custom_field_values
+         where field_definition_id = $1::uuid`,
+        [fieldId]
+      );
+      const result = await connection.query(
+        `delete from public.outreach_custom_field_definitions
+         where id = $1::uuid`,
+        [fieldId]
+      );
+      return result.rowCount === 1;
+    });
+  }
+
+  setCustomFieldValue(
+    input: Parameters<AdminOutreachRepository["setCustomFieldValue"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const definition = await connection.query<{
+        readonly field_type: OutreachCustomFieldType;
+      }>(
+        `select field_type
+         from public.outreach_custom_field_definitions
+         where id = $1::uuid`,
+        [input.fieldId]
+      );
+      const fieldType = definition.rows[0]?.field_type;
+      if (!fieldType) {
+        return false;
+      }
+      if (input.value === null) {
+        await connection.query(
+          `insert into public.outreach_custom_field_values (
+             campaign_contact_id, field_definition_id,
+             value_text, value_number, value_date, updated_at
+           ) values ($1::uuid, $2::uuid, null, null, null, $3::timestamptz)
+           on conflict (campaign_contact_id, field_definition_id)
+           do update set value_text = null, value_number = null,
+             value_date = null, updated_at = $3::timestamptz`,
+          [input.campaignContactId, input.fieldId, input.now]
+        );
+        return true;
+      }
+      if (fieldType === "number" && !Number.isFinite(Number(input.value))) {
+        throw new Error("Outreach custom field number value is invalid");
+      }
+      if (
+        fieldType === "date"
+        && Number.isNaN(new Date(input.value).getTime())
+      ) {
+        throw new Error("Outreach custom field date value is invalid");
+      }
+      await connection.query(
+        `insert into public.outreach_custom_field_values (
+           campaign_contact_id, field_definition_id,
+           value_text, value_number, value_date, updated_at
+         ) values (
+           $1::uuid, $2::uuid,
+           case when $3::text = 'text' or $3::text = 'select' then $4::text end,
+           case when $3::text = 'number' then $4::numeric end,
+           case when $3::text = 'date' then $4::date end,
+           $5::timestamptz
+         )
+         on conflict (campaign_contact_id, field_definition_id)
+         do update set
+           value_text = case when $3::text = 'text' or $3::text = 'select' then $4::text end,
+           value_number = case when $3::text = 'number' then $4::numeric end,
+           value_date = case when $3::text = 'date' then $4::date end,
+           updated_at = $5::timestamptz`,
+        [input.campaignContactId, input.fieldId, fieldType, input.value, input.now]
+      );
       return true;
+    });
+  }
+
+  listTaskBoard(
+    input: Parameters<AdminOutreachRepository["listTaskBoard"]>[0]
+  ): Promise<readonly Omit<OutreachTaskBoardItem, "urgency">[]> {
+    return this.read(async (connection) => {
+      const startOfToday = new Date(Date.UTC(
+        input.now.getUTCFullYear(),
+        input.now.getUTCMonth(),
+        input.now.getUTCDate()
+      ));
+      const result = await connection.query<TaskBoardRow>(
+        `select task.id, task.campaign_contact_id,
+                campaign.id as campaign_id, campaign.name as campaign_name,
+                contact.display_name as contact_name,
+                contact.phone_e164 as contact_phone,
+                task.assigned_admin_id,
+                coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                task.task_type, task.task_text, task.due_at, task.status
+         from public.outreach_tasks task
+         join public.outreach_campaign_contacts campaign_contact
+           on campaign_contact.id = task.campaign_contact_id
+         join public.outreach_campaigns campaign
+           on campaign.id = campaign_contact.campaign_id
+         join public.outreach_contacts contact
+           on contact.id = campaign_contact.contact_id
+         join public.admin_accounts assignee
+           on assignee.id = task.assigned_admin_id
+         where ($1::uuid is null or task.assigned_admin_id = $1)
+           and (
+             task.status = 'open'
+             or (task.status = 'completed' and task.completed_at >= $2::timestamptz)
+           )
+         order by task.status, task.due_at, task.id`,
+        [input.assignedAdminId, startOfToday]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        campaignContactId: row.campaign_contact_id,
+        campaignId: row.campaign_id,
+        campaignName: row.campaign_name,
+        contactName: row.contact_name,
+        contactPhone: row.contact_phone,
+        assignedAdminId: row.assigned_admin_id,
+        assignedAdminName: row.assigned_admin_name,
+        type: row.task_type,
+        text: row.task_text,
+        dueAt: toIso(row.due_at),
+        status: row.status
+      }));
     });
   }
 
@@ -287,6 +592,10 @@ implements AdminOutreachRepository {
              and task.status = 'open'
            limit 1
          ) open_task on true
+         left join public.outreach_pipeline_columns pipeline_column
+           on pipeline_column.campaign_id = campaign_contact.campaign_id
+          and pipeline_column.stage = campaign_contact.pipeline_stage
+         ${CUSTOM_FIELDS_LATERAL_JOIN}
          where campaign_contact.campaign_id = $1
            and ($2::text is null or (
              coalesce(contact.display_name, '') ilike $2 escape '\\'
@@ -298,15 +607,7 @@ implements AdminOutreachRepository {
            and ($4::text is null or campaign_contact.pipeline_stage = $4)
            and ($5::uuid is null or campaign_contact.assigned_admin_id = $5)
          order by
-           case campaign_contact.pipeline_stage
-             when 'new' then 0
-             when 'first_contact' then 1
-             when 'dialogue' then 2
-             when 'follow_up' then 3
-             when 'interested' then 4
-             when 'won' then 5
-             else 6
-           end,
+           coalesce(pipeline_column.position, 999),
            open_task.due_at nulls last,
            campaign_contact.created_at desc,
            campaign_contact.id desc
@@ -361,6 +662,7 @@ implements AdminOutreachRepository {
              and task.status = 'open'
            limit 1
          ) open_task on true
+         ${CUSTOM_FIELDS_LATERAL_JOIN}
          where campaign_contact.id = $1`,
         [campaignContactId]
       );
@@ -863,6 +1165,7 @@ implements AdminOutreachRepository {
              and task.status = 'open'
            limit 1
          ) open_task on true
+         ${CUSTOM_FIELDS_LATERAL_JOIN}
          where campaign_contact.campaign_id = $1
          order by contact.display_name nulls last, contact.phone_e164`,
         [campaignId]
@@ -1073,8 +1376,41 @@ function mapContact(row: ContactRow): OutreachCampaignContactSummary {
           createdAt: toIso(row.open_task_created_at),
           completedAt: null
         }
-      : null
+      : null,
+    customFields: (row.custom_fields ?? []).map(mapCustomFieldValue)
   };
+}
+
+function mapCustomFieldValue(row: CustomFieldJsonRow): OutreachCustomFieldValue {
+  return {
+    fieldId: row.field_id,
+    key: row.key,
+    label: row.label,
+    type: row.field_type,
+    options: row.options,
+    value: row.value
+  };
+}
+
+function mapCustomFieldDefinition(
+  row: CustomFieldDefinitionRow
+): OutreachCustomFieldDefinition {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    key: row.field_key,
+    label: row.label,
+    type: row.field_type,
+    options: row.options,
+    position: row.position
+  };
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { readonly code?: unknown }).code === "23503";
 }
 
 function mapActivity(row: ActivityRow): OutreachActivity {
@@ -1135,18 +1471,21 @@ const CAMPAIGN_SUMMARY_SELECT = `
   select campaign.id, campaign.name, campaign.description, campaign.status,
          count(campaign_contact.id)::text as total_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.pipeline_stage = 'new'
+           where campaign_contact.current_status = 'new'
          )::text as untouched_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.pipeline_stage = 'interested'
+           where campaign_contact.current_status = 'interested'
          )::text as interested_contacts,
          count(campaign_contact.id) filter (
-           where campaign_contact.pipeline_stage = 'won'
+           where stage_column.outcome = 'won'
          )::text as converted_contacts,
          campaign.created_at, campaign.completed_at
   from public.outreach_campaigns campaign
   left join public.outreach_campaign_contacts campaign_contact
-    on campaign_contact.campaign_id = campaign.id`;
+    on campaign_contact.campaign_id = campaign.id
+  left join public.outreach_pipeline_columns stage_column
+    on stage_column.campaign_id = campaign_contact.campaign_id
+   and stage_column.stage = campaign_contact.pipeline_stage`;
 
 const CONTACT_SUMMARY_SELECT = `
   select campaign_contact.id, contact.id as contact_id,
@@ -1170,4 +1509,33 @@ const CONTACT_SUMMARY_SELECT = `
          open_task.task_type as open_task_type,
          open_task.task_text as open_task_text,
          open_task.due_at as open_task_due_at,
-         open_task.created_at as open_task_created_at`;
+         open_task.created_at as open_task_created_at,
+         custom_fields.fields as custom_fields`;
+
+// Shared lateral join adding every custom field (global + campaign-scoped)
+// with this contact's saved value, if any. Reused by both listContacts and
+// getContact alongside CONTACT_SUMMARY_SELECT.
+const CUSTOM_FIELDS_LATERAL_JOIN = `
+  left join lateral (
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'field_id', def.id,
+          'key', def.field_key,
+          'label', def.label,
+          'field_type', def.field_type,
+          'options', def.options,
+          'value', coalesce(
+            val.value_text, val.value_number::text, val.value_date::text
+          )
+        )
+        order by def.position, def.created_at
+      ) filter (where def.id is not null),
+      '[]'::jsonb
+    ) as fields
+    from public.outreach_custom_field_definitions def
+    left join public.outreach_custom_field_values val
+      on val.field_definition_id = def.id
+     and val.campaign_contact_id = campaign_contact.id
+    where def.campaign_id is null or def.campaign_id = campaign_contact.campaign_id
+  ) custom_fields on true`;
