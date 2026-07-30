@@ -795,70 +795,35 @@ export default function OutreachCampaignPage() {
       {notice ? <div className="outreach-notice">{notice}</div> : null}
       {error ? <PageError message={error} retry={() => void load()} /> : null}
 
-      <div className="outreach-toolbar">
-        <form className="filter-bar outreach-filters" onSubmit={applyFilters}>
-          <label className="search-field">
-            <Search size={17} aria-hidden="true" />
-            <input name="search" type="search" placeholder="Имя, телефон, Telegram или MAX" />
-          </label>
-          <label className="select-field">
-            <span>Этап</span>
-            <select name="stage" defaultValue="">
-              <option value="">Все этапы</option>
-              {pipelineColumns.map((column) => (
-                <option key={column.stage} value={column.stage}>{column.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="select-field">
-            <span>Ответственный</span>
-            <select name="assignedAdminId" defaultValue="">
-              <option value="">Все</option>
-              <option value="mine">Только мои</option>
-              {managers.map((manager) => (
-                <option key={manager.id} value={manager.id}>{manager.displayName}</option>
-              ))}
-            </select>
-          </label>
-          <button className="primary-button" type="submit">
-            <Search size={16} />
-            Показать
-          </button>
-        </form>
-        <div className="outreach-toolbar-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              setPipelineDraft(toPipelineDraft(pipelineColumns));
-              setPipelineSettingsOpen(true);
-            }}
-          >
-            <Settings2 size={16} />
-            Настроить
-          </button>
-          <div className="outreach-view-toggle" aria-label="Вид контактов">
-            <button
-              type="button"
-              className={view === "board" ? "active" : ""}
-              aria-pressed={view === "board"}
-              onClick={() => switchView("board")}
-            >
-              <LayoutGrid size={16} />
-              Воронка
-            </button>
-            <button
-              type="button"
-              className={view === "table" ? "active" : ""}
-              aria-pressed={view === "table"}
-              onClick={() => switchView("table")}
-            >
-              <List size={16} />
-              Список
-            </button>
-          </div>
-        </div>
-      </div>
+      <form className="filter-bar outreach-filters" onSubmit={applyFilters}>
+        <label className="search-field">
+          <Search size={17} aria-hidden="true" />
+          <input name="search" type="search" placeholder="Имя, телефон, Telegram или MAX" />
+        </label>
+        <label className="select-field">
+          <span>Этап</span>
+          <select name="stage" defaultValue="">
+            <option value="">Все этапы</option>
+            {pipelineColumns.map((column) => (
+              <option key={column.stage} value={column.stage}>{column.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="select-field">
+          <span>Ответственный</span>
+          <select name="assignedAdminId" defaultValue="">
+            <option value="">Все</option>
+            <option value="mine">Только мои</option>
+            {managers.map((manager) => (
+              <option key={manager.id} value={manager.id}>{manager.displayName}</option>
+            ))}
+          </select>
+        </label>
+        <button className="primary-button" type="submit">
+          <Search size={16} />
+          Показать
+        </button>
+      </form>
 
       {selected.length > 0 ? (
         <div className="outreach-bulk-bar">
@@ -901,10 +866,43 @@ export default function OutreachCampaignPage() {
       ) : null}
 
       <section className="data-section outreach-leads" aria-label="Контакты кампании">
-        <div className="section-title-row">
+        <div className="section-title-row outreach-leads-title">
           <div>
             <h2>{view === "board" ? "Воронка продаж" : "Контакты"}</h2>
             <span>{contacts ? `${contacts.total} в кампании` : "—"}</span>
+          </div>
+          <div className="outreach-toolbar-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setPipelineDraft(toPipelineDraft(pipelineColumns));
+                setPipelineSettingsOpen(true);
+              }}
+            >
+              <Settings2 size={16} />
+              Настроить воронку
+            </button>
+            <div className="outreach-view-toggle" aria-label="Вид контактов">
+              <button
+                type="button"
+                className={view === "board" ? "active" : ""}
+                aria-pressed={view === "board"}
+                onClick={() => switchView("board")}
+              >
+                <LayoutGrid size={16} />
+                Воронка
+              </button>
+              <button
+                type="button"
+                className={view === "table" ? "active" : ""}
+                aria-pressed={view === "table"}
+                onClick={() => switchView("table")}
+              >
+                <List size={16} />
+                Список
+              </button>
+            </div>
           </div>
         </div>
         {loading && !contacts ? <PageLoading /> : null}
@@ -1505,6 +1503,7 @@ export default function OutreachCampaignPage() {
 
             {detail.customFields.length > 0 ? (
               <div className="outreach-custom-fields">
+                <h3>Дополнительные поля</h3>
                 {detail.customFields.map((field) => (
                   <label key={field.fieldId}>
                     <span>{field.label}</span>

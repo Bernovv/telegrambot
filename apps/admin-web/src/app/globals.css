@@ -988,8 +988,13 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Пять кнопок и длинное название кампании не помещаются в одну строку даже на
+   широком ноутбуке, поэтому кнопки всегда идут отдельной строкой под
+   заголовком — иначе они рвутся на две правые «ступеньки». */
 .outreach-heading {
-  align-items: flex-end;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .outreach-create {
@@ -1033,21 +1038,20 @@ tbody tr:hover {
   justify-self: start;
 }
 
+/* Колонки ужимаются вместе с окном: минимумы должны помещаться в рабочую
+   область на ноутбуке (≈1280px), иначе форма вылезает за свою колонку. */
 .outreach-filters {
-  grid-template-columns: minmax(240px, 1fr) minmax(150px, 190px) minmax(170px, 220px) auto;
+  grid-template-columns: minmax(200px, 1.6fr) minmax(130px, 1fr) minmax(140px, 1fr) auto;
 }
 
-.outreach-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px;
-}
-
-.outreach-toolbar-actions {
+/* Селектор с `.section-title-row >`, иначе правило `.section-title-row > div`
+   (display: grid) перебивает раскладку и кнопки встают в столбик. */
+.section-title-row > .outreach-toolbar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .outreach-view-toggle {
@@ -1156,9 +1160,19 @@ tbody tr:hover {
 
 .outreach-custom-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
-  padding: 12px 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.outreach-custom-fields > h3 {
+  margin: 0;
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .outreach-custom-fields label {
@@ -1831,6 +1845,31 @@ tbody tr:hover {
   margin: 0;
 }
 
+/* Здесь же, где остальные фильтры в панели, ломаемся на две колонки: у этой
+   формы на одно поле больше, поэтому поиск занимает всю строку. Кнопку
+   раскладывает общее правило `.filter-bar .primary-button`. */
+@media (max-width: 1050px) {
+  /* `.filter-bar.outreach-filters` — иначе общее правило `.filter-bar`
+     ниже по файлу перебьёт колонки. */
+  .filter-bar.outreach-filters {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .outreach-filters .search-field {
+    grid-column: 1 / -1;
+  }
+
+  .outreach-leads-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .outreach-leads-title .outreach-toolbar-actions {
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 760px) {
   .outreach-heading {
     align-items: stretch;
@@ -1845,11 +1884,7 @@ tbody tr:hover {
     display: none;
   }
 
-  .outreach-filters {
-    grid-template-columns: 1fr;
-  }
-
-  .outreach-toolbar {
+  .filter-bar.outreach-filters {
     grid-template-columns: 1fr;
   }
 
@@ -1857,9 +1892,14 @@ tbody tr:hover {
     width: 100%;
   }
 
-  .outreach-toolbar-actions {
+  .section-title-row > .outreach-toolbar-actions {
     align-items: stretch;
+    align-self: stretch;
     flex-direction: column;
+  }
+
+  .outreach-toolbar-actions .secondary-button {
+    justify-content: center;
   }
 
   .outreach-contact-form {
