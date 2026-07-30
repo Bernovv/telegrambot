@@ -101,7 +101,9 @@ export default function OutreachCampaignPage() {
   const [pipelineColumns, setPipelineColumns] =
     useState<readonly OutreachPipelineColumn[]>(DEFAULT_PIPELINE_COLUMNS);
   const [pipelineDraft, setPipelineDraft] =
-    useState<readonly OutreachPipelineColumnDraft[]>(DEFAULT_PIPELINE_COLUMNS);
+    useState<readonly OutreachPipelineColumnDraft[]>(
+      toPipelineDraft(DEFAULT_PIPELINE_COLUMNS)
+    );
   const [customFields, setCustomFields] =
     useState<readonly OutreachCustomFieldDefinition[]>([]);
   const [fieldFormOpen, setFieldFormOpen] = useState(false);
@@ -148,7 +150,7 @@ export default function OutreachCampaignPage() {
         ? pipelineResult
         : DEFAULT_PIPELINE_COLUMNS;
       setPipelineColumns(resolvedPipeline);
-      setPipelineDraft(resolvedPipeline);
+      setPipelineDraft(toPipelineDraft(resolvedPipeline));
       setSelected([]);
       try {
         setCustomFields(await listOutreachCustomFieldDefinitions(id, signal));
@@ -828,7 +830,7 @@ export default function OutreachCampaignPage() {
             className="secondary-button"
             type="button"
             onClick={() => {
-              setPipelineDraft(pipelineColumns);
+              setPipelineDraft(toPipelineDraft(pipelineColumns));
               setPipelineSettingsOpen(true);
             }}
           >
@@ -1775,6 +1777,16 @@ function taskState(dueAt: string): "overdue" | "today" | "future" {
 function formText(data: FormData, name: string): string {
   const value = data.get(name);
   return typeof value === "string" ? value : "";
+}
+
+// The update endpoint accepts stage/label/outcome only (position is derived
+// from array order server-side and .strict() rejects unknown keys), so any
+// column loaded from the API — which includes position — has to be stripped
+// down before it goes back into the editable draft.
+function toPipelineDraft(
+  columns: readonly OutreachPipelineColumn[]
+): readonly OutreachPipelineColumnDraft[] {
+  return columns.map(({ stage, label, outcome }) => ({ stage, label, outcome }));
 }
 
 const DEFAULT_PIPELINE_COLUMNS: readonly OutreachPipelineColumn[] = [
