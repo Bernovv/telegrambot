@@ -10,6 +10,7 @@ import type {
   OutreachCampaignSummary,
   OutreachImportResult,
   OutreachManager,
+  OutreachPipelineColumn,
   OutreachStageHistoryEntry,
   OutreachTask
 } from "@ticket-platform/contracts";
@@ -74,6 +75,12 @@ interface ActivityRow {
 
 interface ExistingContactRow {
   readonly id: string;
+}
+
+interface PipelineColumnRow {
+  readonly stage: OutreachPipelineColumn["stage"];
+  readonly label: string;
+  readonly position: number;
 }
 
 interface TaskRow {
@@ -186,6 +193,60 @@ implements AdminOutreachRepository {
         values
       );
       return result.rowCount === 1;
+    });
+  }
+
+  listPipelineColumns(
+    campaignId: string
+  ): Promise<readonly OutreachPipelineColumn[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<PipelineColumnRow>(
+        `select stage, label, position
+         from public.outreach_pipeline_columns
+         where campaign_id = $1::uuid
+         order by position`,
+        [campaignId]
+      );
+      return result.rows.map((row) => ({
+        stage: row.stage,
+        label: row.label,
+        position: row.position
+      }));
+    });
+  }
+
+  updatePipelineColumns(
+    input: Parameters<AdminOutreachRepository["updatePipelineColumns"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const campaign = await connection.query<{ readonly id: string }>(
+        `select id
+         from public.outreach_campaigns
+         where id = $1::uuid
+         for update`,
+        [input.campaignId]
+      );
+      if (!campaign.rows[0]) {
+        return false;
+      }
+      for (const column of input.columns) {
+        await connection.query(
+          `update public.outreach_pipeline_columns
+           set label = $3::text,
+               position = $4::integer,
+               updated_at = $5::timestamptz
+           where campaign_id = $1::uuid
+             and stage = $2::text`,
+          [
+            input.campaignId,
+            column.stage,
+            column.label,
+            column.position,
+            input.now
+          ]
+        );
+      }
+      return true;
     });
   }
 

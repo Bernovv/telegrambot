@@ -1,3 +1,4 @@
+import { OUTREACH_PIPELINE_STAGES } from "@ticket-platform/contracts";
 import type {
   AdminRequestActor,
   OutreachCampaignContactDetail,
@@ -11,6 +12,7 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
+  OutreachPipelineColumn,
   OutreachPipelineStage,
   OutreachTaskType
 } from "@ticket-platform/contracts";
@@ -61,6 +63,14 @@ export interface AdminOutreachRepository {
     readonly name?: string;
     readonly description?: string | null;
     readonly status?: OutreachCampaignStatus;
+    readonly now: Date;
+  }): Promise<boolean>;
+  listPipelineColumns(
+    campaignId: string
+  ): Promise<readonly OutreachPipelineColumn[]>;
+  updatePipelineColumns(input: {
+    readonly campaignId: string;
+    readonly columns: readonly OutreachPipelineColumn[];
     readonly now: Date;
   }): Promise<boolean>;
   listContacts(input: {
@@ -209,6 +219,46 @@ export class AdminOutreachService {
     return changed ? this.repository.getCampaign(input.campaignId) : null;
   }
 
+  listPipelineColumns(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+  }): Promise<readonly OutreachPipelineColumn[]> {
+    requirePermission(input.actor, "outreach.read");
+    requireUuid(input.campaignId);
+    return this.repository.listPipelineColumns(input.campaignId);
+  }
+
+  async updatePipelineColumns(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly columns: readonly OutreachPipelineColumn[];
+    readonly now: Date;
+  }): Promise<{ readonly updated: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    const expectedStages = new Set<string>(OUTREACH_PIPELINE_STAGES);
+    if (
+      input.columns.length !== OUTREACH_PIPELINE_STAGES.length
+      || new Set(input.columns.map((column) => column.stage)).size
+        !== OUTREACH_PIPELINE_STAGES.length
+      || input.columns.some((column) => !expectedStages.has(column.stage))
+    ) {
+      throw new Error("Outreach pipeline columns are invalid");
+    }
+    const columns = input.columns.map((column, index) => ({
+      stage: column.stage,
+      label: requiredText(column.label, 60, "Outreach pipeline column label"),
+      position: index + 1
+    }));
+    return {
+      updated: await this.repository.updatePipelineColumns({
+        campaignId: input.campaignId,
+        columns,
+        now: input.now
+      })
+    };
+  }
+
   listContacts(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
@@ -279,6 +329,24 @@ export class AdminOutreachService {
       assignedAdminId,
       createdByAdminId: input.actor.adminId,
       rows,
+      now: input.now
+    });
+  }
+
+  createContact(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly assignedAdminId?: string;
+    readonly contact: OutreachImportRow;
+    readonly now: Date;
+  }): Promise<OutreachImportResult> {
+    return this.importContacts({
+      actor: input.actor,
+      campaignId: input.campaignId,
+      ...(input.assignedAdminId
+        ? { assignedAdminId: input.assignedAdminId }
+        : {}),
+      rows: [input.contact],
       now: input.now
     });
   }

@@ -1044,12 +1044,98 @@ tbody tr:hover {
   gap: 12px;
 }
 
+.outreach-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .outreach-view-toggle {
   display: inline-flex;
   margin-bottom: 0;
   padding: 3px;
   background: #e8edf0;
   border-radius: 7px;
+}
+
+.outreach-contact-form {
+  grid-template-columns: 1fr 1fr;
+}
+
+.outreach-contact-form .outreach-form-wide,
+.outreach-contact-form .primary-button {
+  grid-column: 1 / -1;
+}
+
+.outreach-pipeline-modal {
+  width: min(580px, 100%);
+}
+
+.outreach-pipeline-form {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.outreach-pipeline-list {
+  display: grid;
+  gap: 8px;
+}
+
+.outreach-pipeline-list > div {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.outreach-pipeline-list > div > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.outreach-pipeline-list input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+}
+
+.outreach-pipeline-list > div > div {
+  display: flex;
+  gap: 4px;
+}
+
+.outreach-pipeline-list button {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--muted);
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.outreach-pipeline-list button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.outreach-pipeline-form > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.outreach-pipeline-form .primary-button {
+  justify-self: start;
 }
 
 .outreach-view-toggle button {
@@ -1664,6 +1750,20 @@ tbody tr:hover {
 
   .outreach-view-toggle {
     width: 100%;
+  }
+
+  .outreach-toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .outreach-contact-form {
+    grid-template-columns: 1fr;
+  }
+
+  .outreach-contact-form .outreach-form-wide,
+  .outreach-contact-form .primary-button {
+    grid-column: auto;
   }
 
   .outreach-view-toggle button {

@@ -114,5 +114,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260729110000_outreach_pipeline_tasks",
     description: "Add the outreach sales pipeline, stage history, and manager follow-up tasks",
     destructive: false
+  },
+  {
+    id: "20260730100000_outreach_pipeline_columns",
+    description: "Add per-campaign labels and ordering for outreach pipeline columns",
+    destructive: false
   }
 ];

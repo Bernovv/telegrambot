@@ -144,6 +144,7 @@ async function verifyMigrations(
       readonly outreach_campaigns: string | null;
       readonly outreach_tasks: string | null;
       readonly outreach_stage_history: string | null;
+      readonly outreach_pipeline_columns: string | null;
       readonly pgboss_version: string | null;
     }>(
       `select
@@ -163,6 +164,7 @@ async function verifyMigrations(
          to_regclass('public.outreach_campaigns')::text as outreach_campaigns,
          to_regclass('public.outreach_tasks')::text as outreach_tasks,
          to_regclass('public.outreach_stage_history')::text as outreach_stage_history,
+         to_regclass('public.outreach_pipeline_columns')::text as outreach_pipeline_columns,
          to_regclass('pgboss.version')::text as pgboss_version`
     );
     const row = schema.rows[0];
@@ -221,6 +223,14 @@ async function verifyMigrations(
       !== Boolean(row.outreach_tasks && row.outreach_stage_history)
     ) {
       throw new Error("Outreach pipeline schema presence does not match the migration sequence");
+    }
+
+    const includesOutreachColumnSettings = expectedVersions.includes("20260730100000");
+    if (
+      includesOutreachColumnSettings
+      !== Boolean(row.outreach_pipeline_columns)
+    ) {
+      throw new Error("Outreach column settings presence does not match the migration sequence");
     }
   } finally {
     await client.end();

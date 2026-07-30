@@ -145,6 +145,42 @@ describe("AdminOutreachService", () => {
     assert.equal(received?.text, "Перезвонить после обеда");
     assert.equal(received?.assignedAdminId, null);
   });
+
+  it("normalizes pipeline labels and derives positions from the submitted order", async () => {
+    let received:
+      Parameters<AdminOutreachRepository["updatePipelineColumns"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async updatePipelineColumns(input) {
+          received = input;
+          return true;
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const result = await service.updatePipelineColumns({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      columns: [
+        { stage: "new", label: " Новые лиды ", position: 7 },
+        { stage: "dialogue", label: "Обсуждаем", position: 1 },
+        { stage: "first_contact", label: "Первый контакт", position: 2 },
+        { stage: "follow_up", label: "Вернуться позже", position: 3 },
+        { stage: "interested", label: "Готов купить", position: 4 },
+        { stage: "won", label: "Успешно", position: 5 },
+        { stage: "lost", label: "Закрыто", position: 6 }
+      ],
+      now
+    });
+
+    assert.equal(result.updated, true);
+    assert.equal(received?.columns[0]?.label, "Новые лиды");
+    assert.equal(received?.columns[0]?.position, 1);
+    assert.equal(received?.columns[1]?.stage, "dialogue");
+    assert.equal(received?.columns[1]?.position, 2);
+  });
 });
 
 function repository(
@@ -155,6 +191,8 @@ function repository(
     async getCampaign() { return null; },
     async createCampaign() {},
     async updateCampaign() { return false; },
+    async listPipelineColumns() { return []; },
+    async updatePipelineColumns() { return false; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
     async importContacts(input) {

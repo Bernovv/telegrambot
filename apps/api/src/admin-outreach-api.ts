@@ -108,15 +108,39 @@ const taskBody = z.object({
   dueAt: z.iso.datetime({ offset: true })
 }).strict();
 
+const manualContactBody = z.object({
+  assignedAdminId: uuid.optional(),
+  name: z.string().trim().max(200).optional(),
+  phone: z.string().trim().max(100).optional(),
+  telegram: z.string().trim().max(100).optional(),
+  max: z.string().trim().max(100).optional(),
+  source: z.string().trim().max(200).optional(),
+  note: z.string().trim().max(2000).optional()
+}).strict().refine(
+  (value) => Boolean(value.phone || value.telegram || value.max),
+  { message: "At least one contact identifier is required" }
+);
+
+const pipelineBody = z.object({
+  columns: z.array(z.object({
+    stage: pipelineStage,
+    label: z.string().trim().min(1).max(60),
+    position: z.number().int().min(1).max(7)
+  }).strict()).length(OUTREACH_PIPELINE_STAGES.length)
+}).strict();
+
 export type AdminOutreachHandler = Pick<
   AdminOutreachService,
   | "listCampaigns"
   | "getCampaign"
   | "createCampaign"
   | "updateCampaign"
+  | "listPipelineColumns"
+  | "updatePipelineColumns"
   | "listContacts"
   | "getContact"
   | "importContacts"
+  | "createContact"
   | "assignContacts"
   | "recordActivities"
   | "updateContactStage"
@@ -315,6 +339,42 @@ export class AdminOutreachController {
     return result;
   }
 
+  @Get("campaigns/:id/pipeline")
+  @RequireAdminPermission("outreach.read")
+  listPipelineColumns(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    return this.handler.listPipelineColumns({
+      actor: requireActor(request),
+      campaignId
+    });
+  }
+
+  @Patch("campaigns/:id/pipeline")
+  @RequireAdminPermission("outreach.write")
+  async updatePipelineColumns(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    const parsed = parse(pipelineBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.updatePipelineColumns({
+        actor: requireActor(request),
+        campaignId,
+        columns: parsed.columns,
+        now: new Date()
+      })
+    );
+    if (!result.updated) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
   @Patch("campaigns/:id")
   @RequireAdminPermission("outreach.write")
   async updateCampaign(
@@ -366,6 +426,35 @@ export class AdminOutreachController {
         ? {}
         : { mine: parsed.mine === "true" })
     });
+  }
+
+  @Post("campaigns/:id/contacts")
+  @RequireAdminPermission("outreach.write")
+  createContact(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    const parsed = parse(manualContactBody, body);
+    return executeOutreach(() =>
+      this.handler.createContact({
+        actor: requireActor(request),
+        campaignId,
+        ...(parsed.assignedAdminId
+          ? { assignedAdminId: parsed.assignedAdminId }
+          : {}),
+        contact: {
+          ...(parsed.name ? { name: parsed.name } : {}),
+          ...(parsed.phone ? { phone: parsed.phone } : {}),
+          ...(parsed.telegram ? { telegram: parsed.telegram } : {}),
+          ...(parsed.max ? { max: parsed.max } : {}),
+          ...(parsed.source ? { source: parsed.source } : {}),
+          ...(parsed.note ? { note: parsed.note } : {})
+        },
+        now: new Date()
+      })
+    );
   }
 
   @Post("campaigns/:id/import")

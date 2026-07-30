@@ -78,6 +78,12 @@ export interface OutreachManager {
   readonly displayName: string;
 }
 
+export interface OutreachPipelineColumn {
+  readonly stage: OutreachPipelineStage;
+  readonly label: string;
+  readonly position: number;
+}
+
 export interface OutreachCampaignContactSummary {
   readonly id: string;
   readonly contactId: string;

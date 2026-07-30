@@ -119,6 +119,51 @@ describe("administrator outreach HTTP contract", () => {
       await app.close();
     }
   });
+
+  it("requires a contact identity for manual entry and delegates valid input", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async createContact(input) {
+          requests.push(input);
+          return {
+            received: 1,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0
+          };
+        }
+      })
+    });
+    await app.init();
+    try {
+      const invalid = await inject(app, {
+        method: "POST",
+        url: `/api/v1/outreach/campaigns/${CAMPAIGN_ID}/contacts`,
+        payload: { name: "Анна" }
+      });
+      const valid = await inject(app, {
+        method: "POST",
+        url: `/api/v1/outreach/campaigns/${CAMPAIGN_ID}/contacts`,
+        payload: { name: "Анна", phone: "+79991234567" }
+      });
+      assert.equal(invalid.statusCode, 400);
+      assert.equal(valid.statusCode, 201);
+      assert.equal(requests.length, 1);
+      assert.equal(
+        (requests[0] as { readonly contact: { readonly phone: string } })
+          .contact.phone,
+        "+79991234567"
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 function handler(
@@ -129,6 +174,8 @@ function handler(
     async getCampaign() { return campaign; },
     async createCampaign() { return campaign; },
     async updateCampaign() { return campaign; },
+    async listPipelineColumns() { return []; },
+    async updatePipelineColumns() { return { updated: false }; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
     async importContacts() {
@@ -137,6 +184,15 @@ function handler(
         createdContacts: 0,
         updatedContacts: 0,
         addedToCampaign: 0,
+        alreadyInCampaign: 0
+      };
+    },
+    async createContact() {
+      return {
+        received: 1,
+        createdContacts: 1,
+        updatedContacts: 0,
+        addedToCampaign: 1,
         alreadyInCampaign: 0
       };
     },

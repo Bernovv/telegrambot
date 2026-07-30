@@ -47,6 +47,27 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(
     isAllowedAdminApiPath(
       "GET",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/pipeline"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "PATCH",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/pipeline"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/contacts"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
       "events/00000000-0000-4000-8000-000000000101"
     ),
     true

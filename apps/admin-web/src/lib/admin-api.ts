@@ -18,6 +18,7 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
+  OutreachPipelineColumn,
   OutreachPipelineStage,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
@@ -131,6 +132,27 @@ export function updateOutreachCampaign(
   );
 }
 
+export function listOutreachPipelineColumns(
+  campaignId: string,
+  signal?: AbortSignal
+): Promise<readonly OutreachPipelineColumn[]> {
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/pipeline`,
+    signal
+  );
+}
+
+export function updateOutreachPipelineColumns(
+  campaignId: string,
+  columns: readonly OutreachPipelineColumn[]
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/pipeline`,
+    "PATCH",
+    { columns }
+  );
+}
+
 export interface OutreachContactFilters {
   readonly search?: string;
   readonly status?: OutreachContactStatus;
@@ -184,6 +206,19 @@ export function importOutreachContacts(
 ): Promise<OutreachImportResult> {
   return requestAdminMutation(
     `outreach/campaigns/${encodeURIComponent(campaignId)}/import`,
+    "POST",
+    input
+  );
+}
+
+export function createOutreachContact(
+  campaignId: string,
+  input: OutreachImportRow & {
+    readonly assignedAdminId?: string;
+  }
+): Promise<OutreachImportResult> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/contacts`,
     "POST",
     input
   );
