@@ -5,9 +5,17 @@ import type {
   AccommodationOrderItemRow,
   AdminAccommodationRepository,
   CreateAccommodationGroupInput,
+  CreateEventParticipantInput,
+  DeleteEventParticipantInput,
+  ExcludeOrderInput,
   InsertAccommodationPlanInput
 } from "@ticket-platform/application";
-import type { AccommodationFixedPlan, AccommodationTentCount } from "@ticket-platform/contracts";
+import type {
+  AccommodationFixedPlan,
+  AccommodationTentCount,
+  EventParticipant,
+  EventParticipantSource
+} from "@ticket-platform/contracts";
 import type { SqlConnection, SqlConnectionPool } from "./postgres.js";
 
 interface EventResult {
@@ -28,6 +36,20 @@ interface OrderItemResult {
   readonly bundle_composition: unknown;
   readonly inventory_units_per_item: number;
   readonly includes_sleeping_place: boolean;
+}
+
+interface ParticipantResult {
+  readonly id: string;
+  readonly display_name: string;
+  readonly phone_e164: string | null;
+  readonly source: string;
+  readonly ticket_title: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleeping_places: number;
+  readonly note: string;
+  readonly outreach_contact_id: string | null;
+  readonly created_at: string;
 }
 
 interface GroupResult {
@@ -98,6 +120,7 @@ export class PostgresAdminAccommodationRepository
          join public.users u on u.id = o.user_id
          where o.event_id = $1::uuid
            and o.status = 'paid'
+           and o.excluded_at is null
          order by o.paid_at, o.id, i.created_at`,
         [eventId]
       );
@@ -113,6 +136,135 @@ export class PostgresAdminAccommodationRepository
         inventoryUnitsPerItem: row.inventory_units_per_item,
         includesSleepingPlace: row.includes_sleeping_place
       }));
+    });
+  }
+
+  async listParticipants(eventId: string): Promise<readonly EventParticipant[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<ParticipantResult>(
+        `select
+           id, display_name, phone_e164, source, ticket_title,
+           adults, children, sleeping_places, note, outreach_contact_id, created_at
+         from public.event_participants
+         where event_id = $1::uuid
+           and deleted_at is null
+         order by created_at`,
+        [eventId]
+      );
+
+      return result.rows.map((row) => ({
+        id: row.id,
+        displayName: row.display_name,
+        phone: row.phone_e164,
+        source: row.source as EventParticipantSource,
+        ticketTitle: row.ticket_title,
+        adults: row.adults,
+        children: row.children,
+        sleepingPlaces: row.sleeping_places,
+        note: row.note,
+        outreachContactId: row.outreach_contact_id,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    });
+  }
+
+  async countExcludedOrders(eventId: string): Promise<number> {
+    return this.read(async (connection) => {
+      const result = await connection.query<{ readonly total: string }>(
+        `select count(*)::text as total
+           from public.orders
+          where event_id = $1::uuid
+            and excluded_at is not null`,
+        [eventId]
+      );
+      return Number(result.rows[0]?.total ?? "0");
+    });
+  }
+
+  async createParticipant(input: CreateEventParticipantInput): Promise<void> {
+    await this.write(async (connection) => {
+      await connection.query(
+        `insert into public.event_participants (
+           id, event_id, outreach_contact_id, display_name, phone_e164, source,
+           ticket_title, adults, children, sleeping_places, note, created_by_admin_id
+         ) values (
+           $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::text,
+           $7::text, $8::integer, $9::integer, $10::integer, $11::text, $12::uuid
+         )`,
+        [
+          input.participantId,
+          input.eventId,
+          input.outreachContactId,
+          input.displayName,
+          input.phone,
+          input.source,
+          input.ticketTitle,
+          input.adults,
+          input.children,
+          input.sleepingPlaces,
+          input.note,
+          input.adminId
+        ]
+      );
+    });
+  }
+
+  /** Мягкое удаление: запись остаётся с причиной и автором, из отчётов уходит. */
+  async deleteParticipant(input: DeleteEventParticipantInput): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.event_participants
+            set deleted_at = $1::timestamptz,
+                deleted_reason = $2::text,
+                deleted_by_admin_id = $3::uuid,
+                updated_at = now()
+          where id = $4::uuid
+            and event_id = $5::uuid
+            and deleted_at is null`,
+        [
+          input.deletedAt.toISOString(),
+          input.reason,
+          input.adminId,
+          input.participantId,
+          input.eventId
+        ]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
+  async excludeOrder(input: ExcludeOrderInput): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.orders
+            set excluded_at = $1::timestamptz,
+                excluded_reason = $2::text,
+                excluded_by_admin_id = $3::uuid
+          where id = $4::uuid
+            and excluded_at is null`,
+        [
+          input.excludedAt.toISOString(),
+          input.reason,
+          input.adminId,
+          input.orderId
+        ]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
+  async includeOrder(orderId: string): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.orders
+            set excluded_at = null,
+                excluded_reason = null,
+                excluded_by_admin_id = null
+          where id = $1::uuid
+            and excluded_at is not null`,
+        [orderId]
+      );
+      return result.rowCount > 0;
     });
   }
 
@@ -177,7 +329,7 @@ export class PostgresAdminAccommodationRepository
     });
   }
 
-  async hasManagePermission(adminId: string): Promise<boolean> {
+  async hasPermission(adminId: string, permission: string): Promise<boolean> {
     return this.read(async (connection) => {
       const result = await connection.query<{ readonly granted: boolean }>(
         `select exists (
@@ -186,9 +338,9 @@ export class PostgresAdminAccommodationRepository
              join public.admin_role_permissions rp on rp.role_code = g.role_code
             where g.admin_account_id = $1::uuid
               and g.revoked_at is null
-              and rp.permission_code = 'accommodation.manage'
+              and rp.permission_code = $2::text
          ) as granted`,
-        [adminId]
+        [adminId, permission]
       );
       return result.rows[0]?.granted === true;
     });

@@ -10,6 +10,8 @@ export const ADMIN_PERMISSIONS = [
   "events.publish",
   "accommodation.read",
   "accommodation.manage",
+  "participants.manage",
+  "orders.exclude",
   "orders.read",
   "orders.create",
   "orders.manual_paid",

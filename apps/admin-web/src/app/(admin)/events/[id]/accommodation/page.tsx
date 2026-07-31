@@ -3,30 +3,36 @@
 import { PageError, PageLoading } from "@/components/page-state";
 import {
   AdminApiError,
+  addEventParticipant,
   fixAccommodationPlan,
   getAccommodationSummary,
   mergeAccommodationParties,
+  removeEventParticipant,
   splitAccommodationGroup
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import type {
   AccommodationPartyView,
-  AccommodationSummary
+  AccommodationSummary,
+  EventParticipantSource
 } from "@ticket-platform/contracts/admin-accommodation";
 import {
   ArrowLeft,
   CircleAlert,
   Link2,
   Link2Off,
+  Plus,
   RefreshCw,
   Save,
   Tent,
+  Trash2,
   Users,
-  UtensilsCrossed
+  UtensilsCrossed,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 export default function EventAccommodationPage() {
   const { id } = useParams<{ id: string }>();
@@ -36,6 +42,7 @@ export default function EventAccommodationPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -77,6 +84,33 @@ export default function EventAccommodationPage() {
     } finally {
       setMutating(false);
     }
+  }
+
+  async function submitParticipant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const text = (name: string) => {
+      const value = data.get(name);
+      return typeof value === "string" ? value.trim() : "";
+    };
+    const number = (name: string) => Number.parseInt(text(name) || "0", 10);
+
+    await run(
+      () => addEventParticipant(id, {
+        displayName: text("displayName"),
+        source: text("source") as EventParticipantSource,
+        adults: number("adults"),
+        children: number("children"),
+        sleepingPlaces: number("sleepingPlaces"),
+        ...(text("phone") ? { phone: text("phone") } : {}),
+        ...(text("ticketTitle") ? { ticketTitle: text("ticketTitle") } : {}),
+        ...(text("note") ? { note: text("note") } : {})
+      }),
+      "Участник добавлен."
+    );
+    form.reset();
+    setAddOpen(false);
   }
 
   function toggle(key: string) {
@@ -153,6 +187,8 @@ export default function EventAccommodationPage() {
           <strong>{summary.headcount.guests}</strong>
           <small className="muted">
             {summary.headcount.adults} взрослых, {summary.headcount.children} детей
+            {" · "}
+            {summary.guestsFromOrders} из бота, {summary.guestsFromParticipants} завели руками
           </small>
         </div>
         <div>
@@ -211,6 +247,16 @@ export default function EventAccommodationPage() {
         </div>
       )}
 
+      {summary.excludedOrders > 0 ? (
+        <div className="accommodation-note">
+          <CircleAlert size={16} />
+          <span>
+            Заказов помечено тестовыми: <strong>{summary.excludedOrders}</strong>. В расчёт
+            они не идут, из финансовой истории не удалены.
+          </span>
+        </div>
+      ) : null}
+
       {summary.childrenWithoutBerth > 0 ? (
         <div className="accommodation-warning">
           <CircleAlert size={16} />
@@ -233,6 +279,151 @@ export default function EventAccommodationPage() {
           </span>
         </div>
       ) : null}
+
+      <section className="data-section">
+        <div className="section-title-row">
+          <div>
+            <h2>Участники не из Telegram-бота</h2>
+            <span>
+              {summary.participants.length > 0
+                ? `${summary.participants.length} · ${summary.guestsFromParticipants} гостей`
+                : "MAX, сайт, договорились напрямую"}
+            </span>
+          </div>
+          {summary.canManageParticipants ? (
+            <div className="outreach-toolbar-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={mutating}
+                onClick={() => setAddOpen((current) => !current)}
+              >
+                {addOpen ? <X size={16} /> : <Plus size={16} />}
+                {addOpen ? "Отменить" : "Добавить участника"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {addOpen ? (
+          <form className="participant-form" onSubmit={(event) => void submitParticipant(event)}>
+            <label className="field">
+              <span>Имя</span>
+              <input name="displayName" required maxLength={200} autoFocus />
+            </label>
+            <label className="field">
+              <span>Телефон</span>
+              <input name="phone" placeholder="+79000000000" pattern="\+[1-9][0-9]{7,14}" />
+            </label>
+            <label className="field">
+              <span>Откуда</span>
+              <select name="source" defaultValue="direct">
+                <option value="max">MAX</option>
+                <option value="site">Сайт</option>
+                <option value="direct">Договорились напрямую</option>
+                <option value="other">Другое</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Тариф</span>
+              <input name="ticketTitle" maxLength={200} placeholder="Все включено" />
+            </label>
+            <label className="field">
+              <span>Взрослых</span>
+              <input name="adults" type="number" min={0} max={100} defaultValue={1} required />
+            </label>
+            <label className="field">
+              <span>Детей</span>
+              <input name="children" type="number" min={0} max={100} defaultValue={0} required />
+            </label>
+            <label className="field">
+              <span>Спальных мест</span>
+              <input name="sleepingPlaces" type="number" min={0} max={200} defaultValue={0} required />
+            </label>
+            <label className="field field-full">
+              <span>Заметка</span>
+              <input name="note" maxLength={500} placeholder="Например: оплатил переводом 5 августа" />
+            </label>
+            <button className="primary-button" type="submit" disabled={mutating}>
+              Добавить
+            </button>
+          </form>
+        ) : null}
+
+        {summary.participants.length === 0 ? (
+          <div className="outreach-empty">
+            <strong>Пока никого не завели</strong>
+            <span>
+              Здесь живут те, кто купил не через Telegram-бота. Без них сводка выше считает
+              не всех.
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Имя</th>
+                  <th>Откуда</th>
+                  <th>Тариф</th>
+                  <th>Гостей</th>
+                  <th>Мест</th>
+                  <th>{summary.canManageParticipants ? "Действия" : ""}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.participants.map((person) => (
+                  <tr key={person.id}>
+                    <td>
+                      <div className="stacked-cell">
+                        <strong>{person.displayName}</strong>
+                        {person.phone ? <span className="muted">{person.phone}</span> : null}
+                        {person.note ? <span className="muted">{person.note}</span> : null}
+                      </div>
+                    </td>
+                    <td>{sourceLabel(person.source)}</td>
+                    <td>{person.ticketTitle || "—"}</td>
+                    <td>
+                      {person.adults + person.children}
+                      {person.children > 0 ? (
+                        <span className="muted"> · детей {person.children}</span>
+                      ) : null}
+                    </td>
+                    <td>{person.sleepingPlaces > 0 ? person.sleepingPlaces : "—"}</td>
+                    <td>
+                      {summary.canManageParticipants ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={mutating}
+                          onClick={() => {
+                            const reason = window.prompt(
+                              `Почему убираем ${person.displayName}? Причина попадёт в историю.`
+                            );
+                            if (reason && reason.trim().length >= 3) {
+                              void run(
+                                () => removeEventParticipant({
+                                  eventId: id,
+                                  participantId: person.id,
+                                  reason: reason.trim()
+                                }),
+                                "Участник убран из мероприятия."
+                              );
+                            }
+                          }}
+                        >
+                          <Trash2 size={15} />
+                          Убрать
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section className="data-section">
         <div className="section-title-row">
@@ -361,6 +552,19 @@ export default function EventAccommodationPage() {
       </div>
     </>
   );
+}
+
+function sourceLabel(source: EventParticipantSource): string {
+  switch (source) {
+    case "max":
+      return "MAX";
+    case "site":
+      return "Сайт";
+    case "direct":
+      return "Напрямую";
+    default:
+      return "Другое";
+  }
 }
 
 function PartyRow({

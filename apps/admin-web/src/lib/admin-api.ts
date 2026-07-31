@@ -55,7 +55,8 @@ import type {
   UpdateAdminEventProductRequest
 } from "@ticket-platform/contracts/admin-events";
 import type {
-  AccommodationSummary
+  AccommodationSummary,
+  CreateEventParticipantRequest
 } from "@ticket-platform/contracts/admin-accommodation";
 
 export interface UserListFilters {
@@ -149,6 +150,50 @@ export function fixAccommodationPlan(input: {
     `events/${encodeURIComponent(input.eventId)}/accommodation/plans`,
     "POST",
     input.note ? { note: input.note } : {}
+  );
+}
+
+export function addEventParticipant(
+  eventId: string,
+  input: CreateEventParticipantRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participants`,
+    "POST",
+    input
+  );
+}
+
+export function removeEventParticipant(input: {
+  readonly eventId: string;
+  readonly participantId: string;
+  readonly reason: string;
+}): Promise<{ readonly removed: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/participants/remove`,
+    "POST",
+    { participantId: input.participantId, reason: input.reason }
+  );
+}
+
+export function excludeOrderFromReports(input: {
+  readonly orderId: string;
+  readonly reason: string;
+}): Promise<{ readonly excluded: boolean }> {
+  return requestAdminMutation(
+    `orders/${encodeURIComponent(input.orderId)}/exclude`,
+    "POST",
+    { reason: input.reason }
+  );
+}
+
+export function includeOrderInReports(
+  orderId: string
+): Promise<{ readonly included: boolean }> {
+  return requestAdminMutation(
+    `orders/${encodeURIComponent(orderId)}/include`,
+    "POST",
+    {}
   );
 }
 

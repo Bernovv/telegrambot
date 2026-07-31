@@ -1,4 +1,4 @@
-import type { AdminRequestActor } from "@ticket-platform/contracts";
+import type { AdminRequestActor, EventParticipant } from "@ticket-platform/contracts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -89,16 +89,40 @@ function childTicket(orderId: string, orderNumber: string): AccommodationOrderIt
   };
 }
 
+function participant(
+  id: string,
+  overrides: Partial<EventParticipant> = {}
+): EventParticipant {
+  return {
+    id,
+    displayName: `Участник ${id}`,
+    phone: null,
+    source: "max",
+    ticketTitle: "Все включено",
+    adults: 1,
+    children: 0,
+    sleepingPlaces: 1,
+    note: "",
+    outreachContactId: null,
+    createdAt: "2026-07-31T09:00:00.000Z",
+    ...overrides
+  };
+}
+
 function summaryOf(
   items: readonly AccommodationOrderItemRow[],
-  groups: readonly AccommodationGroupRow[] = []
+  groups: readonly AccommodationGroupRow[] = [],
+  participants: readonly EventParticipant[] = []
 ) {
   return buildSummary({
     event: EVENT,
     items,
+    participants,
+    excludedOrders: 0,
     groups,
     lastPlan: null,
     canManage: true,
+    canManageParticipants: true,
     calculatedAt: new Date("2026-07-31T09:00:00Z")
   });
 }
@@ -233,7 +257,8 @@ describe("buildSummary", () => {
         guests: 3,
         adults: 2,
         children: 1,
-        sleepingPlaces: 3
+        sleepingPlaces: 3,
+        manual: false
       },
       {
         productId: "product-standard",
@@ -242,15 +267,77 @@ describe("buildSummary", () => {
         guests: 2,
         adults: 2,
         children: 0,
-        sleepingPlaces: 0
+        sleepingPlaces: 0,
+        manual: false
       }
     ]);
+  });
+
+  it("counts guests entered by hand alongside guests who bought through the bot", () => {
+    // Ровно тот случай, ради которого это делалось: покупатели из MAX и с сайта
+    // в заказах Telegram-бота не существуют.
+    const summary = summaryOf(
+      [vipAdult("order-1", "A-1", 2)],
+      [],
+      [
+        participant("p1", { adults: 2, children: 1, sleepingPlaces: 3 }),
+        participant("p2", { source: "site", adults: 1, sleepingPlaces: 0 })
+      ]
+    );
+
+    assert.deepEqual(summary.headcount, { guests: 6, adults: 5, children: 1 });
+    assert.equal(summary.guestsFromOrders, 2);
+    assert.equal(summary.guestsFromParticipants, 4);
+    assert.equal(summary.requiredBerths, 5);
+  });
+
+  it("treats a hand-entered participant as their own party", () => {
+    const summary = summaryOf([], [], [
+      participant("p1", { adults: 2, children: 1, sleepingPlaces: 3 })
+    ]);
+
+    assert.equal(summary.parties.length, 1);
+    assert.equal(summary.parties[0]?.berths, 3);
+    assert.deepEqual(summary.tents, [{ capacity: 3, count: 1 }]);
+    assert.equal(summary.singles.length, 0);
+  });
+
+  it("leaves a day-only hand-entered participant out of the tents", () => {
+    const summary = summaryOf([], [], [
+      participant("p1", { adults: 2, sleepingPlaces: 0 })
+    ]);
+
+    assert.equal(summary.parties.length, 0);
+    assert.equal(summary.totalTents, 0);
+    assert.equal(summary.headcount.guests, 2);
+    assert.equal(summary.mealsAdult, 4);
+  });
+
+  it("keeps hand-entered tariffs separate from bot products in the breakdown", () => {
+    const summary = summaryOf(
+      [vipAdult("order-1", "A-1", 1)],
+      [],
+      [
+        participant("p1", { ticketTitle: "Все включено" }),
+        participant("p2", { ticketTitle: "Все включено" }),
+        participant("p3", { ticketTitle: "" })
+      ]
+    );
+
+    const manual = summary.products.filter((product) => product.manual);
+    assert.equal(summary.products[0]?.manual, false);
+    assert.deepEqual(
+      manual.map((product) => [product.title, product.ticketsSold]),
+      [["Все включено", 2], ["Без тарифа", 1]]
+    );
   });
 
   it("shows how many berths arrived after the plan was fixed", () => {
     const summary = buildSummary({
       event: EVENT,
       items: [vipAdult("order-1", "A-1", 5)],
+      participants: [],
+      excludedOrders: 0,
       groups: [],
       lastPlan: {
         id: "plan-1",
@@ -262,6 +349,7 @@ describe("buildSummary", () => {
         tents: [{ capacity: 3, count: 1 }]
       },
       canManage: true,
+      canManageParticipants: true,
       calculatedAt: new Date("2026-08-06T09:00:00Z")
     });
 
@@ -273,11 +361,15 @@ class FakeRepository implements AdminAccommodationRepository {
   readonly createdGroups: unknown[] = [];
   readonly deletedGroups: unknown[] = [];
   readonly insertedPlans: unknown[] = [];
+  readonly createdParticipants: unknown[] = [];
+  readonly deletedParticipants: unknown[] = [];
+  readonly excludedOrders: unknown[] = [];
 
   constructor(
     private readonly items: readonly AccommodationOrderItemRow[] = [],
     private readonly canManage = true,
-    private readonly event: AccommodationEventRow | null = EVENT
+    private readonly event: AccommodationEventRow | null = EVENT,
+    private readonly mutationFound = true
   ) {}
 
   findEvent(): Promise<AccommodationEventRow | null> {
@@ -292,11 +384,38 @@ class FakeRepository implements AdminAccommodationRepository {
     return Promise.resolve([]);
   }
 
+  listParticipants(): Promise<readonly EventParticipant[]> {
+    return Promise.resolve([]);
+  }
+
+  countExcludedOrders(): Promise<number> {
+    return Promise.resolve(0);
+  }
+
+  createParticipant(input: unknown): Promise<void> {
+    this.createdParticipants.push(input);
+    return Promise.resolve();
+  }
+
+  deleteParticipant(input: unknown): Promise<boolean> {
+    this.deletedParticipants.push(input);
+    return Promise.resolve(this.mutationFound);
+  }
+
+  excludeOrder(input: unknown): Promise<boolean> {
+    this.excludedOrders.push(input);
+    return Promise.resolve(this.mutationFound);
+  }
+
+  includeOrder(): Promise<boolean> {
+    return Promise.resolve(this.mutationFound);
+  }
+
   findLastPlan(): Promise<null> {
     return Promise.resolve(null);
   }
 
-  hasManagePermission(): Promise<boolean> {
+  hasPermission(): Promise<boolean> {
     return Promise.resolve(this.canManage);
   }
 
@@ -400,6 +519,133 @@ describe("AdminAccommodationService", () => {
         note: ""
       }),
       /merge selection is invalid/
+    );
+  });
+
+  it("requires the participants permission to add someone by hand", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.addParticipant({
+        actor: actor("accommodation.read"),
+        eventId: EVENT_ID,
+        participant: {
+          displayName: "Иван",
+          phone: null,
+          source: "max",
+          ticketTitle: "",
+          adults: 1,
+          children: 0,
+          sleepingPlaces: 1,
+          note: "",
+          outreachContactId: null
+        }
+      }),
+      /accommodation permission is invalid/
+    );
+  });
+
+  it("refuses a participant with nobody in it", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.addParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participant: {
+          displayName: "Иван",
+          phone: null,
+          source: "max",
+          ticketTitle: "",
+          adults: 0,
+          children: 0,
+          sleepingPlaces: 0,
+          note: "",
+          outreachContactId: null
+        }
+      }),
+      /headcount is invalid/
+    );
+  });
+
+  it("refuses more sleeping places than people", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.addParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participant: {
+          displayName: "Иван",
+          phone: null,
+          source: "max",
+          ticketTitle: "",
+          adults: 1,
+          children: 0,
+          sleepingPlaces: 2,
+          note: "",
+          outreachContactId: null
+        }
+      }),
+      /headcount is invalid/
+    );
+  });
+
+  it("demands a reason before excluding an order from the reports", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.excludeOrder({
+        actor: actor("orders.exclude"),
+        orderId: "019c7a20-0000-7000-8000-000000000101",
+        reason: "  "
+      }),
+      /reason is invalid/
+    );
+  });
+
+  it("records who excluded the order and why", async () => {
+    const repository = new FakeRepository();
+    const service = serviceWith(repository);
+
+    await service.excludeOrder({
+      actor: actor("orders.exclude"),
+      orderId: "019c7a20-0000-7000-8000-000000000101",
+      reason: "Тестовый заказ"
+    });
+
+    assert.deepEqual(repository.excludedOrders, [{
+      orderId: "019c7a20-0000-7000-8000-000000000101",
+      reason: "Тестовый заказ",
+      adminId: ADMIN_ID,
+      excludedAt: new Date("2026-07-31T09:00:00Z")
+    }]);
+  });
+
+  it("reports a missing order instead of pretending it was excluded", async () => {
+    const service = serviceWith(new FakeRepository([], true, EVENT, false));
+
+    await assert.rejects(
+      service.excludeOrder({
+        actor: actor("orders.exclude"),
+        orderId: "019c7a20-0000-7000-8000-000000000101",
+        reason: "Тестовый заказ"
+      }),
+      /Order was not found/
+    );
+  });
+
+  it("demands a reason before removing a participant", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.removeParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participantId: "019c7a20-0000-7000-8000-000000000101",
+        reason: ""
+      }),
+      /reason is invalid/
     );
   });
 

@@ -145,6 +145,41 @@ test("allowlists only implemented administrator API methods and paths", () => {
     ),
     false
   );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/participants"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/participants/remove"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000101/exclude"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000101/include"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "orders/00000000-0000-4000-8000-000000000101/delete"
+    ),
+    false
+  );
   assert.equal(isAllowedAdminApiPath("POST", "events"), true);
   assert.equal(
     isAllowedAdminApiPath(

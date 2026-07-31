@@ -5,6 +5,50 @@
  * Единственное, что здесь хранится, — ручные объединения компаний и зафиксированные планы.
  */
 
+export const EVENT_PARTICIPANT_SOURCES = [
+  "max",
+  "site",
+  "direct",
+  "other"
+] as const;
+
+export type EventParticipantSource = typeof EVENT_PARTICIPANT_SOURCES[number];
+
+export interface EventParticipant {
+  readonly id: string;
+  readonly displayName: string;
+  readonly phone: string | null;
+  readonly source: EventParticipantSource;
+  readonly ticketTitle: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleepingPlaces: number;
+  readonly note: string;
+  readonly outreachContactId: string | null;
+  readonly createdAt: string;
+}
+
+export interface CreateEventParticipantRequest {
+  readonly displayName: string;
+  readonly phone?: string;
+  readonly source: EventParticipantSource;
+  readonly ticketTitle?: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleepingPlaces: number;
+  readonly note?: string;
+  readonly outreachContactId?: string;
+}
+
+export interface DeleteEventParticipantRequest {
+  readonly participantId: string;
+  readonly reason: string;
+}
+
+export interface ExcludeOrderRequest {
+  readonly reason: string;
+}
+
 export interface AccommodationHeadcount {
   readonly guests: number;
   readonly adults: number;
@@ -19,6 +63,8 @@ export interface AccommodationProductBreakdown {
   readonly adults: number;
   readonly children: number;
   readonly sleepingPlaces: number;
+  /** Строка собрана из заведённых руками участников, а не из заказов бота. */
+  readonly manual: boolean;
 }
 
 export interface AccommodationPartyView {
@@ -84,7 +130,15 @@ export interface AccommodationSummary {
    * ночёвку не включает. Система это не решает — показывает, чтобы спросили родителей.
    */
   readonly childrenWithoutBerth: number;
+  /** Гости из оплаченных заказов Telegram-бота. */
+  readonly guestsFromOrders: number;
+  /** Гости, заведённые руками: MAX, сайт, договорились напрямую. */
+  readonly guestsFromParticipants: number;
+  /** Заказы, помеченные тестовыми: в счёт не идут, из истории не удалены. */
+  readonly excludedOrders: number;
+  readonly participants: readonly EventParticipant[];
   readonly canManage: boolean;
+  readonly canManageParticipants: boolean;
 }
 
 export interface MergeAccommodationPartiesRequest {

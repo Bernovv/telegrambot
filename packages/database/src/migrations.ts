@@ -129,5 +129,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260731100000_event_accommodation",
     description: "Add tent accommodation planning: sleeping-place flag on products, manual party groups, and append-only fixed plans",
     destructive: false
+  },
+  {
+    id: "20260731140000_event_participants_and_exclusions",
+    description: "Add manually entered event participants, order exclusion for test orders, and archiving for outreach contacts",
+    destructive: false
   }
 ];

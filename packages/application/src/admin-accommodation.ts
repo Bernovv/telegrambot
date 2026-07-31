@@ -4,7 +4,9 @@ import type {
   AccommodationProductBreakdown,
   AccommodationSummary,
   AccommodationTentCount,
-  AdminRequestActor
+  AdminRequestActor,
+  EventParticipant,
+  EventParticipantSource
 } from "@ticket-platform/contracts";
 import { planTents, type AccommodationParty } from "@ticket-platform/domain";
 import type { IdGenerator } from "./identity.js";
@@ -68,15 +70,51 @@ export interface InsertAccommodationPlanInput {
   readonly snapshot: Record<string, unknown>;
 }
 
+export interface CreateEventParticipantInput {
+  readonly participantId: string;
+  readonly eventId: string;
+  readonly displayName: string;
+  readonly phone: string | null;
+  readonly source: EventParticipantSource;
+  readonly ticketTitle: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleepingPlaces: number;
+  readonly note: string;
+  readonly outreachContactId: string | null;
+  readonly adminId: string;
+}
+
+export interface DeleteEventParticipantInput {
+  readonly eventId: string;
+  readonly participantId: string;
+  readonly reason: string;
+  readonly adminId: string;
+  readonly deletedAt: Date;
+}
+
+export interface ExcludeOrderInput {
+  readonly orderId: string;
+  readonly reason: string;
+  readonly adminId: string;
+  readonly excludedAt: Date;
+}
+
 export interface AdminAccommodationRepository {
   findEvent(eventId: string): Promise<AccommodationEventRow | null>;
   listPaidOrderItems(eventId: string): Promise<readonly AccommodationOrderItemRow[]>;
+  listParticipants(eventId: string): Promise<readonly EventParticipant[]>;
+  countExcludedOrders(eventId: string): Promise<number>;
   listGroups(eventId: string): Promise<readonly AccommodationGroupRow[]>;
   findLastPlan(eventId: string): Promise<AccommodationFixedPlan | null>;
-  hasManagePermission(adminId: string): Promise<boolean>;
+  hasPermission(adminId: string, permission: string): Promise<boolean>;
   createGroup(input: CreateAccommodationGroupInput): Promise<void>;
   deleteGroup(eventId: string, groupId: string): Promise<void>;
   insertPlan(input: InsertAccommodationPlanInput): Promise<void>;
+  createParticipant(input: CreateEventParticipantInput): Promise<void>;
+  deleteParticipant(input: DeleteEventParticipantInput): Promise<boolean>;
+  excludeOrder(input: ExcludeOrderInput): Promise<boolean>;
+  includeOrder(orderId: string): Promise<boolean>;
 }
 
 export interface Clock {
@@ -87,6 +125,20 @@ export class AccommodationEventNotFoundError extends Error {
   constructor() {
     super("Event was not found");
     this.name = "AccommodationEventNotFoundError";
+  }
+}
+
+export class EventParticipantNotFoundError extends Error {
+  constructor() {
+    super("Event participant was not found");
+    this.name = "EventParticipantNotFoundError";
+  }
+}
+
+export class OrderNotFoundError extends Error {
+  constructor() {
+    super("Order was not found");
+    this.name = "OrderNotFoundError";
   }
 }
 
@@ -104,8 +156,116 @@ export class AdminAccommodationService {
     requirePermission(input.actor, "accommodation.read");
     requireUuid(input.eventId);
 
-    const canManage = await this.repository.hasManagePermission(input.actor.adminId);
-    return this.load(input.eventId, canManage);
+    const [canManage, canManageParticipants] = await Promise.all([
+      this.repository.hasPermission(input.actor.adminId, "accommodation.manage"),
+      this.repository.hasPermission(input.actor.adminId, "participants.manage")
+    ]);
+    return this.load(input.eventId, canManage, canManageParticipants);
+  }
+
+  async addParticipant(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly participant: {
+      readonly displayName: string;
+      readonly phone: string | null;
+      readonly source: EventParticipantSource;
+      readonly ticketTitle: string;
+      readonly adults: number;
+      readonly children: number;
+      readonly sleepingPlaces: number;
+      readonly note: string;
+      readonly outreachContactId: string | null;
+    };
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.eventId);
+
+    const { adults, children, sleepingPlaces } = input.participant;
+    if (
+      !Number.isSafeInteger(adults) || adults < 0
+      || !Number.isSafeInteger(children) || children < 0
+      || adults + children < 1
+      || !Number.isSafeInteger(sleepingPlaces)
+      || sleepingPlaces < 0
+      || sleepingPlaces > adults + children
+    ) {
+      throw new Error("Event participant headcount is invalid");
+    }
+    if (input.participant.displayName.trim().length === 0) {
+      throw new Error("Event participant name is invalid");
+    }
+    if (input.participant.outreachContactId !== null) {
+      requireUuid(input.participant.outreachContactId);
+    }
+
+    await this.repository.createParticipant({
+      participantId: this.idGenerator.newId(),
+      eventId: input.eventId,
+      adminId: input.actor.adminId,
+      ...input.participant,
+      displayName: input.participant.displayName.trim()
+    });
+  }
+
+  async removeParticipant(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly participantId: string;
+    readonly reason: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.eventId);
+    requireUuid(input.participantId);
+    requireReason(input.reason);
+
+    const removed = await this.repository.deleteParticipant({
+      eventId: input.eventId,
+      participantId: input.participantId,
+      reason: input.reason.trim(),
+      adminId: input.actor.adminId,
+      deletedAt: this.clock.now()
+    });
+    if (!removed) {
+      throw new EventParticipantNotFoundError();
+    }
+  }
+
+  /**
+   * Помечает заказ тестовым. Ничего не удаляет: заказ, билеты и платёжные записи остаются
+   * на месте, но перестают попадать в отчёты и в списки участников.
+   */
+  async excludeOrder(input: {
+    readonly actor: AdminRequestActor;
+    readonly orderId: string;
+    readonly reason: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "orders.exclude");
+    requireUuid(input.orderId);
+    requireReason(input.reason);
+
+    const excluded = await this.repository.excludeOrder({
+      orderId: input.orderId,
+      reason: input.reason.trim(),
+      adminId: input.actor.adminId,
+      excludedAt: this.clock.now()
+    });
+    if (!excluded) {
+      throw new OrderNotFoundError();
+    }
+  }
+
+  async includeOrder(input: {
+    readonly actor: AdminRequestActor;
+    readonly orderId: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "orders.exclude");
+    requireUuid(input.orderId);
+
+    const included = await this.repository.includeOrder(input.orderId);
+    if (!included) {
+      throw new OrderNotFoundError();
+    }
   }
 
   /**
@@ -115,15 +275,18 @@ export class AdminAccommodationService {
    */
   private async load(
     eventId: string,
-    canManage: boolean
+    canManage: boolean,
+    canManageParticipants: boolean
   ): Promise<AccommodationSummary> {
     const event = await this.repository.findEvent(eventId);
     if (!event) {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, groups, lastPlan] = await Promise.all([
+    const [items, participants, excludedOrders, groups, lastPlan] = await Promise.all([
       this.repository.listPaidOrderItems(eventId),
+      this.repository.listParticipants(eventId),
+      this.repository.countExcludedOrders(eventId),
       this.repository.listGroups(eventId),
       this.repository.findLastPlan(eventId)
     ]);
@@ -131,9 +294,12 @@ export class AdminAccommodationService {
     return buildSummary({
       event,
       items,
+      participants,
+      excludedOrders,
       groups,
       lastPlan,
       canManage,
+      canManageParticipants,
       calculatedAt: this.clock.now()
     });
   }
@@ -197,16 +363,21 @@ export class AdminAccommodationService {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, groups] = await Promise.all([
+    const [items, participants, excludedOrders, groups] = await Promise.all([
       this.repository.listPaidOrderItems(input.eventId),
+      this.repository.listParticipants(input.eventId),
+      this.repository.countExcludedOrders(input.eventId),
       this.repository.listGroups(input.eventId)
     ]);
     const summary = buildSummary({
       event,
       items,
+      participants,
+      excludedOrders,
       groups,
       lastPlan: null,
       canManage: true,
+      canManageParticipants: true,
       calculatedAt: this.clock.now()
     });
 
@@ -236,16 +407,19 @@ export class AdminAccommodationService {
       }
     });
 
-    return this.load(input.eventId, true);
+    return this.load(input.eventId, true, true);
   }
 }
 
 interface SummaryInput {
   readonly event: AccommodationEventRow;
   readonly items: readonly AccommodationOrderItemRow[];
+  readonly participants: readonly EventParticipant[];
+  readonly excludedOrders: number;
   readonly groups: readonly AccommodationGroupRow[];
   readonly lastPlan: AccommodationFixedPlan | null;
   readonly canManage: boolean;
+  readonly canManageParticipants: boolean;
   readonly calculatedAt: Date;
 }
 
@@ -310,7 +484,44 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
     products.set(item.productId, product);
   }
 
-  const { parties, partyMeta } = buildParties([...orders.values()], input.groups);
+  // Участник, заведённый руками, — такая же компания, как заказ: он приехал сам по себе и
+  // ни с кем не объединён, пока этого не сделали вручную.
+  const productsFromParticipants = new Map<string, {
+    productId: string;
+    title: string;
+    ticketsSold: number;
+    guests: number;
+    adults: number;
+    children: number;
+    sleepingPlaces: number;
+  }>();
+  for (const participant of input.participants) {
+    const title = participant.ticketTitle.trim() === ""
+      ? "Без тарифа"
+      : participant.ticketTitle.trim();
+    const key = `manual:${title}`;
+    const product = productsFromParticipants.get(key) ?? {
+      productId: key,
+      title,
+      ticketsSold: 0,
+      guests: 0,
+      adults: 0,
+      children: 0,
+      sleepingPlaces: 0
+    };
+    product.ticketsSold += 1;
+    product.adults += participant.adults;
+    product.children += participant.children;
+    product.guests += participant.adults + participant.children;
+    product.sleepingPlaces += participant.sleepingPlaces;
+    productsFromParticipants.set(key, product);
+  }
+
+  const { parties, partyMeta } = buildParties(
+    [...orders.values()],
+    input.groups,
+    input.participants
+  );
   const plan = planTents(parties, [...DEFAULT_TENT_CAPACITIES]);
 
   const partyViews = plan.allocations.map((allocation) =>
@@ -321,13 +532,22 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
   let adults = 0;
   let children = 0;
   let childrenWithoutBerth = 0;
+  let guestsFromOrders = 0;
   for (const order of orders.values()) {
     adults += order.adults;
     children += order.children;
+    guestsFromOrders += order.adults + order.children;
     // «Ребёнок без места» имеет смысл только там, где кто-то из заказа всё-таки ночует.
     if (order.berths > 0) {
       childrenWithoutBerth += order.childrenWithoutBerth;
     }
+  }
+
+  let guestsFromParticipants = 0;
+  for (const participant of input.participants) {
+    adults += participant.adults;
+    children += participant.children;
+    guestsFromParticipants += participant.adults + participant.children;
   }
 
   const eventDays = countEventDays(input.event);
@@ -340,9 +560,14 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
     eventDays,
     mealsAdult: adults * eventDays,
     mealsChild: children * eventDays,
-    products: [...products.values()]
-      .map(toProductBreakdown)
-      .sort((left, right) => right.guests - left.guests || left.title.localeCompare(right.title)),
+    products: [
+      ...[...products.values()].map((product) => toProductBreakdown(product, false)),
+      ...[...productsFromParticipants.values()]
+        .map((product) => toProductBreakdown(product, true))
+    ].sort((left, right) =>
+      Number(left.manual) - Number(right.manual)
+      || right.guests - left.guests
+      || left.title.localeCompare(right.title)),
     tentCapacities: [...DEFAULT_TENT_CAPACITIES],
     parties: partyViews,
     tents: plan.tents.map(toTentCount),
@@ -357,7 +582,12 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
       ? Math.max(0, plan.requiredBerths - input.lastPlan.requiredBerths)
       : 0,
     childrenWithoutBerth,
-    canManage: input.canManage
+    guestsFromOrders,
+    guestsFromParticipants,
+    excludedOrders: input.excludedOrders,
+    participants: input.participants,
+    canManage: input.canManage,
+    canManageParticipants: input.canManageParticipants
   };
 }
 
@@ -369,7 +599,8 @@ interface PartyMeta {
 
 function buildParties(
   orders: readonly OrderTotals[],
-  groups: readonly AccommodationGroupRow[]
+  groups: readonly AccommodationGroupRow[],
+  participants: readonly EventParticipant[]
 ): {
   readonly parties: readonly AccommodationParty[];
   readonly partyMeta: ReadonlyMap<string, PartyMeta>;
@@ -428,6 +659,18 @@ function buildParties(
     partyMeta.set(key, { orderIds: [order.orderId], groupId: null, note: "" });
   }
 
+  for (const participant of participants) {
+    const key = `participant:${participant.id}`;
+    parties.push({
+      key,
+      berths: participant.sleepingPlaces,
+      title: participant.displayName,
+      orderNumbers: [sourceLabel(participant.source)],
+      merged: false
+    });
+    partyMeta.set(key, { orderIds: [], groupId: null, note: participant.note });
+  }
+
   // Ночующие сверху, дальше по числу мест: с этим списком работают руками.
   const sorted = [...parties]
     .filter((party) => party.berths > 0)
@@ -457,15 +700,18 @@ function toPartyView(
   };
 }
 
-function toProductBreakdown(product: {
-  productId: string;
-  title: string;
-  ticketsSold: number;
-  guests: number;
-  adults: number;
-  children: number;
-  sleepingPlaces: number;
-}): AccommodationProductBreakdown {
+function toProductBreakdown(
+  product: {
+    productId: string;
+    title: string;
+    ticketsSold: number;
+    guests: number;
+    adults: number;
+    children: number;
+    sleepingPlaces: number;
+  },
+  manual: boolean
+): AccommodationProductBreakdown {
   return {
     productId: product.productId,
     title: product.title,
@@ -473,8 +719,22 @@ function toProductBreakdown(product: {
     guests: product.guests,
     adults: product.adults,
     children: product.children,
-    sleepingPlaces: product.sleepingPlaces
+    sleepingPlaces: product.sleepingPlaces,
+    manual
   };
+}
+
+export function sourceLabel(source: EventParticipantSource): string {
+  switch (source) {
+    case "max":
+      return "MAX";
+    case "site":
+      return "Сайт";
+    case "direct":
+      return "Напрямую";
+    default:
+      return "Другое";
+  }
 }
 
 function toTentCount(tent: { capacity: number; count: number }): AccommodationTentCount {
@@ -524,10 +784,25 @@ function calendarDate(value: Date, timezone: string): number {
 
 function requirePermission(
   actor: AdminRequestActor,
-  permission: "accommodation.read" | "accommodation.manage"
+  permission:
+    | "accommodation.read"
+    | "accommodation.manage"
+    | "participants.manage"
+    | "orders.exclude"
 ): void {
   if (actor.permission !== permission || !UUID_PATTERN.test(actor.adminId)) {
     throw new Error("Administrator accommodation permission is invalid");
+  }
+}
+
+/**
+ * Исключение заказа и удаление участника меняют цифры, по которым потом грузят машину,
+ * поэтому причина обязательна — через полгода никто не вспомнит, почему тут минус три места.
+ */
+function requireReason(reason: string): void {
+  const trimmed = reason.trim();
+  if (trimmed.length < 3 || trimmed.length > 500) {
+    throw new Error("Accommodation change reason is invalid");
   }
 }
 
