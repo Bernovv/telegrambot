@@ -124,5 +124,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260730150000_outreach_flexible_pipeline_fields",
     description: "Let managers add/remove/rename outreach pipeline stages with a won/lost outcome flag, and add custom contact fields",
     destructive: false
+  },
+  {
+    id: "20260731100000_event_accommodation",
+    description: "Add tent accommodation planning: sleeping-place flag on products, manual party groups, and append-only fixed plans",
+    destructive: false
   }
 ];
