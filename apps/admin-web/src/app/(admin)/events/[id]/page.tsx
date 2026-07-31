@@ -19,6 +19,7 @@ import {
   FileText,
   PackageOpen,
   Pencil,
+  Tent,
   Workflow
 } from "lucide-react";
 import Link from "next/link";
@@ -95,32 +96,40 @@ export default function EventDetailPage() {
             {event.locationName ?? "Площадка не указана"}
           </p>
         </div>
-        {event.status === "draft" ? (
-          <div className="heading-actions">
-            <Link className="secondary-button" href={`/events/${event.id}/scenario`}>
-              <Workflow size={16} />
-              Сценарий
-            </Link>
-            <Link className="secondary-button" href={`/events/${event.id}/offer`}>
-              <FileCheck2 size={16} />
-              Оферта
-            </Link>
-            <Link className="secondary-button" href={`/events/${event.id}/content`}>
-              <FileText size={16} />
-              Контент
-            </Link>
-            <Link className="secondary-button" href={`/events/${event.id}/catalog`}>
-              <PackageOpen size={16} />
-              Продукты и тарифы
-            </Link>
-            <Link className="primary-button" href={`/events/${event.id}/edit`}>
-              <Pencil size={16} />
-              Редактировать
-            </Link>
-          </div>
-        ) : (
-          <span className="readonly-badge">Только просмотр</span>
-        )}
+        {/* «Что везём» — отчёт по продажам, он нужен как раз тогда, когда мероприятие
+            уже опубликовано и билеты покупают. Редактирование остаётся у черновика. */}
+        <div className="heading-actions">
+          <Link className="secondary-button" href={`/events/${event.id}/accommodation`}>
+            <Tent size={16} />
+            Что везём
+          </Link>
+          {event.status === "draft" ? (
+            <>
+              <Link className="secondary-button" href={`/events/${event.id}/scenario`}>
+                <Workflow size={16} />
+                Сценарий
+              </Link>
+              <Link className="secondary-button" href={`/events/${event.id}/offer`}>
+                <FileCheck2 size={16} />
+                Оферта
+              </Link>
+              <Link className="secondary-button" href={`/events/${event.id}/content`}>
+                <FileText size={16} />
+                Контент
+              </Link>
+              <Link className="secondary-button" href={`/events/${event.id}/catalog`}>
+                <PackageOpen size={16} />
+                Продукты и тарифы
+              </Link>
+              <Link className="primary-button" href={`/events/${event.id}/edit`}>
+                <Pencil size={16} />
+                Редактировать
+              </Link>
+            </>
+          ) : (
+            <span className="readonly-badge">Только просмотр</span>
+          )}
+        </div>
       </div>
 
       <section className="metrics-strip" aria-label="Показатели мероприятия">

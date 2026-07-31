@@ -54,6 +54,9 @@ import type {
   UpdateAdminEventPricingRuleRequest,
   UpdateAdminEventProductRequest
 } from "@ticket-platform/contracts/admin-events";
+import type {
+  AccommodationSummary
+} from "@ticket-platform/contracts/admin-accommodation";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -100,6 +103,53 @@ export function getUser(
   signal?: AbortSignal
 ): Promise<AdminUserDetail> {
   return requestAdminApi(`users/${encodeURIComponent(userId)}`, signal);
+}
+
+export function getAccommodationSummary(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<AccommodationSummary> {
+  return requestAdminApi(
+    `events/${encodeURIComponent(eventId)}/accommodation`,
+    signal
+  );
+}
+
+export function mergeAccommodationParties(input: {
+  readonly eventId: string;
+  readonly orderIds: readonly string[];
+  readonly note?: string;
+}): Promise<{ readonly merged: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/accommodation/groups`,
+    "POST",
+    {
+      orderIds: input.orderIds,
+      ...(input.note ? { note: input.note } : {})
+    }
+  );
+}
+
+export function splitAccommodationGroup(input: {
+  readonly eventId: string;
+  readonly groupId: string;
+}): Promise<{ readonly split: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/accommodation/groups/split`,
+    "POST",
+    { groupId: input.groupId }
+  );
+}
+
+export function fixAccommodationPlan(input: {
+  readonly eventId: string;
+  readonly note?: string;
+}): Promise<AccommodationSummary> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/accommodation/plans`,
+    "POST",
+    input.note ? { note: input.note } : {}
+  );
 }
 
 export function listOutreachCampaigns(

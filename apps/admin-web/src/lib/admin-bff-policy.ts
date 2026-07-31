@@ -23,7 +23,8 @@ export function isAllowedAdminApiPath(
       || path === "outreach/tasks/board"
       || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields)?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}$/i.test(path)
-      || /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path);
+      || /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/accommodation$/i.test(path);
   }
   if (method === "POST") {
     return path === "events"
@@ -44,6 +45,9 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/scenario-drafts$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/scenario-versions\/[0-9a-f-]{36}\/publish$/i
         .test(path)
+      || /^events\/[0-9a-f-]{36}\/accommodation\/groups$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/accommodation\/groups\/split$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/accommodation\/plans$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/products$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/products\/[0-9a-f-]{36}\/pricing-rules$/i
         .test(path);

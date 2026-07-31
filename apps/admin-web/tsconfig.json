@@ -37,6 +37,9 @@
       ],
       "@ticket-platform/contracts/admin-outreach": [
         "../../packages/contracts/src/admin-outreach.ts"
+      ],
+      "@ticket-platform/contracts/admin-accommodation": [
+        "../../packages/contracts/src/admin-accommodation.ts"
       ]
     }
   },

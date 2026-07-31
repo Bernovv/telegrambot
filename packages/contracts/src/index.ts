@@ -36,4 +36,5 @@ export * from "./admin-auth.js";
 export * from "./admin-operations.js";
 export * from "./admin-events.js";
 export * from "./admin-outreach.js";
+export * from "./admin-accommodation.js";
 export * from "./orders.js";

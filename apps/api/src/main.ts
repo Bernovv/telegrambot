@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
+  AdminAccommodationService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
@@ -59,6 +60,7 @@ import {
   createAdminEventCatalogManagementPersistence,
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
+  createAdminAccommodationPersistence,
   createAdminOutreachPersistence,
   createNodePostgresPool,
   createParticipantQuestionnairePersistence,
@@ -244,6 +246,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
               ? config.telegramWebhook.defaultCountry
               : "RU"
           ),
+          idGenerator
+        )
+      : undefined;
+    const adminAccommodation = adminAuth
+      ? new AdminAccommodationService(
+          createAdminAccommodationPersistence(pool),
+          { now: () => new Date() },
           idGenerator
         )
       : undefined;
@@ -483,6 +492,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(participantsExport ? { participantsExport } : {}),
       ...(adminBroadcast ? { adminBroadcast } : {}),
       ...(adminOutreach ? { adminOutreach } : {}),
+      ...(adminAccommodation ? { adminAccommodation } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {
