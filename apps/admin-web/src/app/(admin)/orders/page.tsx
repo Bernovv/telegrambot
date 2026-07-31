@@ -22,6 +22,7 @@ import {
 import {
   ArrowLeft,
   ArrowRight,
+  EyeOff,
   RefreshCw,
   Search
 } from "lucide-react";
@@ -76,10 +77,12 @@ export default function OrdersPage() {
     const status = (
       typeof statusValue === "string" ? statusValue : ""
     ) as AdminOrderStatus | "";
+    const includeExcluded = data.get("includeExcluded") === "on";
     setFilters({
       limit: 25,
       ...(search ? { search } : {}),
-      ...(status ? { status } : {})
+      ...(status ? { status } : {}),
+      ...(includeExcluded ? { includeExcluded } : {})
     });
     setCursor(null);
     setHistory([]);
@@ -144,6 +147,14 @@ export default function OrdersPage() {
             ))}
           </select>
         </label>
+        <label className="check-field orders-hidden-toggle">
+          <input
+            type="checkbox"
+            name="includeExcluded"
+            defaultChecked={filters.includeExcluded === true}
+          />
+          <span>Показывать скрытые</span>
+        </label>
         <button className="primary-button" type="submit">
           <Search size={16} />
           Найти
@@ -187,7 +198,14 @@ export default function OrdersPage() {
                     <td>
                       <div className="stacked-cell">
                         <strong>{order.number}</strong>
-                        <span className="muted">{order.id.slice(0, 8)}</span>
+                        {order.excludedAt ? (
+                          <span className="order-hidden-badge">
+                            <EyeOff size={12} />
+                            Скрыт
+                          </span>
+                        ) : (
+                          <span className="muted">{order.id.slice(0, 8)}</span>
+                        )}
                       </div>
                     </td>
                     <td>{order.userDisplayName ?? "Без имени"}</td>

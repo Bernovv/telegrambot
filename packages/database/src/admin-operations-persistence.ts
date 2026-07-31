@@ -40,6 +40,8 @@ interface OrderSummaryRow {
   readonly ticket_count: string;
   readonly created_at: Date | string;
   readonly paid_at: Date | string | null;
+  readonly excluded_at: Date | string | null;
+  readonly excluded_reason: string | null;
 }
 
 interface UserIdentityRow {
@@ -229,18 +231,20 @@ implements AdminOperationsRepository {
            and ($3::text is null or orders.status = $3)
            and ($4::uuid is null or orders.user_id = $4)
            and ($5::uuid is null or orders.event_id = $5)
+           and ($6::boolean or orders.excluded_at is null)
            and (
-             $6::timestamptz is null
-             or (orders.created_at, orders.id) < ($6, $7::uuid)
+             $7::timestamptz is null
+             or (orders.created_at, orders.id) < ($7, $8::uuid)
            )
          order by orders.created_at desc, orders.id desc
-         limit $8`,
+         limit $9`,
         [
           input.search ? `%${escapeLike(input.search.toLowerCase())}%` : null,
           input.search,
           input.status,
           input.userId,
           input.eventId,
+          input.includeExcluded,
           input.cursor?.occurredAt ?? null,
           input.cursor?.id ?? null,
           input.limit
@@ -422,7 +426,9 @@ function mapOrderSummary(row: OrderSummaryRow): AdminOrderSummary {
     currency: row.currency,
     ticketCount: toCount(row.ticket_count),
     createdAt: toIso(row.created_at),
-    paidAt: toNullableIso(row.paid_at)
+    paidAt: toNullableIso(row.paid_at),
+    excludedAt: toNullableIso(row.excluded_at),
+    excludedReason: row.excluded_reason ?? null
   };
 }
 
@@ -434,8 +440,8 @@ function toIso(value: Date | string): string {
   return date.toISOString();
 }
 
-function toNullableIso(value: Date | string | null): string | null {
-  return value === null ? null : toIso(value);
+function toNullableIso(value: Date | string | null | undefined): string | null {
+  return value === null || value === undefined ? null : toIso(value);
 }
 
 function toCount(value: string): number {
@@ -510,6 +516,8 @@ const ORDER_SUMMARY_SELECT = `select
   ) as ticket_count,
   orders.created_at,
   orders.paid_at,
+  orders.excluded_at,
+  orders.excluded_reason,
   orders.expires_at,
   orders.source,
   orders.lock_version

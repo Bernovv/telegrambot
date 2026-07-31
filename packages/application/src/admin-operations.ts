@@ -36,6 +36,7 @@ export interface AdminOperationsRepository {
     readonly status: AdminOrderStatus | null;
     readonly userId: string | null;
     readonly eventId: string | null;
+    readonly includeExcluded: boolean;
     readonly cursor: AdminPageCursor | null;
     readonly limit: number;
   }): Promise<readonly AdminOrderSummary[]>;
@@ -89,6 +90,7 @@ export class ListAdminOrdersService {
     readonly status?: string;
     readonly userId?: string;
     readonly eventId?: string;
+    readonly includeExcluded?: boolean;
     readonly cursor?: string;
     readonly limit?: number;
   }): Promise<CursorPage<AdminOrderSummary>> {
@@ -99,6 +101,7 @@ export class ListAdminOrdersService {
       status: parseOrderStatus(input.status),
       userId: parseOptionalUuid(input.userId),
       eventId: parseOptionalUuid(input.eventId),
+      includeExcluded: input.includeExcluded === true,
       cursor: decodeCursor(input.cursor),
       limit: limit + 1
     });

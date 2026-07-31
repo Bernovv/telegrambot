@@ -71,6 +71,7 @@ export interface OrderListFilters {
   readonly status?: AdminOrderStatus;
   readonly userId?: string;
   readonly eventId?: string;
+  readonly includeExcluded?: boolean;
   readonly cursor?: string;
   readonly limit?: number;
 }

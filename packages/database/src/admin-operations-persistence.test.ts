@@ -220,6 +220,8 @@ const orderRow = {
   ticket_count: "1",
   created_at: at,
   paid_at: at,
+  excluded_at: null,
+  excluded_reason: null,
   expires_at: new Date("2026-07-25T14:30:00.000Z"),
   source: "telegram",
   lock_version: 3

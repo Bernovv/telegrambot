@@ -2,7 +2,12 @@
 
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
-import { AdminApiError, getOrder } from "@/lib/admin-api";
+import {
+  AdminApiError,
+  excludeOrderFromReports,
+  getOrder,
+  includeOrderInReports
+} from "@/lib/admin-api";
 import {
   formatDateTime,
   formatKopecks,
@@ -10,7 +15,7 @@ import {
   orderStatusTone
 } from "@/lib/format";
 import type { AdminOrderDetail } from "@ticket-platform/contracts";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -20,6 +25,7 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<AdminOrderDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hiding, setHiding] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -46,6 +52,37 @@ export default function OrderDetailPage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  async function toggleHidden() {
+    if (!order) {
+      return;
+    }
+    let reason: string | null = null;
+    if (!order.excludedAt) {
+      reason = window.prompt(
+        "Почему скрываем заказ? Причина сохранится в карточке."
+      );
+      if (!reason || reason.trim().length < 3) {
+        return;
+      }
+    }
+    setHiding(true);
+    setError(null);
+    try {
+      await (order.excludedAt
+        ? includeOrderInReports(order.id)
+        : excludeOrderFromReports({ orderId: order.id, reason: reason as string }));
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof AdminApiError
+          ? caught.message
+          : "Не удалось изменить видимость заказа."
+      );
+    } finally {
+      setHiding(false);
+    }
+  }
 
   if (loading && !order) {
     return <PageLoading label="Загружаем заказ" />;
@@ -99,6 +136,30 @@ export default function OrderDetailPage() {
           <span>Создан</span>
           <strong>{formatDateTime(order.createdAt)}</strong>
         </div>
+      </div>
+
+      <div className={order.excludedAt ? "plan-banner plan-banner-stale" : "plan-banner"}>
+        <div>
+          <strong>
+            {order.excludedAt
+              ? "Заказ скрыт из отчётов"
+              : "Заказ учитывается в отчётах"}
+          </strong>
+          <span>
+            {order.excludedAt
+              ? order.excludedReason ?? "Причина не указана"
+              : "Тестовые, ошибочные и брошенные заказы можно скрыть — из истории они не исчезнут."}
+          </span>
+        </div>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={hiding}
+          onClick={() => void toggleHidden()}
+        >
+          {order.excludedAt ? <Eye size={16} /> : <EyeOff size={16} />}
+          {order.excludedAt ? "Вернуть в отчёты" : "Скрыть из отчётов"}
+        </button>
       </div>
 
       <section className="data-section">

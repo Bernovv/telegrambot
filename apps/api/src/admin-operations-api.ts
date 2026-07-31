@@ -52,6 +52,7 @@ const orderListQuerySchema = z.object({
   status: orderStatusSchema.optional(),
   userId: idSchema.optional(),
   eventId: idSchema.optional(),
+  includeExcluded: z.enum(["true", "false"]).optional(),
   cursor: cursorSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional()
 }).strict();
@@ -79,6 +80,7 @@ export interface AdminOperationsHandlers {
       readonly status?: string;
       readonly userId?: string;
       readonly eventId?: string;
+      readonly includeExcluded?: boolean;
       readonly cursor?: string;
       readonly limit?: number;
     }): Promise<CursorPage<AdminOrderSummary>>;
@@ -188,6 +190,9 @@ export class AdminOrdersReadController {
         ...(parsed.data.eventId === undefined
           ? {}
           : { eventId: parsed.data.eventId }),
+        ...(parsed.data.includeExcluded === undefined
+          ? {}
+          : { includeExcluded: parsed.data.includeExcluded === "true" }),
         ...(parsed.data.cursor === undefined
           ? {}
           : { cursor: parsed.data.cursor }),

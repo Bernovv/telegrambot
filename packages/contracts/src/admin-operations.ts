@@ -47,6 +47,9 @@ export interface AdminOrderSummary {
   readonly ticketCount: number;
   readonly createdAt: string;
   readonly paidAt: string | null;
+  /** Заказ скрыт из отчётов: тестовый, истёкший или ошибочный. */
+  readonly excludedAt: string | null;
+  readonly excludedReason: string | null;
 }
 
 export interface CursorPage<TItem> {
