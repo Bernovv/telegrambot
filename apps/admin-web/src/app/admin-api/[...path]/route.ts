@@ -50,6 +50,21 @@ async function forwardAdminRequest(
   if (!isAllowedAdminApiPath(method, upstreamPath)) {
     // Без пути в ответе такую ошибку невозможно разобрать: видно только «404», а какой
     // именно запрос отклонён — нет. Путь здесь не секрет, его же прислал сам браузер.
+    // Sec-Fetch-* показывают, переход это по адресу или программный запрос: без них
+    // непонятно, кто вообще постучался.
+    // eslint-disable-next-line no-console -- диагностика отклонённых маршрутов идёт в лог pm2
+    console.warn(
+      "[admin-bff] route rejected",
+      JSON.stringify({
+        method,
+        path: upstreamPath,
+        mode: request.headers.get("sec-fetch-mode"),
+        dest: request.headers.get("sec-fetch-dest"),
+        site: request.headers.get("sec-fetch-site"),
+        referer: request.headers.get("referer"),
+        contentType: request.headers.get("content-type")
+      })
+    );
     return problem(
       404,
       "ADMIN_ROUTE_NOT_FOUND",
