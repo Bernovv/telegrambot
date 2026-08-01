@@ -274,6 +274,10 @@ export interface ImportEventParticipantsResult extends OutreachImportResult {
 
 export interface OutreachImportResult {
   readonly received: number;
+  /** Строки, у которых не удалось разобрать телефон или ник: пропущены. */
+  readonly invalidRows: number;
+  /** Их номера внутри присланной пачки — чтобы панель показала строки файла. */
+  readonly invalidRowIndexes: readonly number[];
   readonly createdContacts: number;
   readonly updatedContacts: number;
   readonly addedToCampaign: number;

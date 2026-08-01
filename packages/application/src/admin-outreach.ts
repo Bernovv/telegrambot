@@ -41,6 +41,15 @@ export interface NormalizedOutreachImportRow {
   readonly note: string | null;
 }
 
+/**
+ * Что умеет посчитать база. Пропущенные строки считает сервис — база их не видит,
+ * до неё доходят только разобранные.
+ */
+export type OutreachImportCounts = Omit<
+  OutreachImportResult,
+  "invalidRows" | "invalidRowIndexes"
+>;
+
 export interface OutreachExportRow {
   readonly displayName: string | null;
   readonly phone: string | null;
@@ -153,7 +162,7 @@ export interface AdminOutreachRepository {
       readonly campaignContactId: string;
     })[];
     readonly now: Date;
-  }): Promise<OutreachImportResult>;
+  }): Promise<OutreachImportCounts>;
   assignContacts(input: {
     readonly campaignContactIds: readonly string[];
     readonly assignedAdminId: string;
@@ -254,6 +263,8 @@ export class AdminOutreachService {
         updatedContacts: 0,
         addedToCampaign: 0,
         alreadyInCampaign: 0,
+        invalidRows: 0,
+        invalidRowIndexes: [],
         eventTitle: campaign.eventTitle ?? ""
       };
     }
@@ -265,13 +276,16 @@ export class AdminOutreachService {
     let updatedContacts = 0;
     let addedToCampaign = 0;
     let alreadyInCampaign = 0;
+    let invalidRows = 0;
     for (let offset = 0; offset < rows.length; offset += 500) {
       const batch = await this.importContacts({
         actor: input.actor,
         campaignId: input.campaignId,
         rows: rows.slice(offset, offset + 500),
+        skipInvalid: true,
         now: input.now
       });
+      invalidRows += batch.invalidRows;
       received += batch.received;
       createdContacts += batch.createdContacts;
       updatedContacts += batch.updatedContacts;
@@ -285,6 +299,8 @@ export class AdminOutreachService {
       updatedContacts,
       addedToCampaign,
       alreadyInCampaign,
+      invalidRows,
+      invalidRowIndexes: [],
       eventTitle: campaign.eventTitle ?? ""
     };
   }
@@ -629,6 +645,13 @@ export class AdminOutreachService {
     readonly campaignId: string;
     readonly assignedAdminId?: string;
     readonly rows: readonly OutreachImportRow[];
+    /**
+     * Пропускать строки с неразбираемым телефоном вместо отказа от всей пачки. Нужно при
+     * загрузке файла: в выгрузке на тысячи контактов пара битых номеров есть всегда, и
+     * ронять из-за них весь импорт нельзя. При добавлении одного контакта руками флага
+     * нет — там про плохой телефон надо сказать сразу.
+     */
+    readonly skipInvalid?: boolean;
     readonly now: Date;
   }): Promise<OutreachImportResult> {
     requirePermission(input.actor, "outreach.write");
@@ -638,18 +661,52 @@ export class AdminOutreachService {
     }
     const assignedAdminId = input.assignedAdminId ?? input.actor.adminId;
     requireUuid(assignedAdminId);
-    const rows = input.rows.map((row) => ({
-      ...this.normalizeImportRow(row),
-      contactId: this.idGenerator.newId(),
-      campaignContactId: this.idGenerator.newId()
-    }));
-    return this.repository.importContacts({
+
+    const rows: (NormalizedOutreachImportRow & {
+      readonly contactId: string;
+      readonly campaignContactId: string;
+    })[] = [];
+    const invalidRowIndexes: number[] = [];
+    input.rows.forEach((row, index) => {
+      try {
+        rows.push({
+          ...this.normalizeImportRow(row),
+          contactId: this.idGenerator.newId(),
+          campaignContactId: this.idGenerator.newId()
+        });
+      } catch (error) {
+        if (input.skipInvalid !== true) {
+          throw error;
+        }
+        invalidRowIndexes.push(index);
+      }
+    });
+
+    if (rows.length === 0) {
+      return {
+        received: input.rows.length,
+        createdContacts: 0,
+        updatedContacts: 0,
+        addedToCampaign: 0,
+        alreadyInCampaign: 0,
+        invalidRows: invalidRowIndexes.length,
+        invalidRowIndexes
+      };
+    }
+
+    const result = await this.repository.importContacts({
       campaignId: input.campaignId,
       assignedAdminId,
       createdByAdminId: input.actor.adminId,
       rows,
       now: input.now
     });
+    return {
+      ...result,
+      received: input.rows.length,
+      invalidRows: invalidRowIndexes.length,
+      invalidRowIndexes
+    };
   }
 
   createContact(input: {

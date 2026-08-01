@@ -16,6 +16,7 @@ describe("outreach CSV parser", () => {
       note: "После 15:00; удобно"
     }]);
     assert.deepEqual(result.skippedLines, []);
+    assert.deepEqual(result.lines, [2]);
   });
 
   it("skips a row without any contact instead of failing the whole file", () => {
@@ -27,6 +28,8 @@ describe("outreach CSV parser", () => {
 
     assert.deepEqual(result.rows, [{ name: "Анна", phone: "+79991234567" }]);
     assert.deepEqual(result.skippedLines, [2, 4]);
+    // Номер строки файла сохраняется, иначе ошибку не на что повесить.
+    assert.deepEqual(result.lines, [3]);
   });
 
   it("still refuses a file where nothing at all can be imported", () => {

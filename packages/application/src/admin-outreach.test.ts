@@ -56,7 +56,9 @@ describe("AdminOutreachService", () => {
             createdContacts: 1,
             updatedContacts: 0,
             addedToCampaign: 1,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: []
           };
         }
       }),
@@ -90,6 +92,112 @@ describe("AdminOutreachService", () => {
       contactId: "00000000-0000-4000-8000-000000000201",
       campaignContactId: "00000000-0000-4000-8000-000000000202"
     });
+  });
+
+  it("skips an unparseable phone instead of losing the whole batch", async () => {
+    // Ровно случай выгрузки из amoCRM: пара номеров с приписанным +7 к уже
+    // начинавшемуся с 7, а из-за них не проходили все восемь тысяч.
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: input.rows.length,
+            updatedContacts: 0,
+            addedToCampaign: input.rows.length,
+            alreadyInCampaign: 0
+          };
+        }
+      }),
+      {
+        normalize: (value) => {
+          if (value === "+77921533554") {
+            throw new Error("Phone number is invalid");
+          }
+          return value;
+        }
+      },
+      countingIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [
+        { phone: "+79991234567" },
+        { phone: "+77921533554" },
+        { phone: "+79991234568" }
+      ],
+      skipInvalid: true,
+      now
+    });
+
+    assert.equal(received?.rows.length, 2);
+    assert.equal(result.received, 3);
+    assert.equal(result.addedToCampaign, 2);
+    assert.equal(result.invalidRows, 1);
+    assert.deepEqual(result.invalidRowIndexes, [1]);
+  });
+
+  it("still refuses a single bad phone when a contact is added by hand", async () => {
+    const service = new AdminOutreachService(
+      repository({}),
+      {
+        normalize: () => {
+          throw new Error("Phone number is invalid");
+        }
+      },
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.createContact({
+        actor: writeActor,
+        campaignId: CAMPAIGN_ID,
+        contact: { phone: "+77921533554" },
+        now
+      }),
+      /Phone number is invalid/
+    );
+  });
+
+  it("reports a batch where nothing could be parsed without touching the database", async () => {
+    let called = false;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          called = true;
+          return {
+            received: input.rows.length,
+            createdContacts: 0,
+            updatedContacts: 0,
+            addedToCampaign: 0,
+            alreadyInCampaign: 0
+          };
+        }
+      }),
+      {
+        normalize: () => {
+          throw new Error("Phone number is invalid");
+        }
+      },
+      countingIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [{ phone: "+77921533554" }, { phone: "+78800500550" }],
+      skipInvalid: true,
+      now
+    });
+
+    assert.equal(called, false);
+    assert.equal(result.invalidRows, 2);
+    assert.equal(result.addedToCampaign, 0);
   });
 
   it("records a manager-owned message batch and rejects impossible results", async () => {
@@ -304,7 +412,9 @@ describe("AdminOutreachService", () => {
             createdContacts: input.rows.length,
             updatedContacts: 0,
             addedToCampaign: input.rows.length,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: []
           };
         }
       }),
@@ -353,7 +463,9 @@ describe("AdminOutreachService", () => {
             createdContacts: 0,
             updatedContacts: 0,
             addedToCampaign: 0,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: []
           };
         }
       }),
@@ -581,7 +693,9 @@ function repository(
         createdContacts: 0,
         updatedContacts: 0,
         addedToCampaign: 0,
-        alreadyInCampaign: 0
+        alreadyInCampaign: 0,
+        invalidRows: 0,
+        invalidRowIndexes: []
       };
     },
     async assignContacts() { return 0; },

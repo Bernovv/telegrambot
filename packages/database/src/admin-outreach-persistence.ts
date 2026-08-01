@@ -1,7 +1,8 @@
 import type {
   AdminOutreachRepository,
   NormalizedOutreachImportRow,
-  OutreachExportRow
+  OutreachExportRow,
+  OutreachImportCounts
 } from "@ticket-platform/application";
 import type {
   OutreachActivity,
@@ -12,7 +13,6 @@ import type {
   OutreachCustomFieldType,
   OutreachCustomFieldValue,
   MoveOutreachContactsResult,
-  OutreachImportResult,
   OutreachImportRow,
   OutreachManager,
   OutreachPipelineColumn,
@@ -908,7 +908,7 @@ implements AdminOutreachRepository {
 
   importContacts(
     input: Parameters<AdminOutreachRepository["importContacts"]>[0]
-  ): Promise<OutreachImportResult> {
+  ): Promise<OutreachImportCounts> {
     return this.write(async (connection) => {
       const campaign = await connection.query<{ readonly id: string }>(
         `select id

@@ -2,6 +2,8 @@ import type { OutreachImportRow } from "@ticket-platform/contracts/admin-outreac
 
 export interface OutreachCsvParseResult {
   readonly rows: readonly OutreachImportRow[];
+  /** Номер строки файла для каждой разобранной записи — по нему показываем ошибки. */
+  readonly lines: readonly number[];
   /** Номера строк файла без телефона, Telegram и MAX — импортировать из них нечего. */
   readonly skippedLines: readonly number[];
 }
@@ -23,6 +25,7 @@ export function parseOutreachCsv(text: string): OutreachCsvParseResult {
   // Одна пустая строка не должна ронять импорт целиком: в выгрузке на восемь тысяч
   // контактов такая найдётся почти наверняка. Пропускаем её и говорим, сколько пропустили.
   const rows: OutreachImportRow[] = [];
+  const lines: number[] = [];
   const skippedLines: number[] = [];
   table.slice(1).forEach((cells, rowIndex) => {
     const row: Record<string, string> = {};
@@ -36,11 +39,12 @@ export function parseOutreachCsv(text: string): OutreachCsvParseResult {
       return;
     }
     rows.push(compact(row));
+    lines.push(rowIndex + 2);
   });
   if (rows.length < 1) {
     throw new Error("В CSV нет строк с контактами");
   }
-  return { rows, skippedLines };
+  return { rows, lines, skippedLines };
 }
 
 function parseTable(text: string, delimiter: string): string[][] {

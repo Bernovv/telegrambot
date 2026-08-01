@@ -584,6 +584,7 @@ export class AdminOutreachController {
     return executeOutreach(() =>
       this.handler.importContacts({
         actor: requireActor(request),
+        skipInvalid: true,
         campaignId,
         ...(parsed.assignedAdminId === undefined
           ? {}

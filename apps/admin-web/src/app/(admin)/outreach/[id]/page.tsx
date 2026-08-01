@@ -411,7 +411,7 @@ export default function OutreachCampaignPage() {
     setError(null);
     setNotice(null);
     try {
-      const { rows, skippedLines } = parseOutreachCsv(await file.text());
+      const { rows, lines, skippedLines } = parseOutreachCsv(await file.text());
       const skippedNote = skippedLines.length > 0
         ? ` Пропущено строк без контакта: ${skippedLines.length}.`
         : "";
@@ -422,6 +422,7 @@ export default function OutreachCampaignPage() {
       }
       let added = 0;
       let duplicates = 0;
+      const badLines: number[] = [];
       // Импорт идёт пачками: сервер принимает не больше 500 строк за запрос, а на
       // восьми тысячах контактов это полсотни запросов — показываем, докуда дошли.
       for (let offset = 0; offset < rows.length; offset += 150) {
@@ -430,12 +431,22 @@ export default function OutreachCampaignPage() {
         });
         added += result.addedToCampaign;
         duplicates += result.alreadyInCampaign;
+        for (const index of result.invalidRowIndexes) {
+          const line = lines[offset + index];
+          if (line !== undefined) {
+            badLines.push(line);
+          }
+        }
         setNotice(
           `Импортируем: ${Math.min(offset + 150, rows.length)} из ${rows.length}…`
         );
       }
+      const badNote = badLines.length > 0
+        ? ` Не удалось разобрать телефон в строках: ${badLines.slice(0, 15).join(", ")}`
+          + `${badLines.length > 15 ? ` и ещё ${badLines.length - 15}` : ""}.`
+        : "";
       setNotice(
-        `Добавлено: ${added}. Уже были в кампании: ${duplicates}.${skippedNote}`
+        `Добавлено: ${added}. Уже были в кампании: ${duplicates}.${skippedNote}${badNote}`
       );
       await load();
     } catch (caught) {

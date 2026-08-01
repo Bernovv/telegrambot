@@ -208,7 +208,9 @@ describe("administrator outreach HTTP contract", () => {
             createdContacts: 1,
             updatedContacts: 0,
             addedToCampaign: 1,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: []
           };
         }
       })
@@ -254,6 +256,8 @@ function handler(
         updatedContacts: 0,
         addedToCampaign: 0,
         alreadyInCampaign: 0,
+        invalidRows: 0,
+        invalidRowIndexes: [],
         eventTitle: ""
       };
     },
@@ -285,7 +289,9 @@ function handler(
         createdContacts: 0,
         updatedContacts: 0,
         addedToCampaign: 0,
-        alreadyInCampaign: 0
+        alreadyInCampaign: 0,
+        invalidRows: 0,
+        invalidRowIndexes: []
       };
     },
     async createContact() {
@@ -294,7 +300,9 @@ function handler(
         createdContacts: 1,
         updatedContacts: 0,
         addedToCampaign: 1,
-        alreadyInCampaign: 0
+        alreadyInCampaign: 0,
+        invalidRows: 0,
+        invalidRowIndexes: []
       };
     },
     async assignContacts() { return { updated: 0 }; },
