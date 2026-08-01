@@ -35,6 +35,17 @@ interface CampaignRow {
   readonly converted_contacts: string;
   readonly created_at: Date | string;
   readonly completed_at: Date | string | null;
+  readonly event_id: string | null;
+  readonly event_title: string | null;
+}
+
+interface ParticipationRow {
+  readonly participant_id: string;
+  readonly event_id: string;
+  readonly event_title: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleeping_places: number;
 }
 
 interface ContactRow {
@@ -158,7 +169,7 @@ implements AdminOutreachRepository {
     return this.read(async (connection) => {
       const result = await connection.query<CampaignRow>(
         `${CAMPAIGN_SUMMARY_SELECT}
-         group by campaign.id
+         group by campaign.id, event.title
          order by campaign.created_at desc, campaign.id desc
          limit 200`
       );
@@ -171,7 +182,7 @@ implements AdminOutreachRepository {
       const result = await connection.query<CampaignRow>(
         `${CAMPAIGN_SUMMARY_SELECT}
          where campaign.id = $1
-         group by campaign.id`,
+         group by campaign.id, event.title`,
         [campaignId]
       );
       return result.rows[0] ? mapCampaign(result.rows[0]) : null;
@@ -185,14 +196,15 @@ implements AdminOutreachRepository {
       await connection.query(
         `insert into public.outreach_campaigns (
          id, name, description, status, created_by_admin_id,
-           created_at, updated_at, completed_at
+           created_at, updated_at, completed_at, event_id
          ) values (
            $1::uuid, $2::text, $3::text, $4::text, $5::uuid,
            $6::timestamptz, $6::timestamptz,
            case
              when $4::text = 'completed' then $6::timestamptz
              else null::timestamptz
-           end
+           end,
+           $7::uuid
          )`,
         [
           input.id,
@@ -200,7 +212,8 @@ implements AdminOutreachRepository {
           input.description,
           input.status,
           input.createdByAdminId,
-          input.now
+          input.now,
+          input.eventId
         ]
       );
     });
@@ -226,6 +239,10 @@ implements AdminOutreachRepository {
         sets.push(
           `completed_at = case when $${values.length} = 'completed' then $2 else null end`
         );
+      }
+      if (input.eventId !== undefined) {
+        values.push(input.eventId);
+        sets.push(`event_id = $${values.length}::uuid`);
       }
       const result = await connection.query(
         `update public.outreach_campaigns
@@ -702,6 +719,23 @@ implements AdminOutreachRepository {
          limit 100`,
         [campaignContactId]
       );
+      // Участия ищем по контакту, а не по строке кампании: один и тот же человек может
+      // числиться в нескольких кампаниях, а едет он всё равно один раз.
+      const participations = await connection.query<ParticipationRow>(
+        `select participant.id as participant_id,
+                participant.event_id,
+                event.title as event_title,
+                participant.adults,
+                participant.children,
+                participant.sleeping_places
+         from public.event_participants participant
+         join public.events event on event.id = participant.event_id
+         where participant.outreach_contact_id = $1::uuid
+           and participant.deleted_at is null
+         order by event.starts_at desc
+         limit 20`,
+        [row.contact_id]
+      );
       const stageHistory = await connection.query<StageHistoryRow>(
         `select history.id, history.actor_admin_id,
                 coalesce(actor.display_name, actor.email_normalized, 'Система') as actor_name,
@@ -718,7 +752,14 @@ implements AdminOutreachRepository {
         ...mapContact(row),
         activities: activities.rows.map(mapActivity),
         tasks: tasks.rows.map(mapTask),
-        stageHistory: stageHistory.rows.map(mapStageHistory)
+        stageHistory: stageHistory.rows.map(mapStageHistory),
+        participations: participations.rows.map((participation) => ({
+          participantId: participation.participant_id,
+          eventId: participation.event_id,
+          eventTitle: participation.event_title,
+          guests: participation.adults + participation.children,
+          sleepingPlaces: participation.sleeping_places
+        }))
       };
     });
   }
@@ -1332,6 +1373,8 @@ function mapCampaign(row: CampaignRow): OutreachCampaignSummary {
     untouchedContacts: Number(row.untouched_contacts),
     interestedContacts: Number(row.interested_contacts),
     convertedContacts: Number(row.converted_contacts),
+    eventId: row.event_id,
+    eventTitle: row.event_title,
     createdAt: toIso(row.created_at),
     completedAt: nullableIso(row.completed_at)
   };
@@ -1479,8 +1522,10 @@ const CAMPAIGN_SUMMARY_SELECT = `
          count(campaign_contact.id) filter (
            where stage_column.outcome = 'won'
          )::text as converted_contacts,
-         campaign.created_at, campaign.completed_at
+         campaign.created_at, campaign.completed_at,
+         campaign.event_id, event.title as event_title
   from public.outreach_campaigns campaign
+  left join public.events event on event.id = campaign.event_id
   left join public.outreach_campaign_contacts campaign_contact
     on campaign_contact.campaign_id = campaign.id
   left join public.outreach_pipeline_columns stage_column

@@ -4,6 +4,7 @@ import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
+  addEventParticipant,
   assignOutreachContacts,
   completeOutreachTask,
   createOutreachContact,
@@ -63,6 +64,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Tent,
   Trash2,
   UserRoundCheck,
   X
@@ -234,6 +236,41 @@ export default function OutreachCampaignPage() {
       limit: nextView === "board" ? 500 : 50
     }));
     setSelected([]);
+  }
+
+  async function addParticipantFromContact(
+    event: FormEvent<HTMLFormElement>,
+    contact: OutreachCampaignContactDetail
+  ) {
+    event.preventDefault();
+    if (!campaign?.eventId) {
+      return;
+    }
+    const data = new FormData(event.currentTarget);
+    const number = (name: string) =>
+      Number.parseInt(formText(data, name) || "0", 10);
+    const ticketTitle = formText(data, "ticketTitle").trim();
+
+    setMutating(true);
+    setError(null);
+    try {
+      await addEventParticipant(campaign.eventId, {
+        displayName: contact.displayName ?? "Без имени",
+        source: "direct",
+        adults: number("adults"),
+        children: number("children"),
+        sleepingPlaces: number("sleepingPlaces"),
+        outreachContactId: contact.contactId,
+        ...(contact.phone ? { phone: contact.phone } : {}),
+        ...(ticketTitle ? { ticketTitle } : {})
+      });
+      setNotice("Контакт добавлен в участники мероприятия.");
+      await openDetail(contact.id);
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось добавить участника."));
+    } finally {
+      setMutating(false);
+    }
   }
 
   function toggleAll() {
@@ -784,6 +821,16 @@ export default function OutreachCampaignPage() {
           ) : null}
         </div>
       </div>
+
+      {campaign.eventTitle ? (
+        <div className="accommodation-note">
+          <Tent size={16} />
+          <span>
+            Кампания продаёт на «{campaign.eventTitle}». Оплативших добавляйте в участники
+            прямо из карточки контакта.
+          </span>
+        </div>
+      ) : null}
 
       <div className="metrics-strip">
         <div><span>Всего контактов</span><strong>{campaign.totalContacts}</strong></div>
@@ -1493,6 +1540,50 @@ export default function OutreachCampaignPage() {
                 </select>
               </label>
             </div>
+
+            {detail.participations.length > 0 ? (
+              <div className="accommodation-note">
+                <UserRoundCheck size={16} />
+                <span>
+                  Едет на:{" "}
+                  {detail.participations
+                    .map((participation) =>
+                      `${participation.eventTitle} — ${participation.guests} гост.`)
+                    .join("; ")}
+                </span>
+              </div>
+            ) : null}
+
+            {campaign.eventId && detail.participations.length === 0 ? (
+              <details className="participant-from-contact">
+                <summary>Добавить в «{campaign.eventTitle}»</summary>
+                <form onSubmit={(event) => void addParticipantFromContact(event, detail)}>
+                  <p className="muted">
+                    Стадия «Оплатил» не знает, сколько человек едет и нужна ли палатка —
+                    уточните здесь.
+                  </p>
+                  <label className="field">
+                    <span>Взрослых</span>
+                    <input name="adults" type="number" min={0} max={100} defaultValue={1} required />
+                  </label>
+                  <label className="field">
+                    <span>Детей</span>
+                    <input name="children" type="number" min={0} max={100} defaultValue={0} required />
+                  </label>
+                  <label className="field">
+                    <span>Спальных мест</span>
+                    <input name="sleepingPlaces" type="number" min={0} max={200} defaultValue={0} required />
+                  </label>
+                  <label className="field">
+                    <span>Тариф</span>
+                    <input name="ticketTitle" maxLength={200} placeholder="Все включено" />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={mutating}>
+                    Добавить участником
+                  </button>
+                </form>
+              </details>
+            ) : null}
 
             <div className="outreach-contact-meta">
               <span>Источник</span><strong>{detail.source ?? "Не указан"}</strong>

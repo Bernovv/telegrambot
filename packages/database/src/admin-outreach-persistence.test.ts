@@ -17,6 +17,7 @@ describe("PostgreSQL administrator outreach persistence", () => {
       name: "Не оплатили",
       description: "Июль",
       status: "active",
+      eventId: null,
       createdByAdminId: "00000000-0000-4000-8000-000000000001",
       now: new Date("2026-07-29T12:00:00.000Z")
     });

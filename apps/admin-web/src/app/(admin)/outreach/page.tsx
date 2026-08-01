@@ -5,9 +5,11 @@ import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
   createOutreachCampaign,
+  listEvents,
   listOutreachCampaigns
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
+import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
 import type { OutreachCampaignSummary } from "@ticket-platform/contracts/admin-outreach";
 import { ArrowRight, Plus, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +23,7 @@ export default function OutreachCampaignsPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [events, setEvents] = useState<readonly AdminEventSummary[]>([]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -46,11 +49,23 @@ export default function OutreachCampaignsPage() {
     return () => controller.abort();
   }, [load]);
 
+  // Список мероприятий нужен только для выбора при создании кампании, поэтому грузим
+  // молча: без него форма всё равно работает, просто без привязки.
+  useEffect(() => {
+    const controller = new AbortController();
+    void listEvents({ limit: 50 }, controller.signal)
+      .then((page) => setEvents(page.items))
+      .catch(() => setEvents([]));
+    return () => controller.abort();
+  }, []);
+
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const nameValue = data.get("name");
     const descriptionValue = data.get("description");
+    const eventValue = data.get("eventId");
+    const eventId = typeof eventValue === "string" ? eventValue : "";
     const name = typeof nameValue === "string" ? nameValue.trim() : "";
     const description = typeof descriptionValue === "string"
       ? descriptionValue.trim()
@@ -63,7 +78,8 @@ export default function OutreachCampaignsPage() {
     try {
       const campaign = await createOutreachCampaign({
         name,
-        ...(description ? { description } : {})
+        ...(description ? { description } : {}),
+        ...(eventId ? { eventId } : {})
       });
       router.push(`/outreach/${campaign.id}`);
     } catch (caught) {
@@ -130,6 +146,19 @@ export default function OutreachCampaignsPage() {
               <span>Описание</span>
               <textarea name="description" maxLength={2000} rows={3} />
             </label>
+            <label>
+              <span>Мероприятие</span>
+              <select name="eventId" defaultValue="">
+                <option value="">Без привязки</option>
+                {events.map((event) => (
+                  <option key={event.id} value={event.id}>{event.title}</option>
+                ))}
+              </select>
+              <small className="muted">
+                Оплатившие из этой кампании смогут попадать в участников мероприятия
+                одной кнопкой.
+              </small>
+            </label>
             <button className="primary-button" type="submit" disabled={creating}>
               {creating ? "Создаём…" : "Создать и открыть"}
             </button>
@@ -158,6 +187,7 @@ export default function OutreachCampaignsPage() {
               <thead>
                 <tr>
                   <th>Кампания</th>
+                  <th>Мероприятие</th>
                   <th>Прогресс</th>
                   <th>Заинтересованы</th>
                   <th>Оплатили</th>
@@ -175,6 +205,9 @@ export default function OutreachCampaignsPage() {
                           {campaign.status === "completed" ? "Завершена" : "Активна"}
                         </StatusPill>
                       </div>
+                    </td>
+                    <td>
+                      {campaign.eventTitle ?? <span className="muted">не привязана</span>}
                     </td>
                     <td>
                       <strong>{campaign.totalContacts - campaign.untouchedContacts}</strong>

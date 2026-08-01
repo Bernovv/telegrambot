@@ -60,6 +60,7 @@ export interface AdminOutreachRepository {
   listCampaigns(): Promise<readonly OutreachCampaignSummary[]>;
   getCampaign(campaignId: string): Promise<OutreachCampaignSummary | null>;
   createCampaign(input: {
+    readonly eventId: string | null;
     readonly id: string;
     readonly name: string;
     readonly description: string | null;
@@ -68,6 +69,7 @@ export interface AdminOutreachRepository {
     readonly now: Date;
   }): Promise<void>;
   updateCampaign(input: {
+    readonly eventId?: string | null;
     readonly campaignId: string;
     readonly name?: string;
     readonly description?: string | null;
@@ -219,17 +221,22 @@ export class AdminOutreachService {
     readonly name: string;
     readonly description?: string;
     readonly status?: OutreachCampaignStatus;
+    readonly eventId?: string;
     readonly now: Date;
   }): Promise<OutreachCampaignSummary> {
     requirePermission(input.actor, "outreach.write");
     const name = requiredText(input.name, 200, "Outreach campaign name");
     const description = optionalText(input.description, 2000);
+    if (input.eventId !== undefined) {
+      requireUuid(input.eventId);
+    }
     const id = this.idGenerator.newId();
     await this.repository.createCampaign({
       id,
       name,
       description,
       status: input.status ?? "active",
+      eventId: input.eventId ?? null,
       createdByAdminId: input.actor.adminId,
       now: input.now
     });
@@ -246,12 +253,17 @@ export class AdminOutreachService {
     readonly name?: string;
     readonly description?: string | null;
     readonly status?: OutreachCampaignStatus;
+    readonly eventId?: string | null;
     readonly now: Date;
   }): Promise<OutreachCampaignSummary | null> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.campaignId);
+    if (input.eventId !== undefined && input.eventId !== null) {
+      requireUuid(input.eventId);
+    }
     const changed = await this.repository.updateCampaign({
       campaignId: input.campaignId,
+      ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
       ...(input.name === undefined
         ? {}
         : { name: requiredText(input.name, 200, "Outreach campaign name") }),

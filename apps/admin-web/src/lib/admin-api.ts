@@ -265,6 +265,7 @@ export function listOutreachCampaigns(
 export function createOutreachCampaign(input: {
   readonly name: string;
   readonly description?: string;
+  readonly eventId?: string;
 }): Promise<OutreachCampaignSummary> {
   return requestAdminMutation("outreach/campaigns", "POST", input);
 }
@@ -285,6 +286,7 @@ export function updateOutreachCampaign(
     readonly name?: string;
     readonly description?: string | null;
     readonly status?: OutreachCampaignStatus;
+    readonly eventId?: string | null;
   }
 ): Promise<OutreachCampaignSummary> {
   return requestAdminMutation(

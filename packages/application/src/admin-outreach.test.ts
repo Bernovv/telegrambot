@@ -147,6 +147,94 @@ describe("AdminOutreachService", () => {
     );
   });
 
+  it("stores the event a campaign sells for, and null when there is none", async () => {
+    const created: Parameters<AdminOutreachRepository["createCampaign"]>[0][] = [];
+    const service = new AdminOutreachService(
+      repository({
+        async createCampaign(input) { created.push(input); },
+        async getCampaign() {
+          return {
+            id: CAMPAIGN_ID,
+            name: "Тест",
+            description: null,
+            status: "active",
+            eventId: null,
+            eventTitle: null,
+            totalContacts: 0,
+            untouchedContacts: 0,
+            interestedContacts: 0,
+            convertedContacts: 0,
+            createdAt: now.toISOString(),
+            completedAt: null
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await service.createCampaign({
+      actor: writeActor,
+      name: "Пикник, холодная база",
+      eventId: CAMPAIGN_ID,
+      now
+    });
+    await service.createCampaign({ actor: writeActor, name: "Без события", now });
+
+    assert.equal(created[0]?.eventId, CAMPAIGN_ID);
+    assert.equal(created[1]?.eventId, null);
+  });
+
+  it("rejects a campaign pointed at something that is not an event id", async () => {
+    const service = new AdminOutreachService(
+      repository({}),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.createCampaign({
+        actor: writeActor,
+        name: "Пикник",
+        eventId: "не-uuid",
+        now
+      }),
+      /invalid/
+    );
+  });
+
+  it("tells the campaign apart from clearing its event link", async () => {
+    const updates: Parameters<AdminOutreachRepository["updateCampaign"]>[0][] = [];
+    const service = new AdminOutreachService(
+      repository({
+        async updateCampaign(input) {
+          updates.push(input);
+          return false;
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    // Не трогаем привязку.
+    await service.updateCampaign({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      name: "Новое имя",
+      now
+    });
+    // Снимаем привязку.
+    await service.updateCampaign({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      eventId: null,
+      now
+    });
+
+    assert.equal("eventId" in (updates[0] ?? {}), false);
+    assert.equal(updates[1]?.eventId, null);
+  });
+
   it("requires a reason for a lost stage and creates a trimmed follow-up task", async () => {
     let received: Parameters<AdminOutreachRepository["createTask"]>[0] | undefined;
     const service = new AdminOutreachService(

@@ -348,6 +348,8 @@ const campaign = {
   name: "Не оплатили",
   description: "Июль",
   status: "active" as const,
+  eventId: null,
+  eventTitle: null,
   totalContacts: 0,
   untouchedContacts: 0,
   interestedContacts: 0,

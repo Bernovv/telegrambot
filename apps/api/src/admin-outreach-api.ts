@@ -50,13 +50,15 @@ const taskType = z.enum(OUTREACH_TASK_TYPES);
 const createCampaignBody = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional(),
-  status: campaignStatus.optional()
+  status: campaignStatus.optional(),
+  eventId: uuid.optional()
 }).strict();
 
 const updateCampaignBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
-  status: campaignStatus.optional()
+  status: campaignStatus.optional(),
+  eventId: uuid.nullable().optional()
 }).strict().refine((value) => Object.keys(value).length > 0);
 
 const contactListQuery = z.object({
@@ -202,6 +204,7 @@ export class AdminOutreachController {
           ? {}
           : { description: parsed.description }),
         ...(parsed.status === undefined ? {} : { status: parsed.status }),
+        ...(parsed.eventId === undefined ? {} : { eventId: parsed.eventId }),
         now: new Date()
       })
     );
@@ -421,6 +424,7 @@ export class AdminOutreachController {
           ? {}
           : { description: parsed.description }),
         ...(parsed.status === undefined ? {} : { status: parsed.status }),
+        ...(parsed.eventId === undefined ? {} : { eventId: parsed.eventId }),
         now: new Date()
       })
     );

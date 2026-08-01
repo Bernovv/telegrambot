@@ -101,6 +101,9 @@ export interface OutreachCampaignSummary {
   readonly name: string;
   readonly description: string | null;
   readonly status: OutreachCampaignStatus;
+  /** Мероприятие, на которое продаёт кампания. Пусто, если привязки нет. */
+  readonly eventId: string | null;
+  readonly eventTitle: string | null;
   readonly totalContacts: number;
   readonly untouchedContacts: number;
   readonly interestedContacts: number;
@@ -226,11 +229,21 @@ export interface OutreachStageHistoryEntry {
   readonly occurredAt: string;
 }
 
+export interface OutreachContactParticipation {
+  readonly participantId: string;
+  readonly eventId: string;
+  readonly eventTitle: string;
+  readonly guests: number;
+  readonly sleepingPlaces: number;
+}
+
 export interface OutreachCampaignContactDetail
 extends OutreachCampaignContactSummary {
   readonly activities: readonly OutreachActivity[];
   readonly tasks: readonly OutreachTask[];
   readonly stageHistory: readonly OutreachStageHistoryEntry[];
+  /** Мероприятия, на которые этот человек уже записан участником. */
+  readonly participations: readonly OutreachContactParticipation[];
 }
 
 export interface OutreachImportRow {

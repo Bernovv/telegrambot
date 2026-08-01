@@ -1107,6 +1107,40 @@ tbody tr:hover {
   margin-top: 2px;
 }
 
+.participant-from-contact {
+  margin: 0 18px 16px;
+  padding: 12px 14px;
+  background: #f7f9fa;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.participant-from-contact summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.participant-from-contact form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.participant-from-contact p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.participant-from-contact .primary-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .participant-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

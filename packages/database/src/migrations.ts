@@ -139,5 +139,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260731170000_event_participant_details",
     description: "Add payment date and method to event participants plus their own custom field definitions and values",
     destructive: false
+  },
+  {
+    id: "20260731200000_outreach_campaign_event",
+    description: "Link an outreach campaign to the event it sells tickets for",
+    destructive: false
   }
 ];
