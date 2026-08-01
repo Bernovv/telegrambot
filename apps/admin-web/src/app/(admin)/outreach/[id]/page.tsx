@@ -432,13 +432,15 @@ export default function OutreachCampaignPage() {
         });
         added += result.addedToCampaign;
         duplicates += result.alreadyInCampaign;
-        for (const index of result.invalidRowIndexes) {
+        // Панель и API перезапускаются по отдельности: если API на полшага позади и
+        // ещё не отдаёт эти поля, импорт должен идти дальше, а не падать на чтении.
+        for (const index of result.invalidRowIndexes ?? []) {
           const line = lines[offset + index];
           if (line !== undefined) {
             badLines.push(line);
           }
         }
-        for (const index of result.ambiguousRowIndexes) {
+        for (const index of result.ambiguousRowIndexes ?? []) {
           const line = lines[offset + index];
           if (line !== undefined) {
             mergeLines.push(line);
