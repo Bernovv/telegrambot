@@ -13,6 +13,46 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("GET", "events"), true);
   assert.equal(isAllowedAdminApiPath("GET", "outreach/campaigns"), true);
   assert.equal(
+    isAllowedAdminApiPath("GET", "outreach/campaigns?includeArchived=true"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath("GET", "outreach/campaigns?includeArchived=maybe"),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/archive"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/restore"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/import-participants"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath("POST", "outreach/campaign-contacts/move"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/delete"
+    ),
+    false
+  );
+  assert.equal(
     isAllowedAdminApiPath(
       "POST",
       "outreach/campaign-contacts/activities"

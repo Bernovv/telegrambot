@@ -5,6 +5,8 @@ import {
 } from "@ticket-platform/contracts";
 import type {
   AdminRequestActor,
+  ImportEventParticipantsResult,
+  MoveOutreachContactsResult,
   OutreachCampaignContactDetail,
   OutreachCampaignContactPage,
   OutreachCampaignExport,
@@ -57,7 +59,19 @@ export interface OutreachExportRow {
 }
 
 export interface AdminOutreachRepository {
-  listCampaigns(): Promise<readonly OutreachCampaignSummary[]>;
+  listCampaigns(includeArchived: boolean): Promise<readonly OutreachCampaignSummary[]>;
+  listEventParticipantRows(eventId: string): Promise<readonly OutreachImportRow[]>;
+  archiveCampaign(input: {
+    readonly campaignId: string;
+    readonly adminId: string;
+    readonly at: Date;
+  }): Promise<boolean>;
+  restoreCampaign(campaignId: string): Promise<boolean>;
+  moveContacts(input: {
+    readonly campaignContactIds: readonly string[];
+    readonly targetCampaignId: string;
+    readonly now: Date;
+  }): Promise<MoveOutreachContactsResult>;
   getCampaign(campaignId: string): Promise<OutreachCampaignSummary | null>;
   createCampaign(input: {
     readonly eventId: string | null;
@@ -202,9 +216,131 @@ export class AdminOutreachService {
 
   listCampaigns(input: {
     readonly actor: AdminRequestActor;
+    readonly includeArchived?: boolean;
   }): Promise<readonly OutreachCampaignSummary[]> {
     requirePermission(input.actor, "outreach.read");
-    return this.repository.listCampaigns();
+    return this.repository.listCampaigns(input.includeArchived === true);
+  }
+
+  /**
+   * Заводит участников мероприятия контактами кампании.
+   *
+   * Покупатель из бота в общей базе не существует — он живёт в `users`. Контакт на него
+   * заводится сам, по телефону и нику: телефон у таких людей подтверждён, поэтому
+   * спрашивать по каждому нечего. Совпадения приклеиваются к существующим контактам той
+   * же логикой, что и обычный импорт CSV.
+   */
+  async importEventParticipants(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly now: Date;
+  }): Promise<ImportEventParticipantsResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+
+    const campaign = await this.repository.getCampaign(input.campaignId);
+    if (!campaign) {
+      throw new Error("Outreach campaign was not found");
+    }
+    if (!campaign.eventId) {
+      throw new Error("Outreach campaign has no event to import from");
+    }
+
+    const rows = await this.repository.listEventParticipantRows(campaign.eventId);
+    if (rows.length === 0) {
+      return {
+        received: 0,
+        createdContacts: 0,
+        updatedContacts: 0,
+        addedToCampaign: 0,
+        alreadyInCampaign: 0,
+        eventTitle: campaign.eventTitle ?? ""
+      };
+    }
+
+    // Пачками по 500: столько же, сколько принимает обычный импорт, и столько же
+    // держится одна транзакция.
+    let received = 0;
+    let createdContacts = 0;
+    let updatedContacts = 0;
+    let addedToCampaign = 0;
+    let alreadyInCampaign = 0;
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const batch = await this.importContacts({
+        actor: input.actor,
+        campaignId: input.campaignId,
+        rows: rows.slice(offset, offset + 500),
+        now: input.now
+      });
+      received += batch.received;
+      createdContacts += batch.createdContacts;
+      updatedContacts += batch.updatedContacts;
+      addedToCampaign += batch.addedToCampaign;
+      alreadyInCampaign += batch.alreadyInCampaign;
+    }
+
+    return {
+      received,
+      createdContacts,
+      updatedContacts,
+      addedToCampaign,
+      alreadyInCampaign,
+      eventTitle: campaign.eventTitle ?? ""
+    };
+  }
+
+  async archiveCampaign(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly now: Date;
+  }): Promise<void> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    const archived = await this.repository.archiveCampaign({
+      campaignId: input.campaignId,
+      adminId: input.actor.adminId,
+      at: input.now
+    });
+    if (!archived) {
+      throw new Error("Outreach campaign was not found");
+    }
+  }
+
+  async restoreCampaign(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    const restored = await this.repository.restoreCampaign(input.campaignId);
+    if (!restored) {
+      throw new Error("Outreach campaign was not found");
+    }
+  }
+
+  /**
+   * Переносит контакты в другую кампанию. Сам человек остаётся в общей базе — меняется
+   * только то, в какой работе он числится. Стадия сбрасывается на первую в кампании
+   * назначения: у каждой кампании свои стадии, и чужая там просто не существует.
+   */
+  async moveContacts(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignContactIds: readonly string[];
+    readonly targetCampaignId: string;
+    readonly now: Date;
+  }): Promise<MoveOutreachContactsResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireIds(input.campaignContactIds);
+    requireUuid(input.targetCampaignId);
+    for (const contactId of input.campaignContactIds) {
+      requireUuid(contactId);
+    }
+
+    return this.repository.moveContacts({
+      campaignContactIds: unique(input.campaignContactIds),
+      targetCampaignId: input.targetCampaignId,
+      now: input.now
+    });
   }
 
   async getCampaign(input: {

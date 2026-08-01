@@ -18,7 +18,7 @@ export function isAllowedAdminApiPath(
 ): boolean {
   if (method === "GET") {
     return /^(?:users|orders|events)(?:\/[0-9a-f-]{36})?$/i.test(path)
-      || path === "outreach/campaigns"
+      || /^outreach\/campaigns(?:\?includeArchived=(?:true|false))?$/i.test(path)
       || path === "outreach/managers"
       || path === "outreach/tasks/board"
       || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields)?$/i.test(path)
@@ -32,6 +32,9 @@ export function isAllowedAdminApiPath(
       || path === "outreach/campaigns"
       || path === "outreach/campaign-contacts/activities"
       || path === "outreach/campaign-contacts/assign"
+      || path === "outreach/campaign-contacts/move"
+      || /^outreach\/campaigns\/[0-9a-f-]{36}\/(?:archive|restore|import-participants)$/i
+        .test(path)
       || path === "outreach/custom-fields"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/tasks$/i.test(path)

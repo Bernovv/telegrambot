@@ -144,5 +144,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260731200000_outreach_campaign_event",
     description: "Link an outreach campaign to the event it sells tickets for",
     destructive: false
+  },
+  {
+    id: "20260801090000_outreach_campaign_archive",
+    description: "Let a campaign be archived out of the list without losing its activity history",
+    destructive: false
   }
 ];

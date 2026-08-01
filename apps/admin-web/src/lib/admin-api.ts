@@ -19,6 +19,8 @@ import type {
   OutreachCampaignStatus,
   OutreachCampaignSummary,
   OutreachChannel,
+  ImportEventParticipantsResult,
+  MoveOutreachContactsResult,
   OutreachContactStatus,
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
@@ -257,9 +259,54 @@ export function includeOrderInReports(
 }
 
 export function listOutreachCampaigns(
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  includeArchived = false
 ): Promise<readonly OutreachCampaignSummary[]> {
-  return requestAdminApi("outreach/campaigns", signal);
+  return requestAdminApi(
+    includeArchived ? "outreach/campaigns?includeArchived=true" : "outreach/campaigns",
+    signal
+  );
+}
+
+export function archiveOutreachCampaign(
+  campaignId: string
+): Promise<{ readonly archived: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/archive`,
+    "POST",
+    {}
+  );
+}
+
+export function restoreOutreachCampaign(
+  campaignId: string
+): Promise<{ readonly restored: boolean }> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/restore`,
+    "POST",
+    {}
+  );
+}
+
+export function importEventParticipantsIntoCampaign(
+  campaignId: string
+): Promise<ImportEventParticipantsResult> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/import-participants`,
+    "POST",
+    {}
+  );
+}
+
+export function moveOutreachContacts(input: {
+  readonly campaignContactIds: readonly string[];
+  readonly targetCampaignId: string;
+}): Promise<MoveOutreachContactsResult> {
+  return requestAdminMutation(
+    "outreach/campaign-contacts/move",
+    "POST",
+    input
+  );
 }
 
 export function createOutreachCampaign(input: {

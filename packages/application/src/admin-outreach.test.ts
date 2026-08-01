@@ -160,6 +160,7 @@ describe("AdminOutreachService", () => {
             status: "active",
             eventId: null,
             eventTitle: null,
+            archivedAt: null,
             totalContacts: 0,
             untouchedContacts: 0,
             interestedContacts: 0,
@@ -233,6 +234,141 @@ describe("AdminOutreachService", () => {
 
     assert.equal("eventId" in (updates[0] ?? {}), false);
     assert.equal(updates[1]?.eventId, null);
+  });
+
+  it("refuses to pull participants into a campaign with no event", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async getCampaign() {
+          return {
+            id: CAMPAIGN_ID,
+            name: "Без события",
+            description: null,
+            status: "active",
+            eventId: null,
+            eventTitle: null,
+            archivedAt: null,
+            totalContacts: 0,
+            untouchedContacts: 0,
+            interestedContacts: 0,
+            convertedContacts: 0,
+            createdAt: now.toISOString(),
+            completedAt: null
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await assert.rejects(
+      service.importEventParticipants({
+        actor: writeActor,
+        campaignId: CAMPAIGN_ID,
+        now
+      }),
+      /no event/
+    );
+  });
+
+  it("pulls participants in batches the import endpoint can actually take", async () => {
+    const batches: number[] = [];
+    const service = new AdminOutreachService(
+      repository({
+        async getCampaign() {
+          return {
+            id: CAMPAIGN_ID,
+            name: "Пикник",
+            description: null,
+            status: "active",
+            eventId: EVENT_ID,
+            eventTitle: "Бизнес-Пикник",
+            archivedAt: null,
+            totalContacts: 0,
+            untouchedContacts: 0,
+            interestedContacts: 0,
+            convertedContacts: 0,
+            createdAt: now.toISOString(),
+            completedAt: null
+          };
+        },
+        async listEventParticipantRows() {
+          return Array.from({ length: 1200 }, (_, index) => ({
+            phone: `+7999000${String(index).padStart(4, "0")}`
+          }));
+        },
+        async importContacts(input) {
+          batches.push(input.rows.length);
+          return {
+            received: input.rows.length,
+            createdContacts: input.rows.length,
+            updatedContacts: 0,
+            addedToCampaign: input.rows.length,
+            alreadyInCampaign: 0
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      countingIds()
+    );
+
+    const result = await service.importEventParticipants({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      now
+    });
+
+    assert.deepEqual(batches, [500, 500, 200]);
+    assert.equal(result.received, 1200);
+    assert.equal(result.createdContacts, 1200);
+    assert.equal(result.eventTitle, "Бизнес-Пикник");
+  });
+
+  it("does not call the import at all when the event has nobody yet", async () => {
+    let called = false;
+    const service = new AdminOutreachService(
+      repository({
+        async getCampaign() {
+          return {
+            id: CAMPAIGN_ID,
+            name: "Пикник",
+            description: null,
+            status: "active",
+            eventId: EVENT_ID,
+            eventTitle: "Бизнес-Пикник",
+            archivedAt: null,
+            totalContacts: 0,
+            untouchedContacts: 0,
+            interestedContacts: 0,
+            convertedContacts: 0,
+            createdAt: now.toISOString(),
+            completedAt: null
+          };
+        },
+        async listEventParticipantRows() { return []; },
+        async importContacts(input) {
+          called = true;
+          return {
+            received: input.rows.length,
+            createdContacts: 0,
+            updatedContacts: 0,
+            addedToCampaign: 0,
+            alreadyInCampaign: 0
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const result = await service.importEventParticipants({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      now
+    });
+
+    assert.equal(called, false);
+    assert.equal(result.received, 0);
   });
 
   it("requires a reason for a lost stage and creates a trimmed follow-up task", async () => {
@@ -412,6 +548,10 @@ function repository(
 ): AdminOutreachRepository {
   return {
     async listCampaigns() { return []; },
+    async listEventParticipantRows() { return []; },
+    async archiveCampaign() { return true; },
+    async restoreCampaign() { return true; },
+    async moveContacts() { return { moved: 0, alreadyThere: 0 }; },
     async getCampaign() { return null; },
     async createCampaign() {},
     async updateCampaign() { return false; },
@@ -455,6 +595,17 @@ function repository(
   };
 }
 
+/** Неограниченный генератор: пакетный импорт съедает по два идентификатора на строку. */
+function countingIds() {
+  let index = 0;
+  return {
+    newId() {
+      index += 1;
+      return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    }
+  };
+}
+
 function sequenceIds() {
   let index = 0;
   const ids = [
@@ -477,6 +628,7 @@ function sequenceIds() {
 }
 
 const ADMIN_ID = "00000000-0000-4000-8000-000000000101";
+const EVENT_ID = "00000000-0000-4000-8000-000000000801";
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000102";
 const CAMPAIGN_CONTACT_ID = "00000000-0000-4000-8000-000000000103";
 const CAMPAIGN_CONTACT_ID_2 = "00000000-0000-4000-8000-000000000104";

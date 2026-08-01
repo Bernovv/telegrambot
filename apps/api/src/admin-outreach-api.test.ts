@@ -245,6 +245,19 @@ function handler(
   return {
     async listCampaigns() { return []; },
     async getCampaign() { return campaign; },
+    async archiveCampaign() {},
+    async restoreCampaign() {},
+    async importEventParticipants() {
+      return {
+        received: 0,
+        createdContacts: 0,
+        updatedContacts: 0,
+        addedToCampaign: 0,
+        alreadyInCampaign: 0,
+        eventTitle: ""
+      };
+    },
+    async moveContacts() { return { moved: 0, alreadyThere: 0 }; },
     async createCampaign() { return campaign; },
     async updateCampaign() { return campaign; },
     async listPipelineColumns() { return []; },
@@ -350,6 +363,7 @@ const campaign = {
   status: "active" as const,
   eventId: null,
   eventTitle: null,
+  archivedAt: null,
   totalContacts: 0,
   untouchedContacts: 0,
   interestedContacts: 0,

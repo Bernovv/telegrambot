@@ -5,13 +5,15 @@ import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
   createOutreachCampaign,
+  archiveOutreachCampaign,
   listEvents,
-  listOutreachCampaigns
+  listOutreachCampaigns,
+  restoreOutreachCampaign
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
 import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
 import type { OutreachCampaignSummary } from "@ticket-platform/contracts/admin-outreach";
-import { ArrowRight, Plus, RefreshCw, X } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Plus, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
@@ -24,12 +26,13 @@ export default function OutreachCampaignsPage() {
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [events, setEvents] = useState<readonly AdminEventSummary[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      setCampaigns(await listOutreachCampaigns(signal));
+      setCampaigns(await listOutreachCampaigns(signal, showArchived));
     } catch (caught) {
       if (!signal?.aborted) {
         setError(caught instanceof AdminApiError
@@ -41,7 +44,7 @@ export default function OutreachCampaignsPage() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [showArchived]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,6 +94,25 @@ export default function OutreachCampaignsPage() {
     }
   }
 
+  async function toggleArchived(campaign: OutreachCampaignSummary) {
+    if (!campaign.archivedAt && !window.confirm(
+      `Скрыть кампанию «${campaign.name}»? История звонков сохранится, контакты останутся в общей базе.`
+    )) {
+      return;
+    }
+    setError(null);
+    try {
+      await (campaign.archivedAt
+        ? restoreOutreachCampaign(campaign.id)
+        : archiveOutreachCampaign(campaign.id));
+      await load();
+    } catch (caught) {
+      setError(caught instanceof AdminApiError
+        ? caught.message
+        : "Не удалось изменить видимость кампании.");
+    }
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -110,6 +132,14 @@ export default function OutreachCampaignsPage() {
           >
             <RefreshCw size={18} />
           </button>
+          <label className="check-field orders-hidden-toggle">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />
+            <span>Показывать скрытые</span>
+          </label>
           <button
             className="primary-button"
             type="button"
@@ -201,9 +231,16 @@ export default function OutreachCampaignsPage() {
                     <td>
                       <div className="stacked-cell">
                         <strong>{campaign.name}</strong>
-                        <StatusPill tone={campaign.status === "completed" ? "neutral" : "positive"}>
-                          {campaign.status === "completed" ? "Завершена" : "Активна"}
-                        </StatusPill>
+                        {campaign.archivedAt ? (
+                          <span className="order-hidden-badge">
+                            <EyeOff size={12} />
+                            Скрыта
+                          </span>
+                        ) : (
+                          <StatusPill tone={campaign.status === "completed" ? "neutral" : "positive"}>
+                            {campaign.status === "completed" ? "Завершена" : "Активна"}
+                          </StatusPill>
+                        )}
                       </div>
                     </td>
                     <td>
@@ -217,9 +254,19 @@ export default function OutreachCampaignsPage() {
                     <td>{campaign.convertedContacts}</td>
                     <td>{formatCompactDate(campaign.createdAt)}</td>
                     <td>
-                      <Link className="row-link" href={`/outreach/${campaign.id}`}>
-                        <ArrowRight size={18} />
-                      </Link>
+                      <div className="outreach-row-actions">
+                        <button
+                          type="button"
+                          title={campaign.archivedAt ? "Вернуть в список" : "Скрыть из списка"}
+                          onClick={() => void toggleArchived(campaign)}
+                        >
+                          {campaign.archivedAt ? <Eye size={16} /> : <EyeOff size={16} />}
+                          {campaign.archivedAt ? "Вернуть" : "Скрыть"}
+                        </button>
+                        <Link className="row-link" href={`/outreach/${campaign.id}`}>
+                          <ArrowRight size={18} />
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

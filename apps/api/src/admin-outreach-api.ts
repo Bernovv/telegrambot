@@ -85,6 +85,15 @@ const importBody = z.object({
   rows: z.array(importRow).min(1).max(500)
 }).strict();
 
+const moveContactsBody = z.object({
+  campaignContactIds: z.array(uuid).min(1).max(500),
+  targetCampaignId: uuid
+}).strict();
+
+const campaignListQuery = z.object({
+  includeArchived: z.enum(["true", "false"]).optional()
+}).strict();
+
 const assignmentBody = z.object({
   campaignContactIds: z.array(uuid).min(1).max(100),
   assignedAdminId: uuid
@@ -155,6 +164,10 @@ export type AdminOutreachHandler = Pick<
   | "listCampaigns"
   | "getCampaign"
   | "createCampaign"
+  | "archiveCampaign"
+  | "restoreCampaign"
+  | "importEventParticipants"
+  | "moveContacts"
   | "updateCampaign"
   | "listPipelineColumns"
   | "updatePipelineColumns"
@@ -185,8 +198,78 @@ export class AdminOutreachController {
 
   @Get("campaigns")
   @RequireAdminPermission("outreach.read")
-  listCampaigns(@Req() request: AuthenticatedAdminRequest) {
-    return this.handler.listCampaigns({ actor: requireActor(request) });
+  listCampaigns(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(campaignListQuery, query);
+    return this.handler.listCampaigns({
+      actor: requireActor(request),
+      includeArchived: parsed.includeArchived === "true"
+    });
+  }
+
+  @Post("campaigns/:id/archive")
+  @RequireAdminPermission("outreach.write")
+  async archiveCampaign(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    await executeOutreach(() =>
+      this.handler.archiveCampaign({
+        actor: requireActor(request),
+        campaignId: parse(uuid, id),
+        now: new Date()
+      })
+    );
+    return { archived: true };
+  }
+
+  @Post("campaigns/:id/restore")
+  @RequireAdminPermission("outreach.write")
+  async restoreCampaign(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    await executeOutreach(() =>
+      this.handler.restoreCampaign({
+        actor: requireActor(request),
+        campaignId: parse(uuid, id)
+      })
+    );
+    return { restored: true };
+  }
+
+  @Post("campaigns/:id/import-participants")
+  @RequireAdminPermission("outreach.write")
+  async importParticipants(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    return executeOutreach(() =>
+      this.handler.importEventParticipants({
+        actor: requireActor(request),
+        campaignId: parse(uuid, id),
+        now: new Date()
+      })
+    );
+  }
+
+  @Post("campaign-contacts/move")
+  @RequireAdminPermission("outreach.write")
+  async moveContacts(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(moveContactsBody, body);
+    return executeOutreach(() =>
+      this.handler.moveContacts({
+        actor: requireActor(request),
+        campaignContactIds: parsed.campaignContactIds,
+        targetCampaignId: parsed.targetCampaignId,
+        now: new Date()
+      })
+    );
   }
 
   @Post("campaigns")

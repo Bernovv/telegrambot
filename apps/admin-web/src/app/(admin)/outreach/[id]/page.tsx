@@ -14,7 +14,10 @@ import {
   exportOutreachCampaign,
   getOutreachCampaign,
   getOutreachContact,
+  importEventParticipantsIntoCampaign,
   importOutreachContacts,
+  listOutreachCampaigns,
+  moveOutreachContacts,
   listOutreachContacts,
   listOutreachCustomFieldDefinitions,
   listOutreachManagers,
@@ -65,6 +68,7 @@ import {
   Search,
   Settings2,
   Tent,
+  Users,
   Trash2,
   UserRoundCheck,
   X
@@ -129,6 +133,8 @@ export default function OutreachCampaignPage() {
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [otherCampaigns, setOtherCampaigns] =
+    useState<readonly OutreachCampaignSummary[]>([]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -176,6 +182,15 @@ export default function OutreachCampaignPage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Список кампаний нужен только для переноса контактов — грузим молча.
+  useEffect(() => {
+    const controller = new AbortController();
+    void listOutreachCampaigns(controller.signal)
+      .then((all) => setOtherCampaigns(all.filter((item) => item.id !== id)))
+      .catch(() => setOtherCampaigns([]));
+    return () => controller.abort();
+  }, [id]);
 
   const pageIds = useMemo(
     () => contacts?.items.map((contact) => contact.id) ?? [],
@@ -425,6 +440,58 @@ export default function OutreachCampaignPage() {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось импортировать CSV.");
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function importParticipants() {
+    if (!window.confirm(
+      "Загрузить участников мероприятия в кампанию? Кого нет в базе — заведём автоматически по телефону и нику."
+    )) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await importEventParticipantsIntoCampaign(id);
+      setNotice(
+        `Участников обработано: ${result.received}. Заведено новых контактов: `
+        + `${result.createdContacts}. Добавлено в кампанию: ${result.addedToCampaign}. `
+        + `Уже были: ${result.alreadyInCampaign}.`
+      );
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось загрузить участников."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function moveSelected(event: ChangeEvent<HTMLSelectElement>) {
+    const targetCampaignId = event.target.value;
+    event.target.value = "";
+    if (!targetCampaignId || selected.length === 0) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await moveOutreachContacts({
+        campaignContactIds: selected,
+        targetCampaignId
+      });
+      setNotice(
+        `Перенесено: ${result.moved}.`
+        + (result.alreadyThere > 0
+          ? ` Уже были в той кампании: ${result.alreadyThere}.`
+          : "")
+      );
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось перенести контакты."));
     } finally {
       setMutating(false);
     }
@@ -811,6 +878,17 @@ export default function OutreachCampaignPage() {
             <FileUp size={16} />
             Импорт CSV
           </button>
+          {campaign.eventId ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={mutating}
+              onClick={() => void importParticipants()}
+            >
+              <Users size={16} />
+              Загрузить участников
+            </button>
+          ) : null}
           <button
             className="secondary-button"
             type="button"
@@ -905,6 +983,17 @@ export default function OutreachCampaignPage() {
             <Phone size={16} />
             Отметить звонки
           </button>
+          {otherCampaigns.length > 0 ? (
+            <label className="select-field outreach-assign">
+              <span>Перенести в кампанию</span>
+              <select defaultValue="" onChange={(event) => void moveSelected(event)} disabled={mutating}>
+                <option value="">Выберите</option>
+                {otherCampaigns.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="select-field outreach-assign">
             <span>Назначить менеджера</span>
             <select

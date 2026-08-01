@@ -104,6 +104,8 @@ export interface OutreachCampaignSummary {
   /** Мероприятие, на которое продаёт кампания. Пусто, если привязки нет. */
   readonly eventId: string | null;
   readonly eventTitle: string | null;
+  /** Кампания убрана из списка. История сохраняется, кампанию можно вернуть. */
+  readonly archivedAt: string | null;
   readonly totalContacts: number;
   readonly untouchedContacts: number;
   readonly interestedContacts: number;
@@ -253,6 +255,21 @@ export interface OutreachImportRow {
   readonly max?: string;
   readonly source?: string;
   readonly note?: string;
+}
+
+export interface MoveOutreachContactsRequest {
+  readonly campaignContactIds: readonly string[];
+  readonly targetCampaignId: string;
+}
+
+export interface MoveOutreachContactsResult {
+  readonly moved: number;
+  /** Контакты, которые уже были в кампании назначения. */
+  readonly alreadyThere: number;
+}
+
+export interface ImportEventParticipantsResult extends OutreachImportResult {
+  readonly eventTitle: string;
 }
 
 export interface OutreachImportResult {

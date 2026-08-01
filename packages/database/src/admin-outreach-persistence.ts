@@ -11,7 +11,9 @@ import type {
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
   OutreachCustomFieldValue,
+  MoveOutreachContactsResult,
   OutreachImportResult,
+  OutreachImportRow,
   OutreachManager,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
@@ -37,6 +39,7 @@ interface CampaignRow {
   readonly completed_at: Date | string | null;
   readonly event_id: string | null;
   readonly event_title: string | null;
+  readonly archived_at: Date | string | null;
 }
 
 interface ParticipationRow {
@@ -165,13 +168,15 @@ export class PostgresAdminOutreachRepository
 implements AdminOutreachRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
 
-  listCampaigns(): Promise<readonly OutreachCampaignSummary[]> {
+  listCampaigns(includeArchived: boolean): Promise<readonly OutreachCampaignSummary[]> {
     return this.read(async (connection) => {
       const result = await connection.query<CampaignRow>(
         `${CAMPAIGN_SUMMARY_SELECT}
+         where $1::boolean or campaign.archived_at is null
          group by campaign.id, event.title
          order by campaign.created_at desc, campaign.id desc
-         limit 200`
+         limit 200`,
+        [includeArchived]
       );
       return result.rows.map(mapCampaign);
     });
@@ -251,6 +256,143 @@ implements AdminOutreachRepository {
         values
       );
       return result.rowCount === 1;
+    });
+  }
+
+  /**
+   * Участники мероприятия строками для импорта: покупатели из оплаченных заказов и те,
+   * кого завели руками. Телефон и ник берём те же, что показываем в расселении.
+   */
+  listEventParticipantRows(eventId: string): Promise<readonly OutreachImportRow[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<{
+        readonly name: string | null;
+        readonly phone: string | null;
+        readonly telegram: string | null;
+        readonly source: string;
+      }>(
+        `select
+           nullif(btrim(u.display_name), '') as name,
+           contact.value_normalized as phone,
+           identity.username as telegram,
+           'Мероприятие' as source
+         from public.orders o
+         join public.users u on u.id = o.user_id
+         left join lateral (
+           select username
+           from public.messenger_identities
+           where user_id = o.user_id and username is not null
+           order by last_seen_at desc, id
+           limit 1
+         ) identity on true
+         left join lateral (
+           select value_normalized
+           from public.user_contacts
+           where user_id = o.user_id and contact_type = 'phone'
+           order by is_primary desc, created_at
+           limit 1
+         ) contact on true
+         where o.event_id = $1::uuid
+           and o.status = 'paid'
+           and o.excluded_at is null
+         union
+         select
+           nullif(btrim(p.display_name), '') as name,
+           p.phone_e164 as phone,
+           null as telegram,
+           'Мероприятие' as source
+         from public.event_participants p
+         where p.event_id = $1::uuid
+           and p.deleted_at is null`,
+        [eventId]
+      );
+
+      // Без телефона и ника контакт завести нельзя — база их и различает.
+      return result.rows
+        .filter((row) => row.phone !== null || row.telegram !== null)
+        .map((row) => ({
+          ...(row.name === null ? {} : { name: row.name }),
+          ...(row.phone === null ? {} : { phone: row.phone }),
+          ...(row.telegram === null ? {} : { telegram: row.telegram }),
+          source: row.source
+        }));
+    });
+  }
+
+  async archiveCampaign(input: {
+    readonly campaignId: string;
+    readonly adminId: string;
+    readonly at: Date;
+  }): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_campaigns
+            set archived_at = $2::timestamptz,
+                archived_by_admin_id = $3::uuid,
+                updated_at = $2::timestamptz
+          where id = $1::uuid and archived_at is null`,
+        [input.campaignId, input.at.toISOString(), input.adminId]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
+  async restoreCampaign(campaignId: string): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_campaigns
+            set archived_at = null,
+                archived_by_admin_id = null,
+                updated_at = now()
+          where id = $1::uuid and archived_at is not null`,
+        [campaignId]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
+  async moveContacts(input: {
+    readonly campaignContactIds: readonly string[];
+    readonly targetCampaignId: string;
+    readonly now: Date;
+  }): Promise<MoveOutreachContactsResult> {
+    return this.write(async (connection) => {
+      const target = await connection.query<{ readonly stage: string }>(
+        `select stage
+           from public.outreach_pipeline_columns
+          where campaign_id = $1::uuid
+          order by position
+          limit 1`,
+        [input.targetCampaignId]
+      );
+      const firstStage = target.rows[0]?.stage;
+      if (firstStage === undefined) {
+        throw new Error("Outreach target campaign was not found");
+      }
+
+      const requested = [...input.campaignContactIds];
+      // Тот же человек уже может числиться в кампании назначения — переносить нечего,
+      // иначе упрёмся в уникальность (campaign_id, contact_id).
+      const moved = await connection.query(
+        `update public.outreach_campaign_contacts moving
+            set campaign_id = $2::uuid,
+                pipeline_stage = $3::text,
+                updated_at = $4::timestamptz
+          where moving.id = any($1::uuid[])
+            and moving.campaign_id <> $2::uuid
+            and not exists (
+              select 1
+                from public.outreach_campaign_contacts existing
+               where existing.campaign_id = $2::uuid
+                 and existing.contact_id = moving.contact_id
+            )`,
+        [requested, input.targetCampaignId, firstStage, input.now.toISOString()]
+      );
+
+      return {
+        moved: moved.rowCount,
+        alreadyThere: requested.length - moved.rowCount
+      };
     });
   }
 
@@ -1375,6 +1517,7 @@ function mapCampaign(row: CampaignRow): OutreachCampaignSummary {
     convertedContacts: Number(row.converted_contacts),
     eventId: row.event_id,
     eventTitle: row.event_title,
+    archivedAt: nullableIso(row.archived_at),
     createdAt: toIso(row.created_at),
     completedAt: nullableIso(row.completed_at)
   };
@@ -1523,7 +1666,7 @@ const CAMPAIGN_SUMMARY_SELECT = `
            where stage_column.outcome = 'won'
          )::text as converted_contacts,
          campaign.created_at, campaign.completed_at,
-         campaign.event_id, event.title as event_title
+         campaign.event_id, event.title as event_title, campaign.archived_at
   from public.outreach_campaigns campaign
   left join public.events event on event.id = campaign.event_id
   left join public.outreach_campaign_contacts campaign_contact
