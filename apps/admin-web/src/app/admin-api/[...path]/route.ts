@@ -48,7 +48,13 @@ async function forwardAdminRequest(
   const { path } = await context.params;
   const upstreamPath = path.join("/");
   if (!isAllowedAdminApiPath(method, upstreamPath)) {
-    return problem(404, "ADMIN_ROUTE_NOT_FOUND", "Route was not found");
+    // Без пути в ответе такую ошибку невозможно разобрать: видно только «404», а какой
+    // именно запрос отклонён — нет. Путь здесь не секрет, его же прислал сам браузер.
+    return problem(
+      404,
+      "ADMIN_ROUTE_NOT_FOUND",
+      `Route was not found: ${method} ${upstreamPath}`
+    );
   }
   const mutationBody =
     method === "GET"
