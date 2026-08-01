@@ -47,8 +47,8 @@ export interface NormalizedOutreachImportRow {
  */
 export type OutreachImportCounts = Omit<
   OutreachImportResult,
-  "invalidRows" | "invalidRowIndexes"
->;
+  "invalidRows" | "invalidRowIndexes" | "ambiguousRows"
+> & { readonly ambiguousRowIndexes: readonly number[] };
 
 export interface OutreachExportRow {
   readonly displayName: string | null;
@@ -161,6 +161,11 @@ export interface AdminOutreachRepository {
       readonly contactId: string;
       readonly campaignContactId: string;
     })[];
+    /**
+     * Пропускать строки, чьи опознаватели указывают на разные контакты, вместо отказа от
+     * всей пачки. При загрузке файла такая строка не должна отменять сто пятьдесят соседних.
+     */
+    readonly skipAmbiguous: boolean;
     readonly now: Date;
   }): Promise<OutreachImportCounts>;
   assignContacts(input: {
@@ -265,6 +270,8 @@ export class AdminOutreachService {
         alreadyInCampaign: 0,
         invalidRows: 0,
         invalidRowIndexes: [],
+        ambiguousRows: 0,
+        ambiguousRowIndexes: [],
         eventTitle: campaign.eventTitle ?? ""
       };
     }
@@ -277,6 +284,7 @@ export class AdminOutreachService {
     let addedToCampaign = 0;
     let alreadyInCampaign = 0;
     let invalidRows = 0;
+    let ambiguousRows = 0;
     for (let offset = 0; offset < rows.length; offset += 500) {
       const batch = await this.importContacts({
         actor: input.actor,
@@ -286,6 +294,7 @@ export class AdminOutreachService {
         now: input.now
       });
       invalidRows += batch.invalidRows;
+      ambiguousRows += batch.ambiguousRows;
       received += batch.received;
       createdContacts += batch.createdContacts;
       updatedContacts += batch.updatedContacts;
@@ -301,6 +310,8 @@ export class AdminOutreachService {
       alreadyInCampaign,
       invalidRows,
       invalidRowIndexes: [],
+      ambiguousRows,
+      ambiguousRowIndexes: [],
       eventTitle: campaign.eventTitle ?? ""
     };
   }
@@ -690,7 +701,9 @@ export class AdminOutreachService {
         addedToCampaign: 0,
         alreadyInCampaign: 0,
         invalidRows: invalidRowIndexes.length,
-        invalidRowIndexes
+        invalidRowIndexes,
+        ambiguousRows: 0,
+        ambiguousRowIndexes: []
       };
     }
 
@@ -699,13 +712,23 @@ export class AdminOutreachService {
       assignedAdminId,
       createdByAdminId: input.actor.adminId,
       rows,
+      skipAmbiguous: input.skipInvalid === true,
       now: input.now
     });
+    // Индексы из базы считаны по отфильтрованному списку — возвращаем их к номерам
+    // исходных строк, иначе панель покажет не те строки файла.
+    const keptIndexes = input.rows
+      .map((_, index) => index)
+      .filter((index) => !invalidRowIndexes.includes(index));
     return {
       ...result,
       received: input.rows.length,
       invalidRows: invalidRowIndexes.length,
-      invalidRowIndexes
+      invalidRowIndexes,
+      ambiguousRows: result.ambiguousRowIndexes.length,
+      ambiguousRowIndexes: result.ambiguousRowIndexes
+        .map((index) => keptIndexes[index])
+        .filter((index): index is number => index !== undefined)
     };
   }
 

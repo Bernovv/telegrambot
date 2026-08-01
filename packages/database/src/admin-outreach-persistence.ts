@@ -924,7 +924,8 @@ implements AdminOutreachRepository {
       let updatedContacts = 0;
       let addedToCampaign = 0;
       let alreadyInCampaign = 0;
-      for (const row of input.rows) {
+      const ambiguousRowIndexes: number[] = [];
+      for (const [rowIndex, row] of input.rows.entries()) {
         const matches = await connection.query<ExistingContactRow>(
           `select id
            from public.outreach_contacts
@@ -940,7 +941,14 @@ implements AdminOutreachRepository {
           ]
         );
         if (matches.rows.length > 1) {
-          throw new Error("Outreach contact identifiers belong to different contacts");
+          // Телефон ведёт на один контакт, ник на другой. Какой из них правильный, знает
+          // только человек, поэтому строку пропускаем и называем её номер — но соседние
+          // сто пятьдесят из-за неё не теряем.
+          if (!input.skipAmbiguous) {
+            throw new Error("Outreach contact identifiers belong to different contacts");
+          }
+          ambiguousRowIndexes.push(rowIndex);
+          continue;
         }
         const existing = matches.rows[0];
         const contactId = existing?.id ?? row.contactId;
@@ -979,6 +987,7 @@ implements AdminOutreachRepository {
       }
       return {
         received: input.rows.length,
+        ambiguousRowIndexes,
         createdContacts,
         updatedContacts,
         addedToCampaign,

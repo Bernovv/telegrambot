@@ -423,6 +423,7 @@ export default function OutreachCampaignPage() {
       let added = 0;
       let duplicates = 0;
       const badLines: number[] = [];
+      const mergeLines: number[] = [];
       // Импорт идёт пачками: сервер принимает не больше 500 строк за запрос, а на
       // восьми тысячах контактов это полсотни запросов — показываем, докуда дошли.
       for (let offset = 0; offset < rows.length; offset += 150) {
@@ -437,6 +438,12 @@ export default function OutreachCampaignPage() {
             badLines.push(line);
           }
         }
+        for (const index of result.ambiguousRowIndexes) {
+          const line = lines[offset + index];
+          if (line !== undefined) {
+            mergeLines.push(line);
+          }
+        }
         setNotice(
           `Импортируем: ${Math.min(offset + 150, rows.length)} из ${rows.length}…`
         );
@@ -445,8 +452,15 @@ export default function OutreachCampaignPage() {
         ? ` Не удалось разобрать телефон в строках: ${badLines.slice(0, 15).join(", ")}`
           + `${badLines.length > 15 ? ` и ещё ${badLines.length - 15}` : ""}.`
         : "";
+      const mergeNote = mergeLines.length > 0
+        ? ` Телефон и Telegram указывают на разные контакты в строках: `
+          + `${mergeLines.slice(0, 15).join(", ")}`
+          + `${mergeLines.length > 15 ? ` и ещё ${mergeLines.length - 15}` : ""}`
+          + ` — объедините эти контакты вручную.`
+        : "";
       setNotice(
-        `Добавлено: ${added}. Уже были в кампании: ${duplicates}.${skippedNote}${badNote}`
+        `Добавлено: ${added}. Уже были в кампании: ${duplicates}.`
+        + `${skippedNote}${badNote}${mergeNote}`
       );
       await load();
     } catch (caught) {

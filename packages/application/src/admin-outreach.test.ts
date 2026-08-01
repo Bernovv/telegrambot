@@ -58,7 +58,9 @@ describe("AdminOutreachService", () => {
             addedToCampaign: 1,
             alreadyInCampaign: 0,
             invalidRows: 0,
-            invalidRowIndexes: []
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
           };
         }
       }),
@@ -108,7 +110,8 @@ describe("AdminOutreachService", () => {
             createdContacts: input.rows.length,
             updatedContacts: 0,
             addedToCampaign: input.rows.length,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: []
           };
         }
       }),
@@ -175,7 +178,8 @@ describe("AdminOutreachService", () => {
             createdContacts: 0,
             updatedContacts: 0,
             addedToCampaign: 0,
-            alreadyInCampaign: 0
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: []
           };
         }
       }),
@@ -198,6 +202,114 @@ describe("AdminOutreachService", () => {
     assert.equal(called, false);
     assert.equal(result.invalidRows, 2);
     assert.equal(result.addedToCampaign, 0);
+  });
+
+  it("skips a row whose phone and telegram point at different contacts", async () => {
+    // Ровно случай из выгрузки: один человек уже заведён дважды — по телефону и по нику.
+    // Какой контакт правильный, решает человек, но соседние 149 строк из-за этого терять
+    // нельзя.
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: input.rows.length - 1,
+            updatedContacts: 0,
+            addedToCampaign: input.rows.length - 1,
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: [1]
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      countingIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [
+        { phone: "+79991234567" },
+        { phone: "+79500234550", telegram: "lovepashyan" },
+        { phone: "+79991234569" }
+      ],
+      skipInvalid: true,
+      now
+    });
+
+    assert.equal(received?.skipAmbiguous, true);
+    assert.equal(result.ambiguousRows, 1);
+    assert.deepEqual(result.ambiguousRowIndexes, [1]);
+  });
+
+  it("maps ambiguous rows back to their original positions", async () => {
+    // База считает индексы по отфильтрованному списку: если первую строку выбросили
+    // из-за телефона, вторая для базы станет нулевой — и панель покажет не ту строку.
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts() {
+          return {
+            received: 2,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: [1]
+          };
+        }
+      }),
+      {
+        normalize: (value) => {
+          if (value === "битый") {
+            throw new Error("Phone number is invalid");
+          }
+          return value;
+        }
+      },
+      countingIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [
+        { phone: "битый" },
+        { phone: "+79991234567" },
+        { phone: "+79500234550" }
+      ],
+      skipInvalid: true,
+      now
+    });
+
+    assert.deepEqual(result.invalidRowIndexes, [0]);
+    // база сказала «индекс 1» из двух оставшихся — это исходная строка 2
+    assert.deepEqual(result.ambiguousRowIndexes, [2]);
+  });
+
+  it("still fails loudly on an ambiguous contact added by hand", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          assert.equal(input.skipAmbiguous, false);
+          throw new Error("Outreach contact identifiers belong to different contacts");
+        }
+      }),
+      { normalize: (value) => value },
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.createContact({
+        actor: writeActor,
+        campaignId: CAMPAIGN_ID,
+        contact: { phone: "+79500234550", telegram: "lovepashyan" },
+        now
+      }),
+      /belong to different contacts/
+    );
   });
 
   it("records a manager-owned message batch and rejects impossible results", async () => {
@@ -414,7 +526,9 @@ describe("AdminOutreachService", () => {
             addedToCampaign: input.rows.length,
             alreadyInCampaign: 0,
             invalidRows: 0,
-            invalidRowIndexes: []
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
           };
         }
       }),
@@ -465,7 +579,9 @@ describe("AdminOutreachService", () => {
             addedToCampaign: 0,
             alreadyInCampaign: 0,
             invalidRows: 0,
-            invalidRowIndexes: []
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
           };
         }
       }),
@@ -695,7 +811,9 @@ function repository(
         addedToCampaign: 0,
         alreadyInCampaign: 0,
         invalidRows: 0,
-        invalidRowIndexes: []
+        invalidRowIndexes: [],
+        ambiguousRows: 0,
+        ambiguousRowIndexes: []
       };
     },
     async assignContacts() { return 0; },

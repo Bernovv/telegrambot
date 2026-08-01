@@ -278,6 +278,12 @@ export interface OutreachImportResult {
   readonly invalidRows: number;
   /** Их номера внутри присланной пачки — чтобы панель показала строки файла. */
   readonly invalidRowIndexes: readonly number[];
+  /**
+   * Строки, где телефон указывает на один контакт, а Telegram или MAX — на другой.
+   * Слить их автоматически нельзя: неизвестно, какой из контактов правильный.
+   */
+  readonly ambiguousRows: number;
+  readonly ambiguousRowIndexes: readonly number[];
   readonly createdContacts: number;
   readonly updatedContacts: number;
   readonly addedToCampaign: number;
