@@ -2,6 +2,7 @@
 
 import { PageError, PageLoading } from "@/components/page-state";
 import { EventPublicationPanel } from "@/components/event-publication-panel";
+import { ParticipantsExportButton } from "@/components/participants-export-button";
 import { StatusPill } from "@/components/status-pill";
 import { AdminApiError, getEvent } from "@/lib/admin-api";
 import {
@@ -96,9 +97,13 @@ export default function EventDetailPage() {
             {event.locationName ?? "Площадка не указана"}
           </p>
         </div>
-        {/* «Что везём» — отчёт по продажам, он нужен как раз тогда, когда мероприятие
-            уже опубликовано и билеты покупают. Редактирование остаётся у черновика. */}
+        {/* Выгрузка участников и «Что везём» нужны и после публикации: это отчёты
+            по продажам. Редактирование остаётся у черновика. */}
         <div className="heading-actions">
+          <ParticipantsExportButton
+            eventId={event.id}
+            eventSlug={event.slug}
+          />
           <Link className="secondary-button" href={`/events/${event.id}/accommodation`}>
             <Tent size={16} />
             Что везём

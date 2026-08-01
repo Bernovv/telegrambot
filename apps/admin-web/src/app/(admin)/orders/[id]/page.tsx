@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderActions } from "@/components/order-actions";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -137,6 +138,8 @@ export default function OrderDetailPage() {
           <strong>{formatDateTime(order.createdAt)}</strong>
         </div>
       </div>
+
+      <OrderActions order={order} onSettled={() => load()} />
 
       <div className={order.excludedAt ? "plan-banner plan-banner-stale" : "plan-banner"}>
         <div>

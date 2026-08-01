@@ -2996,6 +2996,106 @@ tbody tr:hover {
   font-size: 12px;
 }
 
+.order-actions > .muted {
+  margin: 0;
+  padding: 0 18px 18px;
+}
+
+.order-actions-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 18px 18px;
+  padding: 10px 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.order-action-form {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.order-action-form > .muted {
+  margin: 0;
+}
+
+.order-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.order-action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.order-action-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.order-action-danger:hover:not(:disabled) {
+  background: #8c3131;
+  border-color: #8c3131;
+}
+
+.broadcast-form {
+  display: grid;
+  gap: 18px;
+  padding: 20px 18px;
+}
+
+.broadcast-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.broadcast-textarea {
+  min-height: 170px;
+  padding: 10px 12px;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.broadcast-counter {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.broadcast-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.broadcast-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
 @media (max-width: 1050px) {
   .metrics-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3141,6 +3241,22 @@ tbody tr:hover {
 
   .publication-readiness {
     grid-template-columns: 1fr;
+  }
+
+  .order-action-grid,
+  .broadcast-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .order-action-buttons,
+  .broadcast-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .order-action-buttons button,
+  .broadcast-actions button {
+    width: 100%;
   }
 
   .publication-actions {

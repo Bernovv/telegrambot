@@ -4,7 +4,13 @@ import type {
   AdminOrderSummary,
   AdminUserDetail,
   AdminUserSummary,
-  CursorPage
+  ConfirmAdminManualPaymentRequest,
+  ConfirmAdminManualPaymentResult,
+  CreateAdminBroadcastRequest,
+  CreateAdminBroadcastResult,
+  CursorPage,
+  RequestAdminFullRefundRequest,
+  RequestAdminFullRefundResult
 } from "@ticket-platform/contracts";
 import type {
   OutreachCampaignContactDetail,
@@ -626,6 +632,48 @@ export function updateEventPricingRule(
   );
 }
 
+export function confirmManualPayment(
+  orderId: string,
+  input: ConfirmAdminManualPaymentRequest,
+  idempotencyKey: string
+): Promise<ConfirmAdminManualPaymentResult> {
+  return requestAdminMutation(
+    `orders/${encodeURIComponent(orderId)}/manual-payment`,
+    "POST",
+    input,
+    idempotencyKey
+  );
+}
+
+export function requestFullRefund(
+  orderId: string,
+  input: RequestAdminFullRefundRequest,
+  idempotencyKey: string
+): Promise<RequestAdminFullRefundResult> {
+  return requestAdminMutation(
+    `orders/${encodeURIComponent(orderId)}/refunds/full`,
+    "POST",
+    input,
+    idempotencyKey
+  );
+}
+
+export function createBroadcast(
+  input: CreateAdminBroadcastRequest
+): Promise<CreateAdminBroadcastResult> {
+  return requestAdminMutation("broadcasts", "POST", input);
+}
+
+export function buildParticipantsExportPath(eventId: string): string {
+  return `/admin-api/events/${encodeURIComponent(eventId)}/participants/export`;
+}
+
+// One key per attempt, reused across retries of the same attempt: a manual payment or refund that
+// times out mid-flight must settle once, not once per click.
+export function newIdempotencyKey(prefix: string): string {
+  return `${prefix}.${crypto.randomUUID()}`;
+}
+
 export function buildAdminApiPath(
   resource: "users" | "orders" | "events",
   filters: UserListFilters | OrderListFilters | EventListFilters
@@ -665,14 +713,18 @@ async function requestAdminApi<T>(
 async function requestAdminMutation<T>(
   path: string,
   method: "POST" | "PATCH",
-  input: unknown
+  input: unknown,
+  idempotencyKey?: string
 ): Promise<T> {
   const response = await fetch(`/admin-api/${path}`, {
     method,
     cache: "no-store",
     headers: {
       accept: "application/json",
-      "content-type": "application/json"
+      "content-type": "application/json",
+      ...(idempotencyKey === undefined
+        ? {}
+        : { "idempotency-key": idempotencyKey })
     },
     body: JSON.stringify(input)
   });

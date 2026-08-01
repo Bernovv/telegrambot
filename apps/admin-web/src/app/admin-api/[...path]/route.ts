@@ -6,7 +6,10 @@ import {
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
+  isFileDownloadPath,
   isTrustedMutationOrigin,
+  isValidIdempotencyKey,
+  requiresIdempotencyKey,
   type AdminBffMethod
 } from "@/lib/admin-bff-policy";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -59,6 +62,15 @@ async function forwardAdminRequest(
     return mutationBody;
   }
 
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (requiresIdempotencyKey(upstreamPath) && !isValidIdempotencyKey(idempotencyKey)) {
+    return problem(
+      400,
+      "INVALID_IDEMPOTENCY_KEY",
+      "Idempotency-Key header is invalid"
+    );
+  }
+
   const apiBaseUrl = getAdminApiBaseUrl();
   if (!apiBaseUrl) {
     return problem(
@@ -104,18 +116,27 @@ async function forwardAdminRequest(
               "user-agent":
                 request.headers.get("user-agent")?.slice(0, 500)
                 ?? "ticket-admin-web"
-            })
+            }),
+        ...(isValidIdempotencyKey(idempotencyKey)
+          ? { "idempotency-key": idempotencyKey }
+          : {})
       },
       ...(mutationBody === null ? {} : { body: mutationBody }),
       signal: AbortSignal.timeout(12_000)
     });
     const upstreamBody = await upstream.text();
+    const contentDisposition = upstream.headers.get("content-disposition");
     return new Response(upstreamBody, {
       status: upstream.status,
       headers: {
         "cache-control": "no-store",
         "content-type":
-          upstream.headers.get("content-type") ?? "application/json"
+          upstream.headers.get("content-type") ?? "application/json",
+        ...(isFileDownloadPath(upstreamPath)
+          && upstream.ok
+          && contentDisposition !== null
+          ? { "content-disposition": contentDisposition }
+          : {})
       }
     });
   } catch {

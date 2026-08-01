@@ -3,10 +3,11 @@
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
   CalendarDays,
-  Megaphone,
   ListChecks,
   LogOut,
+  Megaphone,
   Menu,
+  PhoneCall,
   ReceiptText,
   ShieldCheck,
   Users,
@@ -19,9 +20,10 @@ import { type ReactNode, useState } from "react";
 const NAVIGATION = [
   { href: "/events", label: "Мероприятия", icon: CalendarDays },
   { href: "/users", label: "Пользователи", icon: Users },
-  { href: "/outreach", label: "Работа с базой", icon: Megaphone },
+  { href: "/outreach", label: "Работа с базой", icon: PhoneCall },
   { href: "/tasks", label: "Задачи", icon: ListChecks },
-  { href: "/orders", label: "Заказы", icon: ReceiptText }
+  { href: "/orders", label: "Заказы", icon: ReceiptText },
+  { href: "/broadcasts", label: "Рассылки", icon: Megaphone }
 ] as const;
 
 export function AdminShell({

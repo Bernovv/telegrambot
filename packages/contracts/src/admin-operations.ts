@@ -128,3 +128,56 @@ export interface AdminOrderDetail extends AdminOrderSummary {
     readonly occurredAt: string;
   }[];
 }
+
+export const ADMIN_MANUAL_PAYMENT_METHODS = [
+  "cash",
+  "bank_transfer",
+  "other"
+] as const;
+
+export type AdminManualPaymentMethod =
+  typeof ADMIN_MANUAL_PAYMENT_METHODS[number];
+
+export interface ConfirmAdminManualPaymentRequest {
+  readonly amountKopecks: string;
+  readonly currency: string;
+  readonly method: AdminManualPaymentMethod;
+  readonly externalReference: string;
+  readonly reason: string;
+}
+
+export interface ConfirmAdminManualPaymentResult {
+  readonly paymentAttemptId: string;
+  readonly orderId: string;
+  readonly status: "paid";
+  readonly paidAt: string;
+  readonly amountKopecks: string;
+  readonly walletCapturedKopecks: string;
+  readonly ticketCount: number;
+  readonly ticketNumbers: readonly string[];
+  readonly created: boolean;
+}
+
+export interface RequestAdminFullRefundRequest {
+  readonly reason: string;
+}
+
+export interface RequestAdminFullRefundResult {
+  readonly refundRequestId: string;
+  readonly orderId: string;
+  readonly status: string;
+  readonly externalAmountKopecks: string;
+  readonly walletAmountKopecks: string;
+  readonly currency: string;
+  readonly created: boolean;
+}
+
+export interface CreateAdminBroadcastRequest {
+  readonly messageText: string;
+  readonly targetEventId?: string;
+  readonly targetOrderStatus?: AdminOrderStatus;
+}
+
+export interface CreateAdminBroadcastResult {
+  readonly broadcastId: string;
+}
