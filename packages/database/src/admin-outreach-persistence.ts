@@ -12,7 +12,9 @@ import type {
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
   OutreachCustomFieldValue,
+  AddExistingContactsResult,
   MoveOutreachContactsResult,
+  OutreachBaseContact,
   OutreachImportRow,
   OutreachManager,
   OutreachPipelineColumn,
@@ -40,6 +42,17 @@ interface CampaignRow {
   readonly event_id: string | null;
   readonly event_title: string | null;
   readonly archived_at: Date | string | null;
+}
+
+interface BaseContactRow {
+  readonly contact_id: string;
+  readonly display_name: string | null;
+  readonly phone_e164: string | null;
+  readonly telegram_username: string | null;
+  readonly max_identifier: string | null;
+  readonly source: string | null;
+  readonly in_campaign: boolean;
+  readonly campaign_count: string;
 }
 
 interface ParticipationRow {
@@ -316,6 +329,123 @@ implements AdminOutreachRepository {
           ...(row.telegram === null ? {} : { telegram: row.telegram }),
           source: row.source
         }));
+    });
+  }
+
+  /**
+   * Контакты общей базы. Архивированные не показываем: их убрали намеренно.
+   * `in_campaign` считаем здесь же, чтобы панель могла показать уже добавленных серым,
+   * а не делать вид, что их нет.
+   */
+  listBaseContacts(input: {
+    readonly campaignId: string;
+    readonly search: string | null;
+    readonly onlyMissing: boolean;
+    readonly limit: number;
+  }): Promise<readonly OutreachBaseContact[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<BaseContactRow>(
+        `select
+           contact.id as contact_id,
+           contact.display_name,
+           contact.phone_e164,
+           contact.telegram_username,
+           contact.max_identifier,
+           contact.source,
+           (member.id is not null) as in_campaign,
+           (
+             select count(*)::text
+             from public.outreach_campaign_contacts other
+             where other.contact_id = contact.id
+           ) as campaign_count
+         from public.outreach_contacts contact
+         left join public.outreach_campaign_contacts member
+           on member.contact_id = contact.id
+          and member.campaign_id = $1::uuid
+         where contact.archived_at is null
+           and ($4::boolean is false or member.id is null)
+           and (
+             $2::text is null
+             or coalesce(contact.display_name, '') ilike $2 escape '\\'
+             or coalesce(contact.phone_e164, '') ilike $2 escape '\\'
+             or coalesce(contact.telegram_username, '') ilike $2 escape '\\'
+             or coalesce(contact.max_identifier, '') ilike $2 escape '\\'
+           )
+         order by contact.display_name nulls last, contact.created_at desc
+         limit $3`,
+        [
+          input.campaignId,
+          input.search ? `%${escapeLike(input.search.toLowerCase())}%` : null,
+          input.limit,
+          input.onlyMissing
+        ]
+      );
+
+      return result.rows.map((row) => ({
+        contactId: row.contact_id,
+        displayName: row.display_name,
+        phone: row.phone_e164,
+        telegramUsername: row.telegram_username,
+        maxIdentifier: row.max_identifier,
+        source: row.source,
+        inCampaign: row.in_campaign,
+        campaignCount: Number(row.campaign_count)
+      }));
+    });
+  }
+
+  async addExistingContacts(input: {
+    readonly campaignId: string;
+    readonly contacts: readonly {
+      readonly contactId: string;
+      readonly campaignContactId: string;
+    }[];
+    readonly assignedAdminId: string;
+    readonly now: Date;
+  }): Promise<AddExistingContactsResult> {
+    return this.write(async (connection) => {
+      const campaign = await connection.query<{ readonly id: string }>(
+        `select id from public.outreach_campaigns
+          where id = $1::uuid and status <> 'completed'
+          for update`,
+        [input.campaignId]
+      );
+      if (!campaign.rows[0]) {
+        throw new Error("Outreach campaign was not found or is completed");
+      }
+
+      const result = await connection.query(
+        `insert into public.outreach_campaign_contacts (
+           id, campaign_id, contact_id, assigned_admin_id, created_at, updated_at
+         )
+         select
+           entry.campaign_contact_id::uuid,
+           $1::uuid,
+           entry.contact_id::uuid,
+           $2::uuid,
+           $3::timestamptz,
+           $3::timestamptz
+         from jsonb_to_recordset($4::jsonb)
+           as entry(contact_id text, campaign_contact_id text)
+         join public.outreach_contacts contact
+           on contact.id = entry.contact_id::uuid
+          and contact.archived_at is null
+         on conflict (campaign_id, contact_id) do nothing`,
+        [
+          input.campaignId,
+          input.assignedAdminId,
+          input.now.toISOString(),
+          JSON.stringify(input.contacts.map((entry) => ({
+            contact_id: entry.contactId,
+            campaign_contact_id: entry.campaignContactId
+          })))
+        ]
+      );
+
+      return {
+        added: result.rowCount,
+        alreadyInCampaign: input.contacts.length - result.rowCount
+      };
     });
   }
 

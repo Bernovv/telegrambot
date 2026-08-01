@@ -570,6 +570,8 @@ describe("AdminOutreachService", () => {
           };
         },
         async listEventParticipantRows() { return []; },
+    async listBaseContacts() { return []; },
+    async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
         async importContacts(input) {
           called = true;
           return {
@@ -777,6 +779,8 @@ function repository(
   return {
     async listCampaigns() { return []; },
     async listEventParticipantRows() { return []; },
+    async listBaseContacts() { return []; },
+    async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
     async archiveCampaign() { return true; },
     async restoreCampaign() { return true; },
     async moveContacts() { return { moved: 0, alreadyThere: 0 }; },

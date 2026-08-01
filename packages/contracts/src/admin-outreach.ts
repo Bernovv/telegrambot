@@ -257,6 +257,30 @@ export interface OutreachImportRow {
   readonly note?: string;
 }
 
+/** Контакт из общей базы — для добавления в кампанию. */
+export interface OutreachBaseContact {
+  readonly contactId: string;
+  readonly displayName: string | null;
+  readonly phone: string | null;
+  readonly telegramUsername: string | null;
+  readonly maxIdentifier: string | null;
+  readonly source: string | null;
+  /** Уже состоит в этой кампании — добавлять нечего. */
+  readonly inCampaign: boolean;
+  /** В скольких кампаниях человек уже участвует. */
+  readonly campaignCount: number;
+}
+
+export interface AddExistingContactsRequest {
+  readonly contactIds: readonly string[];
+  readonly assignedAdminId?: string;
+}
+
+export interface AddExistingContactsResult {
+  readonly added: number;
+  readonly alreadyInCampaign: number;
+}
+
 export interface MoveOutreachContactsRequest {
   readonly campaignContactIds: readonly string[];
   readonly targetCampaignId: string;

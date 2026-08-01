@@ -1107,6 +1107,39 @@ tbody tr:hover {
   margin-top: 2px;
 }
 
+.campaign-event-row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.campaign-event-row .select-field {
+  min-width: 240px;
+}
+
+.campaign-event-row > span:last-child {
+  flex: 1;
+  min-width: 220px;
+}
+
+.base-contact-list li {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.base-contact-list label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.base-contact-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .participant-from-contact {
   margin: 0 18px 16px;
   padding: 12px 14px;

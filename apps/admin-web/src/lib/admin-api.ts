@@ -19,8 +19,10 @@ import type {
   OutreachCampaignStatus,
   OutreachCampaignSummary,
   OutreachChannel,
+  AddExistingContactsResult,
   ImportEventParticipantsResult,
   MoveOutreachContactsResult,
+  OutreachBaseContact,
   OutreachContactStatus,
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
@@ -295,6 +297,39 @@ export function importEventParticipantsIntoCampaign(
     `outreach/campaigns/${encodeURIComponent(campaignId)}/import-participants`,
     "POST",
     {}
+  );
+}
+
+export function listOutreachBaseContacts(
+  input: {
+    readonly campaignId: string;
+    readonly search?: string;
+    readonly onlyMissing?: boolean;
+    readonly limit?: number;
+  },
+  signal?: AbortSignal
+): Promise<readonly OutreachBaseContact[]> {
+  const query = new URLSearchParams({ campaignId: input.campaignId });
+  if (input.search) {
+    query.set("search", input.search);
+  }
+  if (input.onlyMissing === false) {
+    query.set("onlyMissing", "false");
+  }
+  if (input.limit !== undefined) {
+    query.set("limit", String(input.limit));
+  }
+  return requestAdminApi(`outreach/contacts?${query.toString()}`, signal);
+}
+
+export function addExistingContactsToCampaign(input: {
+  readonly campaignId: string;
+  readonly contactIds: readonly string[];
+}): Promise<AddExistingContactsResult> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(input.campaignId)}/contacts/add`,
+    "POST",
+    { contactIds: input.contactIds }
   );
 }
 

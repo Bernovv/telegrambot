@@ -14,7 +14,10 @@ import {
   exportOutreachCampaign,
   getOutreachCampaign,
   getOutreachContact,
+  addExistingContactsToCampaign,
   importEventParticipantsIntoCampaign,
+  listEvents,
+  listOutreachBaseContacts,
   importOutreachContacts,
   listOutreachCampaigns,
   moveOutreachContacts,
@@ -32,7 +35,9 @@ import {
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
+import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
 import type {
+  OutreachBaseContact,
   OutreachCampaignContactDetail,
   OutreachCampaignContactPage,
   OutreachCampaignContactSummary,
@@ -135,6 +140,12 @@ export default function OutreachCampaignPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [otherCampaigns, setOtherCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
+  const [events, setEvents] = useState<readonly AdminEventSummary[]>([]);
+  const [baseOpen, setBaseOpen] = useState(false);
+  const [baseContacts, setBaseContacts] =
+    useState<readonly OutreachBaseContact[]>([]);
+  const [baseSelected, setBaseSelected] = useState<readonly string[]>([]);
+  const [baseLoading, setBaseLoading] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -183,12 +194,16 @@ export default function OutreachCampaignPage() {
     return () => controller.abort();
   }, [load]);
 
-  // Список кампаний нужен только для переноса контактов — грузим молча.
+  // Списки кампаний и мероприятий нужны для переноса и привязки — грузим молча:
+  // без них страница работает, просто без этих двух возможностей.
   useEffect(() => {
     const controller = new AbortController();
     void listOutreachCampaigns(controller.signal)
       .then((all) => setOtherCampaigns(all.filter((item) => item.id !== id)))
       .catch(() => setOtherCampaigns([]));
+    void listEvents({ limit: 50 }, controller.signal)
+      .then((page) => setEvents(page.items))
+      .catch(() => setEvents([]));
     return () => controller.abort();
   }, [id]);
 
@@ -467,6 +482,67 @@ export default function OutreachCampaignPage() {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось импортировать CSV.");
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function changeEvent(eventId: string) {
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateOutreachCampaign(id, { eventId: eventId === "" ? null : eventId });
+      setNotice(eventId === ""
+        ? "Привязка к мероприятию снята."
+        : "Кампания привязана к мероприятию.");
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось изменить мероприятие."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function loadBaseContacts(search: string) {
+    setBaseLoading(true);
+    try {
+      setBaseContacts(await listOutreachBaseContacts({
+        campaignId: id,
+        onlyMissing: true,
+        limit: 200,
+        ...(search.trim().length >= 2 ? { search: search.trim() } : {})
+      }));
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось загрузить контакты базы."));
+    } finally {
+      setBaseLoading(false);
+    }
+  }
+
+  async function addFromBase() {
+    if (baseSelected.length === 0) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await addExistingContactsToCampaign({
+        campaignId: id,
+        contactIds: baseSelected
+      });
+      setNotice(
+        `Добавлено из базы: ${result.added}.`
+        + (result.alreadyInCampaign > 0
+          ? ` Уже были в кампании: ${result.alreadyInCampaign}.`
+          : "")
+      );
+      setBaseSelected([]);
+      setBaseOpen(false);
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось добавить контакты."));
     } finally {
       setMutating(false);
     }
@@ -900,6 +976,19 @@ export default function OutreachCampaignPage() {
             className="secondary-button"
             type="button"
             disabled={mutating || campaign.status === "completed"}
+            onClick={() => {
+              setBaseOpen(true);
+              setBaseSelected([]);
+              void loadBaseContacts("");
+            }}
+          >
+            <Users size={16} />
+            Добавить из базы
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating || campaign.status === "completed"}
             onClick={() => fileInput.current?.click()}
           >
             <FileUp size={16} />
@@ -939,15 +1028,27 @@ export default function OutreachCampaignPage() {
         </div>
       </div>
 
-      {campaign.eventTitle ? (
-        <div className="accommodation-note">
-          <Tent size={16} />
-          <span>
-            Кампания продаёт на «{campaign.eventTitle}». Оплативших добавляйте в участники
-            прямо из карточки контакта.
-          </span>
-        </div>
-      ) : null}
+      <div className="accommodation-note campaign-event-row">
+        <Tent size={16} />
+        <label className="select-field">
+          <span>Мероприятие кампании</span>
+          <select
+            value={campaign.eventId ?? ""}
+            disabled={mutating}
+            onChange={(event) => void changeEvent(event.target.value)}
+          >
+            <option value="">Без привязки</option>
+            {events.map((event) => (
+              <option key={event.id} value={event.id}>{event.title}</option>
+            ))}
+          </select>
+        </label>
+        <span>
+          {campaign.eventTitle
+            ? "Оплативших добавляйте в участники прямо из карточки контакта."
+            : "Привяжите мероприятие — тогда оплативших можно будет отправлять в участники одной кнопкой."}
+        </span>
+      </div>
 
       <div className="metrics-strip">
         <div><span>Всего контактов</span><strong>{campaign.totalContacts}</strong></div>
@@ -1615,6 +1716,95 @@ export default function OutreachCampaignPage() {
                 Закрыть контакт
               </button>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {baseOpen ? (
+        <div className="outreach-modal-backdrop" role="presentation">
+          <section
+            className="outreach-modal outreach-pipeline-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="base-contacts-title"
+          >
+            <div className="section-title-row">
+              <div>
+                <h2 id="base-contacts-title">Добавить из общей базы</h2>
+                <span>
+                  Показаны те, кого ещё нет в этой кампании. Человек остаётся в базе и в
+                  других кампаниях — здесь он просто добавляется в работу.
+                </span>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Закрыть"
+                onClick={() => setBaseOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="outreach-field-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void loadBaseContacts(formText(new FormData(event.currentTarget), "search"));
+              }}
+            >
+              <label>
+                <span>Поиск по имени, телефону или нику</span>
+                <input name="search" maxLength={100} placeholder="Минимум две буквы" />
+              </label>
+              <button className="secondary-button" type="submit" disabled={baseLoading}>
+                <Search size={16} />
+                Найти
+              </button>
+            </form>
+            {baseLoading ? <PageLoading label="Ищем в базе" /> : null}
+            {!baseLoading && baseContacts.length === 0 ? (
+              <div className="outreach-empty">
+                <strong>Никого не нашлось</strong>
+                <span>Либо все уже в кампании, либо уточните поиск.</span>
+              </div>
+            ) : null}
+            {!baseLoading && baseContacts.length > 0 ? (
+              <ul className="outreach-field-list base-contact-list">
+                {baseContacts.map((contact) => (
+                  <li key={contact.contactId}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={baseSelected.includes(contact.contactId)}
+                        onChange={() => setBaseSelected((current) =>
+                          current.includes(contact.contactId)
+                            ? current.filter((item) => item !== contact.contactId)
+                            : [...current, contact.contactId])}
+                      />
+                      <strong>{contact.displayName ?? "Без имени"}</strong>
+                    </label>
+                    <span className="outreach-field-type">
+                      {contact.phone ?? contact.telegramUsername ?? contact.maxIdentifier ?? "—"}
+                    </span>
+                    <span className="outreach-field-scope">
+                      {contact.campaignCount > 0
+                        ? `в ${contact.campaignCount} кампаниях`
+                        : "нигде не задействован"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="outreach-field-form">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={mutating || baseSelected.length === 0}
+                onClick={() => void addFromBase()}
+              >
+                Добавить выбранные ({baseSelected.length})
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

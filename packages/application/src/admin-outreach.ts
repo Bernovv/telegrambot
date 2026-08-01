@@ -4,8 +4,10 @@ import {
   OUTREACH_PIPELINE_COLUMN_OUTCOMES
 } from "@ticket-platform/contracts";
 import type {
+  AddExistingContactsResult,
   AdminRequestActor,
   ImportEventParticipantsResult,
+  OutreachBaseContact,
   MoveOutreachContactsResult,
   OutreachCampaignContactDetail,
   OutreachCampaignContactPage,
@@ -70,6 +72,21 @@ export interface OutreachExportRow {
 export interface AdminOutreachRepository {
   listCampaigns(includeArchived: boolean): Promise<readonly OutreachCampaignSummary[]>;
   listEventParticipantRows(eventId: string): Promise<readonly OutreachImportRow[]>;
+  listBaseContacts(input: {
+    readonly campaignId: string;
+    readonly search: string | null;
+    readonly onlyMissing: boolean;
+    readonly limit: number;
+  }): Promise<readonly OutreachBaseContact[]>;
+  addExistingContacts(input: {
+    readonly campaignId: string;
+    readonly contacts: readonly {
+      readonly contactId: string;
+      readonly campaignContactId: string;
+    }[];
+    readonly assignedAdminId: string;
+    readonly now: Date;
+  }): Promise<AddExistingContactsResult>;
   archiveCampaign(input: {
     readonly campaignId: string;
     readonly adminId: string;
@@ -314,6 +331,55 @@ export class AdminOutreachService {
       ambiguousRowIndexes: [],
       eventTitle: campaign.eventTitle ?? ""
     };
+  }
+
+  /**
+   * Контакты общей базы для добавления в кампанию. База живёт отдельно от кампаний:
+   * человек в ней один, а кампаний, где он участвует, может быть несколько.
+   */
+  listBaseContacts(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly search?: string;
+    readonly onlyMissing?: boolean;
+    readonly limit?: number;
+  }): Promise<readonly OutreachBaseContact[]> {
+    requirePermission(input.actor, "outreach.read");
+    requireUuid(input.campaignId);
+    const search = input.search?.trim() ?? "";
+    return this.repository.listBaseContacts({
+      campaignId: input.campaignId,
+      search: search.length >= 2 ? search : null,
+      onlyMissing: input.onlyMissing !== false,
+      limit: Math.min(Math.max(input.limit ?? 100, 1), 500)
+    });
+  }
+
+  async addExistingContacts(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly contactIds: readonly string[];
+    readonly assignedAdminId?: string;
+    readonly now: Date;
+  }): Promise<AddExistingContactsResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    requireIds(input.contactIds);
+    for (const contactId of input.contactIds) {
+      requireUuid(contactId);
+    }
+    const assignedAdminId = input.assignedAdminId ?? input.actor.adminId;
+    requireUuid(assignedAdminId);
+
+    return this.repository.addExistingContacts({
+      campaignId: input.campaignId,
+      contacts: unique(input.contactIds).map((contactId) => ({
+        contactId,
+        campaignContactId: this.idGenerator.newId()
+      })),
+      assignedAdminId,
+      now: input.now
+    });
   }
 
   async archiveCampaign(input: {

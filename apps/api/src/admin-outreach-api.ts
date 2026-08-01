@@ -85,6 +85,18 @@ const importBody = z.object({
   rows: z.array(importRow).min(1).max(500)
 }).strict();
 
+const baseContactsQuery = z.object({
+  campaignId: uuid,
+  search: z.string().trim().min(2).max(100).optional(),
+  onlyMissing: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
+}).strict();
+
+const addExistingBody = z.object({
+  contactIds: z.array(uuid).min(1).max(500),
+  assignedAdminId: uuid.optional()
+}).strict();
+
 const moveContactsBody = z.object({
   campaignContactIds: z.array(uuid).min(1).max(500),
   targetCampaignId: uuid
@@ -168,6 +180,8 @@ export type AdminOutreachHandler = Pick<
   | "restoreCampaign"
   | "importEventParticipants"
   | "moveContacts"
+  | "listBaseContacts"
+  | "addExistingContacts"
   | "updateCampaign"
   | "listPipelineColumns"
   | "updatePipelineColumns"
@@ -250,6 +264,47 @@ export class AdminOutreachController {
       this.handler.importEventParticipants({
         actor: requireActor(request),
         campaignId: parse(uuid, id),
+        now: new Date()
+      })
+    );
+  }
+
+  @Get("contacts")
+  @RequireAdminPermission("outreach.read")
+  listBaseContacts(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(baseContactsQuery, query);
+    return executeOutreach(() =>
+      this.handler.listBaseContacts({
+        actor: requireActor(request),
+        campaignId: parsed.campaignId,
+        ...(parsed.search === undefined ? {} : { search: parsed.search }),
+        ...(parsed.onlyMissing === undefined
+          ? {}
+          : { onlyMissing: parsed.onlyMissing === "true" }),
+        ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
+  }
+
+  @Post("campaigns/:id/contacts/add")
+  @RequireAdminPermission("outreach.write")
+  async addExistingContacts(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(addExistingBody, body);
+    return executeOutreach(() =>
+      this.handler.addExistingContacts({
+        actor: requireActor(request),
+        campaignId: parse(uuid, id),
+        contactIds: parsed.contactIds,
+        ...(parsed.assignedAdminId === undefined
+          ? {}
+          : { assignedAdminId: parsed.assignedAdminId }),
         now: new Date()
       })
     );
