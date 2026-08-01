@@ -21,6 +21,7 @@ import {
   importOutreachContacts,
   listOutreachCampaigns,
   moveOutreachContacts,
+  removeOutreachContacts,
   listOutreachContacts,
   listOutreachCustomFieldDefinitions,
   listOutreachManagers,
@@ -567,6 +568,30 @@ export default function OutreachCampaignPage() {
       await load();
     } catch (caught) {
       setError(messageFor(caught, "Не удалось загрузить участников."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeSelected() {
+    if (selected.length === 0 || !window.confirm(
+      `Убрать ${selected.length} контактов из кампании? Человек останется в общей базе, `
+      + "история звонков сохранится."
+    )) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await removeOutreachContacts({
+        campaignId: id,
+        campaignContactIds: selected
+      });
+      setNotice(`Убрано из кампании: ${result.removed}.`);
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось убрать контакты."));
     } finally {
       setMutating(false);
     }
@@ -1135,6 +1160,15 @@ export default function OutreachCampaignPage() {
               ))}
             </select>
           </label>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating}
+            onClick={() => void removeSelected()}
+          >
+            <Trash2 size={16} />
+            Убрать из кампании
+          </button>
           <button className="icon-button" type="button" aria-label="Снять выделение" onClick={() => setSelected([])}>
             <X size={18} />
           </button>

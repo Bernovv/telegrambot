@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   DynamicModule,
   Get,
@@ -7,6 +8,7 @@ import {
   Module,
   NotFoundException,
   Param,
+  Post,
   Query,
   Req,
   UnauthorizedException
@@ -47,6 +49,10 @@ const orderStatusSchema = z.enum([
   "refunded"
 ]);
 
+const cancelOrderBodySchema = z.object({
+  reason: z.string().trim().min(3).max(500)
+}).strict();
+
 const orderListQuerySchema = z.object({
   search: z.string().trim().min(2).max(100).optional(),
   status: orderStatusSchema.optional(),
@@ -84,6 +90,17 @@ export interface AdminOperationsHandlers {
       readonly cursor?: string;
       readonly limit?: number;
     }): Promise<CursorPage<AdminOrderSummary>>;
+  };
+  readonly cancelOrder?: {
+    execute(input: {
+      readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+      readonly orderId: string;
+      readonly reason: string;
+      readonly now: Date;
+    }): Promise<{
+      readonly orderNumber: string;
+      readonly walletReleasedKopecks: string;
+    }>;
   };
   readonly getOrder: {
     execute(input: {
@@ -227,6 +244,57 @@ export class AdminOrdersReadController {
       });
     }
     return order;
+  }
+
+  @Post(":id/cancel")
+  @RequireAdminPermission("orders.cancel")
+  async cancel(
+    @Param("id") orderId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const actor = requireActor(request);
+    const parsedId = idSchema.safeParse(orderId);
+    const parsedBody = cancelOrderBodySchema.safeParse(body);
+    if (!parsedId.success || !parsedBody.success) {
+      throw invalidAdminQuery();
+    }
+    if (!this.handlers.cancelOrder) {
+      throw new NotFoundException({
+        code: "ADMIN_ORDER_CANCEL_UNAVAILABLE",
+        title: "Order cancellation is not configured"
+      });
+    }
+    try {
+      return await this.handlers.cancelOrder.execute({
+        actor,
+        orderId: parsedId.data,
+        reason: parsedBody.data.reason,
+        now: new Date()
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "Order was not found") {
+        throw new NotFoundException({
+          code: "ADMIN_ORDER_NOT_FOUND",
+          title: "Order was not found"
+        });
+      }
+      if (
+        error instanceof Error
+        && (
+          error.message.startsWith("Order in status ")
+          || error.message.startsWith("Order cancellation ")
+          || error.message.startsWith("Administrator order cancellation ")
+          || error.message.includes("cannot transition")
+        )
+      ) {
+        throw new BadRequestException({
+          code: "ADMIN_ORDER_NOT_CANCELLABLE",
+          title: "Этот заказ отменить нельзя"
+        });
+      }
+      throw error;
+    }
   }
 }
 

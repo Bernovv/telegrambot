@@ -97,6 +97,10 @@ const addExistingBody = z.object({
   assignedAdminId: uuid.optional()
 }).strict();
 
+const removeContactsBody = z.object({
+  campaignContactIds: z.array(uuid).min(1).max(500)
+}).strict();
+
 const moveContactsBody = z.object({
   campaignContactIds: z.array(uuid).min(1).max(500),
   targetCampaignId: uuid
@@ -182,6 +186,7 @@ export type AdminOutreachHandler = Pick<
   | "moveContacts"
   | "listBaseContacts"
   | "addExistingContacts"
+  | "removeContacts"
   | "updateCampaign"
   | "listPipelineColumns"
   | "updatePipelineColumns"
@@ -305,6 +310,24 @@ export class AdminOutreachController {
         ...(parsed.assignedAdminId === undefined
           ? {}
           : { assignedAdminId: parsed.assignedAdminId }),
+        now: new Date()
+      })
+    );
+  }
+
+  @Post("campaigns/:id/contacts/remove")
+  @RequireAdminPermission("outreach.write")
+  async removeContacts(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(removeContactsBody, body);
+    return executeOutreach(() =>
+      this.handler.removeContacts({
+        actor: requireActor(request),
+        campaignId: parse(uuid, id),
+        campaignContactIds: parsed.campaignContactIds,
         now: new Date()
       })
     );

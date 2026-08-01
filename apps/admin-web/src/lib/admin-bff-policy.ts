@@ -37,7 +37,7 @@ export function isAllowedAdminApiPath(
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/(?:archive|restore|import-participants)$/i
         .test(path)
       || path === "outreach/custom-fields"
-      || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/add)?$/i.test(path)
+      || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/(?:add|remove))?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/tasks$/i.test(path)
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)
       || /^outreach\/custom-fields\/[0-9a-f-]{36}\/delete$/i.test(path)
@@ -56,7 +56,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update)$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participant-fields$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participant-fields\/(?:delete|value)$/i.test(path)
-      || /^orders\/[0-9a-f-]{36}\/(?:exclude|include)$/i.test(path)
+      || /^orders\/[0-9a-f-]{36}\/(?:exclude|include|cancel)$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/products$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/products\/[0-9a-f-]{36}\/pricing-rules$/i
         .test(path);

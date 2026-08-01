@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
   AdminAccommodationService,
+  AdminCancelOrderService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
@@ -61,6 +62,7 @@ import {
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
   createAdminAccommodationPersistence,
+  PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
   createParticipantQuestionnairePersistence,
@@ -143,11 +145,20 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
     const adminOperations = adminAuth
       ? (() => {
           const repository = createAdminOperationsPersistence(pool);
+          // Отмена трогает бронь и кошелёк, поэтому идёт через ту же единицу работы, что
+          // и продажа: всё либо применяется целиком, либо не применяется вовсе.
+          const sales = createOrderSalesPersistence(pool, idGenerator);
           return {
             listUsers: new ListAdminUsersService(repository),
             getUser: new GetAdminUserService(repository),
             listOrders: new ListAdminOrdersService(repository),
-            getOrder: new GetAdminOrderService(repository)
+            getOrder: new GetAdminOrderService(repository),
+            cancelOrder: new AdminCancelOrderService(
+              new PostgresAdminOrderCancellationRepository(sales.session),
+              sales.outboxWriter,
+              sales.unitOfWork,
+              idGenerator
+            )
           };
         })()
       : undefined;

@@ -149,5 +149,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260801090000_outreach_campaign_archive",
     description: "Let a campaign be archived out of the list without losing its activity history",
     destructive: false
+  },
+  {
+    id: "20260801140000_order_cancellation_and_contact_removal",
+    description: "Add the orders.cancel permission and soft removal of a contact from a campaign",
+    destructive: false
   }
 ];

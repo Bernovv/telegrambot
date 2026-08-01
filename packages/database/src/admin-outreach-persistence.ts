@@ -357,11 +357,13 @@ implements AdminOutreachRepository {
              select count(*)::text
              from public.outreach_campaign_contacts other
              where other.contact_id = contact.id
+               and other.removed_at is null
            ) as campaign_count
          from public.outreach_contacts contact
          left join public.outreach_campaign_contacts member
            on member.contact_id = contact.id
           and member.campaign_id = $1::uuid
+          and member.removed_at is null
          where contact.archived_at is null
            and ($4::boolean is false or member.id is null)
            and (
@@ -430,7 +432,11 @@ implements AdminOutreachRepository {
          join public.outreach_contacts contact
            on contact.id = entry.contact_id::uuid
           and contact.archived_at is null
-         on conflict (campaign_id, contact_id) do nothing`,
+         on conflict (campaign_id, contact_id) do update
+           set removed_at = null,
+               removed_by_admin_id = null,
+               updated_at = excluded.updated_at
+         where public.outreach_campaign_contacts.removed_at is not null`,
         [
           input.campaignId,
           input.assignedAdminId,
@@ -481,6 +487,37 @@ implements AdminOutreachRepository {
     });
   }
 
+  /**
+   * Мягко убирает контакты из кампании. Звонки, сообщения, задачи и история стадий
+   * привязаны к строке участия — удалить её значит потерять их, а именно они отвечают
+   * на вопрос «что человеку уже говорили».
+   */
+  async removeContacts(input: {
+    readonly campaignId: string;
+    readonly campaignContactIds: readonly string[];
+    readonly adminId: string;
+    readonly now: Date;
+  }): Promise<number> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_campaign_contacts
+            set removed_at = $3::timestamptz,
+                removed_by_admin_id = $4::uuid,
+                updated_at = $3::timestamptz
+          where id = any($1::uuid[])
+            and campaign_id = $2::uuid
+            and removed_at is null`,
+        [
+          [...input.campaignContactIds],
+          input.campaignId,
+          input.now.toISOString(),
+          input.adminId
+        ]
+      );
+      return result.rowCount;
+    });
+  }
+
   async moveContacts(input: {
     readonly campaignContactIds: readonly string[];
     readonly targetCampaignId: string;
@@ -509,12 +546,14 @@ implements AdminOutreachRepository {
                 pipeline_stage = $3::text,
                 updated_at = $4::timestamptz
           where moving.id = any($1::uuid[])
+            and moving.removed_at is null
             and moving.campaign_id <> $2::uuid
             and not exists (
               select 1
                 from public.outreach_campaign_contacts existing
                where existing.campaign_id = $2::uuid
                  and existing.contact_id = moving.contact_id
+                 and existing.removed_at is null
             )`,
         [requested, input.targetCampaignId, firstStage, input.now.toISOString()]
       );
@@ -820,6 +859,7 @@ implements AdminOutreachRepository {
          join public.admin_accounts assignee
            on assignee.id = task.assigned_admin_id
          where ($1::uuid is null or task.assigned_admin_id = $1)
+           and campaign_contact.removed_at is null
            and (
              task.status = 'open'
              or (task.status = 'completed' and task.completed_at >= $2::timestamptz)
@@ -886,6 +926,7 @@ implements AdminOutreachRepository {
           and pipeline_column.stage = campaign_contact.pipeline_stage
          ${CUSTOM_FIELDS_LATERAL_JOIN}
          where campaign_contact.campaign_id = $1
+           and campaign_contact.removed_at is null
            and ($2::text is null or (
              coalesce(contact.display_name, '') ilike $2 escape '\\'
              or coalesce(contact.phone_e164, '') ilike $2 escape '\\'
@@ -1489,6 +1530,7 @@ implements AdminOutreachRepository {
          ) open_task on true
          ${CUSTOM_FIELDS_LATERAL_JOIN}
          where campaign_contact.campaign_id = $1
+           and campaign_contact.removed_at is null
          order by contact.display_name nulls last, contact.phone_e164`,
         [campaignId]
       );
@@ -1810,6 +1852,7 @@ const CAMPAIGN_SUMMARY_SELECT = `
   left join public.events event on event.id = campaign.event_id
   left join public.outreach_campaign_contacts campaign_contact
     on campaign_contact.campaign_id = campaign.id
+   and campaign_contact.removed_at is null
   left join public.outreach_pipeline_columns stage_column
     on stage_column.campaign_id = campaign_contact.campaign_id
    and stage_column.stage = campaign_contact.pipeline_stage`;

@@ -5,6 +5,7 @@ import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
+  cancelOrder,
   excludeOrderFromReports,
   getOrder,
   includeOrderInReports
@@ -16,10 +17,17 @@ import {
   orderStatusTone
 } from "@/lib/format";
 import type { AdminOrderDetail } from "@ticket-platform/contracts";
-import { ArrowLeft, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { ArrowLeft, Ban, Eye, EyeOff, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+// Совпадает с проверкой на сервере: платёж в пути и оплаченный заказ так не отменяют.
+const CANCELLABLE_STATUSES = new Set([
+  "draft",
+  "awaiting_offer",
+  "awaiting_payment"
+]);
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,6 +35,7 @@ export default function OrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hiding, setHiding] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -85,6 +94,32 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function cancel() {
+    if (!order) {
+      return;
+    }
+    const reason = window.prompt(
+      `Отменить заказ ${order.number}? Бронь мест снимется, бонусы вернутся покупателю. Укажите причину.`
+    );
+    if (!reason || reason.trim().length < 3) {
+      return;
+    }
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelOrder({ orderId: order.id, reason: reason.trim() });
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof AdminApiError
+          ? caught.message
+          : "Не удалось отменить заказ."
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   if (loading && !order) {
     return <PageLoading label="Загружаем заказ" />;
   }
@@ -140,6 +175,27 @@ export default function OrderDetailPage() {
       </div>
 
       <OrderActions order={order} onSettled={() => load()} />
+
+      {CANCELLABLE_STATUSES.has(order.status) ? (
+        <div className="plan-banner">
+          <div>
+            <strong>Заказ не оплачен</strong>
+            <span>
+              Отмена снимет бронь мест и вернёт покупателю захолдированные бонусы.
+              Оплаченный заказ так отменить нельзя — для него есть возврат.
+            </span>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={cancelling}
+            onClick={() => void cancel()}
+          >
+            <Ban size={16} />
+            Отменить заказ
+          </button>
+        </div>
+      ) : null}
 
       <div className={order.excludedAt ? "plan-banner plan-banner-stale" : "plan-banner"}>
         <div>

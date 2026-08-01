@@ -267,6 +267,7 @@ function handler(
     },
     async moveContacts() { return { moved: 0, alreadyThere: 0 }; },
     async listBaseContacts() { return []; },
+    async removeContacts() { return { removed: 0 }; },
     async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
     async createCampaign() { return campaign; },
     async updateCampaign() { return campaign; },

@@ -93,6 +93,12 @@ export interface AdminOutreachRepository {
     readonly at: Date;
   }): Promise<boolean>;
   restoreCampaign(campaignId: string): Promise<boolean>;
+  removeContacts(input: {
+    readonly campaignId: string;
+    readonly campaignContactIds: readonly string[];
+    readonly adminId: string;
+    readonly now: Date;
+  }): Promise<number>;
   moveContacts(input: {
     readonly campaignContactIds: readonly string[];
     readonly targetCampaignId: string;
@@ -416,6 +422,33 @@ export class AdminOutreachService {
    * только то, в какой работе он числится. Стадия сбрасывается на первую в кампании
    * назначения: у каждой кампании свои стадии, и чужая там просто не существует.
    */
+  /**
+   * Убирает контакты из кампании. Человек остаётся в общей базе и в других кампаниях —
+   * уходит только эта работа по нему, а её история сохраняется.
+   */
+  async removeContacts(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly campaignContactIds: readonly string[];
+    readonly now: Date;
+  }): Promise<{ readonly removed: number }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    requireIds(input.campaignContactIds);
+    for (const contactId of input.campaignContactIds) {
+      requireUuid(contactId);
+    }
+
+    return {
+      removed: await this.repository.removeContacts({
+        campaignId: input.campaignId,
+        campaignContactIds: unique(input.campaignContactIds),
+        adminId: input.actor.adminId,
+        now: input.now
+      })
+    };
+  }
+
   async moveContacts(input: {
     readonly actor: AdminRequestActor;
     readonly campaignContactIds: readonly string[];

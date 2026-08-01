@@ -784,6 +784,7 @@ function repository(
     async archiveCampaign() { return true; },
     async restoreCampaign() { return true; },
     async moveContacts() { return { moved: 0, alreadyThere: 0 }; },
+    async removeContacts() { return 0; },
     async getCampaign() { return null; },
     async createCampaign() {},
     async updateCampaign() { return false; },

@@ -493,6 +493,9 @@ export function createOrderSalesPersistence(
   const session = new TransactionSession();
 
   return {
+    // Сессия отдаётся наружу, чтобы соседние операции над заказом (например, отмена)
+    // работали в той же транзакции, а не открывали свою поверх чужой.
+    session,
     orderSalesRepository: new PostgresOrderSalesRepository(session, idGenerator),
     outboxWriter: new PostgresOutboxWriter(session),
     unitOfWork: new PostgresUnitOfWork(pool, session)

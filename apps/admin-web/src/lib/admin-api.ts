@@ -333,6 +333,31 @@ export function addExistingContactsToCampaign(input: {
   );
 }
 
+export function removeOutreachContacts(input: {
+  readonly campaignId: string;
+  readonly campaignContactIds: readonly string[];
+}): Promise<{ readonly removed: number }> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(input.campaignId)}/contacts/remove`,
+    "POST",
+    { campaignContactIds: input.campaignContactIds }
+  );
+}
+
+export function cancelOrder(input: {
+  readonly orderId: string;
+  readonly reason: string;
+}): Promise<{
+  readonly orderNumber: string;
+  readonly walletReleasedKopecks: string;
+}> {
+  return requestAdminMutation(
+    `orders/${encodeURIComponent(input.orderId)}/cancel`,
+    "POST",
+    { reason: input.reason }
+  );
+}
+
 export function moveOutreachContacts(input: {
   readonly campaignContactIds: readonly string[];
   readonly targetCampaignId: string;

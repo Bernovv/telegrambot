@@ -18,6 +18,7 @@ export * from "./scenario-runtime-persistence.js";
 export * from "./order-sales-persistence.js";
 export * from "./offer-acceptance-persistence.js";
 export * from "./order-expiry-persistence.js";
+export * from "./admin-order-cancellation-persistence.js";
 export * from "./payment-confirmation-persistence.js";
 export * from "./notification-delivery-persistence.js";
 export * from "./ticket-access-persistence.js";
