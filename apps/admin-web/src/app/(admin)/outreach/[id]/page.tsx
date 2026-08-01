@@ -396,20 +396,32 @@ export default function OutreachCampaignPage() {
     setError(null);
     setNotice(null);
     try {
-      const rows = parseOutreachCsv(await file.text());
-      if (!window.confirm(`Добавить в кампанию ${rows.length} контактов?`)) {
+      const { rows, skippedLines } = parseOutreachCsv(await file.text());
+      const skippedNote = skippedLines.length > 0
+        ? ` Пропущено строк без контакта: ${skippedLines.length}.`
+        : "";
+      if (!window.confirm(
+        `Добавить в кампанию ${rows.length} контактов?${skippedNote}`
+      )) {
         return;
       }
       let added = 0;
       let duplicates = 0;
+      // Импорт идёт пачками: сервер принимает не больше 500 строк за запрос, а на
+      // восьми тысячах контактов это полсотни запросов — показываем, докуда дошли.
       for (let offset = 0; offset < rows.length; offset += 150) {
         const result = await importOutreachContacts(id, {
           rows: rows.slice(offset, offset + 150)
         });
         added += result.addedToCampaign;
         duplicates += result.alreadyInCampaign;
+        setNotice(
+          `Импортируем: ${Math.min(offset + 150, rows.length)} из ${rows.length}…`
+        );
       }
-      setNotice(`Добавлено: ${added}. Уже были в кампании: ${duplicates}.`);
+      setNotice(
+        `Добавлено: ${added}. Уже были в кампании: ${duplicates}.${skippedNote}`
+      );
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось импортировать CSV.");

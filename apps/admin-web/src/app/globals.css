@@ -1158,6 +1158,13 @@ tbody tr:hover {
   justify-self: start;
 }
 
+/* Номера заказов длинные и не переносятся по словам — без этого таблица расселения
+   разъезжается. */
+.accommodation-orders {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .accommodation-merged {
   display: inline-flex;
   align-items: center;

@@ -133,7 +133,14 @@ export class PostgresAdminAccommodationRepository
         `select
            o.id as order_id,
            o.number as order_number,
-           u.display_name as buyer_name,
+           -- Имя покупателя часто пустое: человек пришёл из Telegram и представился
+           -- только ником. Показывать номер заказа вместо имени бесполезно, поэтому
+           -- спускаемся по цепочке: имя, ник, телефон.
+           coalesce(
+             nullif(btrim(u.display_name), ''),
+             '@' || nullif(identity.username, ''),
+             contact.value_normalized
+           ) as buyer_name,
            p.id as product_id,
            p.title as product_title,
            i.quantity as quantity,
@@ -144,6 +151,20 @@ export class PostgresAdminAccommodationRepository
          join public.order_items i on i.order_id = o.id
          join public.ticket_products p on p.id = i.product_id
          join public.users u on u.id = o.user_id
+         left join lateral (
+           select username
+           from public.messenger_identities
+           where user_id = o.user_id and username is not null
+           order by last_seen_at desc, id
+           limit 1
+         ) identity on true
+         left join lateral (
+           select value_normalized
+           from public.user_contacts
+           where user_id = o.user_id and contact_type = 'phone'
+           order by is_primary desc, created_at
+           limit 1
+         ) contact on true
          where o.event_id = $1::uuid
            and o.status = 'paid'
            and o.excluded_at is null

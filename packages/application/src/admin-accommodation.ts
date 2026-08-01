@@ -932,8 +932,13 @@ function toTentCount(tent: { capacity: number; count: number }): AccommodationTe
   return { capacity: tent.capacity, count: tent.count };
 }
 
+/**
+ * Номер заказа в качестве имени бесполезен: он длинный и ни о чём не говорит тому, кто
+ * расселяет людей. Сам номер всё равно виден в соседней колонке.
+ */
 function orderTitle(order: OrderTotals): string {
-  return order.buyerName ?? `Заказ ${order.orderNumber}`;
+  const name = order.buyerName?.trim();
+  return name === undefined || name === "" ? "Без имени" : name;
 }
 
 function countRole(

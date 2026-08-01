@@ -1168,7 +1168,7 @@ implements AdminOutreachRepository {
       const campaignResult = await connection.query<CampaignRow>(
         `${CAMPAIGN_SUMMARY_SELECT}
          where campaign.id = $1
-         group by campaign.id`,
+         group by campaign.id, event.title`,
         [campaignId]
       );
       const campaign = campaignResult.rows[0]

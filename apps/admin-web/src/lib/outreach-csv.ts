@@ -1,6 +1,12 @@
 import type { OutreachImportRow } from "@ticket-platform/contracts/admin-outreach";
 
-export function parseOutreachCsv(text: string): readonly OutreachImportRow[] {
+export interface OutreachCsvParseResult {
+  readonly rows: readonly OutreachImportRow[];
+  /** Номера строк файла без телефона, Telegram и MAX — импортировать из них нечего. */
+  readonly skippedLines: readonly number[];
+}
+
+export function parseOutreachCsv(text: string): OutreachCsvParseResult {
   const cleaned = text.replace(/^\uFEFF/, "");
   const firstLine = cleaned.split(/\r?\n/, 1)[0] ?? "";
   const delimiter = count(firstLine, ";") > count(firstLine, ",") ? ";" : ",";
@@ -14,7 +20,11 @@ export function parseOutreachCsv(text: string): readonly OutreachImportRow[] {
   if (!fields.some((field) => field === "phone" || field === "telegram" || field === "max")) {
     throw new Error("Нужна хотя бы одна колонка: phone, telegram или max");
   }
-  const rows = table.slice(1).map((cells, rowIndex) => {
+  // Одна пустая строка не должна ронять импорт целиком: в выгрузке на восемь тысяч
+  // контактов такая найдётся почти наверняка. Пропускаем её и говорим, сколько пропустили.
+  const rows: OutreachImportRow[] = [];
+  const skippedLines: number[] = [];
+  table.slice(1).forEach((cells, rowIndex) => {
     const row: Record<string, string> = {};
     fields.forEach((field, index) => {
       if (field) {
@@ -22,14 +32,15 @@ export function parseOutreachCsv(text: string): readonly OutreachImportRow[] {
       }
     });
     if (!row.phone && !row.telegram && !row.max) {
-      throw new Error(`Строка ${rowIndex + 2}: не указан контакт`);
+      skippedLines.push(rowIndex + 2);
+      return;
     }
-    return compact(row);
+    rows.push(compact(row));
   });
   if (rows.length < 1) {
     throw new Error("В CSV нет строк с контактами");
   }
-  return rows;
+  return { rows, skippedLines };
 }
 
 function parseTable(text: string, delimiter: string): string[][] {

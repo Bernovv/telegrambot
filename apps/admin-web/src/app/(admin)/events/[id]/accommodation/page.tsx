@@ -638,7 +638,7 @@ function PartyRow({
           <span className="muted"> · свободно {party.emptyBerths}</span>
         ) : null}
       </td>
-      <td className="muted">{party.orderNumbers.join(", ")}</td>
+      <td className="muted accommodation-orders">{party.orderNumbers.join(", ")}</td>
       <td>
         {canManage && party.groupId ? (
           <button
