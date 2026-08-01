@@ -104,6 +104,10 @@ function participant(
     sleepingPlaces: 1,
     note: "",
     outreachContactId: null,
+    amountKopecks: null,
+    paidAt: null,
+    paymentMethod: null,
+    customFields: [],
     createdAt: "2026-07-31T09:00:00.000Z",
     ...overrides
   };
@@ -118,6 +122,7 @@ function summaryOf(
     event: EVENT,
     items,
     participants,
+    participantFields: [],
     excludedOrders: 0,
     groups,
     lastPlan: null,
@@ -337,6 +342,7 @@ describe("buildSummary", () => {
       event: EVENT,
       items: [vipAdult("order-1", "A-1", 5)],
       participants: [],
+      participantFields: [],
       excludedOrders: 0,
       groups: [],
       lastPlan: {
@@ -364,12 +370,16 @@ class FakeRepository implements AdminAccommodationRepository {
   readonly createdParticipants: unknown[] = [];
   readonly deletedParticipants: unknown[] = [];
   readonly excludedOrders: unknown[] = [];
+  readonly updatedParticipants: unknown[] = [];
+  readonly createdFields: unknown[] = [];
+  readonly savedFieldValues: unknown[] = [];
 
   constructor(
     private readonly items: readonly AccommodationOrderItemRow[] = [],
     private readonly canManage = true,
     private readonly event: AccommodationEventRow | null = EVENT,
-    private readonly mutationFound = true
+    private readonly mutationFound = true,
+    private readonly participants: readonly EventParticipant[] = []
   ) {}
 
   findEvent(): Promise<AccommodationEventRow | null> {
@@ -385,7 +395,30 @@ class FakeRepository implements AdminAccommodationRepository {
   }
 
   listParticipants(): Promise<readonly EventParticipant[]> {
+    return Promise.resolve(this.participants);
+  }
+
+  listParticipantFields(): Promise<readonly never[]> {
     return Promise.resolve([]);
+  }
+
+  updateParticipant(input: unknown): Promise<boolean> {
+    this.updatedParticipants.push(input);
+    return Promise.resolve(this.mutationFound);
+  }
+
+  createParticipantField(input: unknown): Promise<void> {
+    this.createdFields.push(input);
+    return Promise.resolve();
+  }
+
+  deleteParticipantField(): Promise<boolean> {
+    return Promise.resolve(this.mutationFound);
+  }
+
+  setParticipantFieldValue(input: unknown): Promise<boolean> {
+    this.savedFieldValues.push(input);
+    return Promise.resolve(this.mutationFound);
   }
 
   countExcludedOrders(): Promise<number> {
@@ -633,6 +666,137 @@ describe("AdminAccommodationService", () => {
       }),
       /Order was not found/
     );
+  });
+
+  it("checks sleeping places against the resulting headcount, not the change alone", async () => {
+    // У участника было 3 человека и 3 места; уменьшаем людей до одного, места не трогаем —
+    // получилось бы три места на одного, чего мы не везём.
+    const repository = new FakeRepository([], true, EVENT, true, [
+      participant("019c7a20-0000-7000-8000-000000000101", {
+        adults: 2,
+        children: 1,
+        sleepingPlaces: 3
+      })
+    ]);
+    const service = serviceWith(repository);
+
+    await assert.rejects(
+      service.updateParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participantId: "019c7a20-0000-7000-8000-000000000101",
+        changes: { adults: 1, children: 0 }
+      }),
+      /headcount is invalid/
+    );
+  });
+
+  it("allows a change that stays consistent once applied", async () => {
+    const repository = new FakeRepository([], true, EVENT, true, [
+      participant("019c7a20-0000-7000-8000-000000000101", {
+        adults: 2,
+        children: 1,
+        sleepingPlaces: 3
+      })
+    ]);
+    const service = serviceWith(repository);
+
+    await service.updateParticipant({
+      actor: actor("participants.manage"),
+      eventId: EVENT_ID,
+      participantId: "019c7a20-0000-7000-8000-000000000101",
+      changes: { adults: 1, children: 0, sleepingPlaces: 1 }
+    });
+
+    assert.equal(repository.updatedParticipants.length, 1);
+  });
+
+  it("refuses an empty update instead of touching the row", async () => {
+    const repository = new FakeRepository();
+    const service = serviceWith(repository);
+
+    await assert.rejects(
+      service.updateParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participantId: "019c7a20-0000-7000-8000-000000000101",
+        changes: {}
+      }),
+      /update is empty/
+    );
+    assert.equal(repository.updatedParticipants.length, 0);
+  });
+
+  it("refuses an amount that is not a whole number of kopecks", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.updateParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participantId: "019c7a20-0000-7000-8000-000000000101",
+        changes: { amountKopecks: "1200.50" }
+      }),
+      /amount is invalid/
+    );
+  });
+
+  it("requires options for a select field and forbids them elsewhere", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.addParticipantField({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        label: "Способ оплаты",
+        type: "select",
+        options: [],
+        scope: "event"
+      }),
+      /options are invalid/
+    );
+    await assert.rejects(
+      service.addParticipantField({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        label: "Комментарий",
+        type: "text",
+        options: ["a"],
+        scope: "event"
+      }),
+      /options are invalid/
+    );
+  });
+
+  it("stores a global field without an event, and an event field with one", async () => {
+    const repository = new FakeRepository();
+    const service = serviceWith(repository);
+
+    await service.addParticipantField({
+      actor: actor("participants.manage"),
+      eventId: EVENT_ID,
+      label: "Откуда узнал",
+      type: "text",
+      options: null,
+      scope: "global"
+    });
+    await service.addParticipantField({
+      actor: actor("participants.manage"),
+      eventId: EVENT_ID,
+      label: "Аллергия",
+      type: "text",
+      options: null,
+      scope: "event"
+    });
+
+    const created = repository.createdFields as readonly {
+      eventId: string | null;
+      fieldKey: string;
+    }[];
+    assert.equal(created[0]?.eventId, null);
+    assert.equal(created[1]?.eventId, EVENT_ID);
+    // Русская подпись в ключ не переводится — ключ остаётся валидным для базы.
+    assert.match(created[0]?.fieldKey ?? "", /^[a-z0-9_]{1,60}$/);
   });
 
   it("demands a reason before removing a participant", async () => {

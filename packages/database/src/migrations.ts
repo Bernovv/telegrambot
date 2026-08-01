@@ -134,5 +134,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260731140000_event_participants_and_exclusions",
     description: "Add manually entered event participants, order exclusion for test orders, and archiving for outreach contacts",
     destructive: false
+  },
+  {
+    id: "20260731170000_event_participant_details",
+    description: "Add payment date and method to event participants plus their own custom field definitions and values",
+    destructive: false
   }
 ];

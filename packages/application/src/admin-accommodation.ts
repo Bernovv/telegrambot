@@ -6,6 +6,8 @@ import type {
   AccommodationTentCount,
   AdminRequestActor,
   EventParticipant,
+  EventParticipantFieldDefinition,
+  EventParticipantFieldType,
   EventParticipantSource
 } from "@ticket-platform/contracts";
 import { planTents, type AccommodationParty } from "@ticket-platform/domain";
@@ -85,6 +87,41 @@ export interface CreateEventParticipantInput {
   readonly adminId: string;
 }
 
+export interface UpdateEventParticipantInput {
+  readonly eventId: string;
+  readonly participantId: string;
+  readonly changes: {
+    readonly displayName?: string;
+    readonly phone?: string | null;
+    readonly source?: EventParticipantSource;
+    readonly ticketTitle?: string;
+    readonly adults?: number;
+    readonly children?: number;
+    readonly sleepingPlaces?: number;
+    readonly note?: string;
+    readonly amountKopecks?: string | null;
+    readonly paidAt?: Date | null;
+    readonly paymentMethod?: string | null;
+  };
+}
+
+export interface CreateParticipantFieldInput {
+  readonly fieldId: string;
+  readonly eventId: string | null;
+  readonly fieldKey: string;
+  readonly label: string;
+  readonly type: EventParticipantFieldType;
+  readonly options: readonly string[] | null;
+  readonly adminId: string;
+}
+
+export interface SetParticipantFieldValueInput {
+  readonly eventId: string;
+  readonly participantId: string;
+  readonly fieldId: string;
+  readonly value: string | null;
+}
+
 export interface DeleteEventParticipantInput {
   readonly eventId: string;
   readonly participantId: string;
@@ -112,7 +149,14 @@ export interface AdminAccommodationRepository {
   deleteGroup(eventId: string, groupId: string): Promise<void>;
   insertPlan(input: InsertAccommodationPlanInput): Promise<void>;
   createParticipant(input: CreateEventParticipantInput): Promise<void>;
+  updateParticipant(input: UpdateEventParticipantInput): Promise<boolean>;
   deleteParticipant(input: DeleteEventParticipantInput): Promise<boolean>;
+  listParticipantFields(
+    eventId: string
+  ): Promise<readonly EventParticipantFieldDefinition[]>;
+  createParticipantField(input: CreateParticipantFieldInput): Promise<void>;
+  deleteParticipantField(fieldId: string): Promise<boolean>;
+  setParticipantFieldValue(input: SetParticipantFieldValueInput): Promise<boolean>;
   excludeOrder(input: ExcludeOrderInput): Promise<boolean>;
   includeOrder(orderId: string): Promise<boolean>;
 }
@@ -208,6 +252,145 @@ export class AdminAccommodationService {
     });
   }
 
+  async updateParticipant(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly participantId: string;
+    readonly changes: UpdateEventParticipantInput["changes"];
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.eventId);
+    requireUuid(input.participantId);
+
+    const changes = input.changes;
+    if (Object.keys(changes).length === 0) {
+      throw new Error("Event participant update is empty");
+    }
+    if (changes.displayName !== undefined && changes.displayName.trim() === "") {
+      throw new Error("Event participant name is invalid");
+    }
+    // Головы и места правятся по отдельности, поэтому проверяем итог: сначала читаем
+    // текущего участника, накладываем правки и только потом сверяем «мест не больше людей».
+    if (
+      changes.adults !== undefined
+      || changes.children !== undefined
+      || changes.sleepingPlaces !== undefined
+    ) {
+      const current = (await this.repository.listParticipants(input.eventId))
+        .find((participant) => participant.id === input.participantId);
+      if (!current) {
+        throw new EventParticipantNotFoundError();
+      }
+      const adults = changes.adults ?? current.adults;
+      const children = changes.children ?? current.children;
+      const sleepingPlaces = changes.sleepingPlaces ?? current.sleepingPlaces;
+      if (
+        !Number.isSafeInteger(adults) || adults < 0
+        || !Number.isSafeInteger(children) || children < 0
+        || adults + children < 1
+        || !Number.isSafeInteger(sleepingPlaces)
+        || sleepingPlaces < 0
+        || sleepingPlaces > adults + children
+      ) {
+        throw new Error("Event participant headcount is invalid");
+      }
+    }
+    if (changes.amountKopecks !== undefined && changes.amountKopecks !== null) {
+      if (!/^\d{1,15}$/.test(changes.amountKopecks)) {
+        throw new Error("Event participant amount is invalid");
+      }
+    }
+
+    const updated = await this.repository.updateParticipant({
+      eventId: input.eventId,
+      participantId: input.participantId,
+      changes
+    });
+    if (!updated) {
+      throw new EventParticipantNotFoundError();
+    }
+  }
+
+  async addParticipantField(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly label: string;
+    readonly type: EventParticipantFieldType;
+    readonly options: readonly string[] | null;
+    readonly scope: "event" | "global";
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.eventId);
+
+    const label = input.label.trim();
+    if (label.length < 1 || label.length > 80) {
+      throw new Error("Event participant field label is invalid");
+    }
+    if (input.type === "select") {
+      const options = (input.options ?? [])
+        .map((option) => option.trim())
+        .filter((option) => option !== "");
+      if (options.length === 0 || options.length > 50) {
+        throw new Error("Event participant field options are invalid");
+      }
+    } else if (input.options !== null && input.options.length > 0) {
+      throw new Error("Event participant field options are invalid");
+    }
+
+    await this.repository.createParticipantField({
+      fieldId: this.idGenerator.newId(),
+      eventId: input.scope === "global" ? null : input.eventId,
+      fieldKey: fieldKeyFor(label, this.idGenerator),
+      label,
+      type: input.type,
+      options: input.type === "select"
+        ? (input.options ?? []).map((option) => option.trim()).filter(Boolean)
+        : null,
+      adminId: input.actor.adminId
+    });
+  }
+
+  async removeParticipantField(input: {
+    readonly actor: AdminRequestActor;
+    readonly fieldId: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.fieldId);
+
+    const removed = await this.repository.deleteParticipantField(input.fieldId);
+    if (!removed) {
+      throw new Error("Event participant field was not found");
+    }
+  }
+
+  async setParticipantFieldValue(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly participantId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+  }): Promise<void> {
+    requirePermission(input.actor, "participants.manage");
+    requireUuid(input.eventId);
+    requireUuid(input.participantId);
+    requireUuid(input.fieldId);
+    if (input.value !== null && input.value.length > 500) {
+      throw new Error("Event participant field value is invalid");
+    }
+
+    const saved = await this.repository.setParticipantFieldValue({
+      eventId: input.eventId,
+      participantId: input.participantId,
+      fieldId: input.fieldId,
+      value: input.value === null || input.value.trim() === ""
+        ? null
+        : input.value.trim()
+    });
+    if (!saved) {
+      throw new EventParticipantNotFoundError();
+    }
+  }
+
   async removeParticipant(input: {
     readonly actor: AdminRequestActor;
     readonly eventId: string;
@@ -283,18 +466,21 @@ export class AdminAccommodationService {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, participants, excludedOrders, groups, lastPlan] = await Promise.all([
-      this.repository.listPaidOrderItems(eventId),
-      this.repository.listParticipants(eventId),
-      this.repository.countExcludedOrders(eventId),
-      this.repository.listGroups(eventId),
-      this.repository.findLastPlan(eventId)
-    ]);
+    const [items, participants, participantFields, excludedOrders, groups, lastPlan] =
+      await Promise.all([
+        this.repository.listPaidOrderItems(eventId),
+        this.repository.listParticipants(eventId),
+        this.repository.listParticipantFields(eventId),
+        this.repository.countExcludedOrders(eventId),
+        this.repository.listGroups(eventId),
+        this.repository.findLastPlan(eventId)
+      ]);
 
     return buildSummary({
       event,
       items,
       participants,
+      participantFields,
       excludedOrders,
       groups,
       lastPlan,
@@ -363,16 +549,19 @@ export class AdminAccommodationService {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, participants, excludedOrders, groups] = await Promise.all([
-      this.repository.listPaidOrderItems(input.eventId),
-      this.repository.listParticipants(input.eventId),
-      this.repository.countExcludedOrders(input.eventId),
-      this.repository.listGroups(input.eventId)
-    ]);
+    const [items, participants, participantFields, excludedOrders, groups] =
+      await Promise.all([
+        this.repository.listPaidOrderItems(input.eventId),
+        this.repository.listParticipants(input.eventId),
+        this.repository.listParticipantFields(input.eventId),
+        this.repository.countExcludedOrders(input.eventId),
+        this.repository.listGroups(input.eventId)
+      ]);
     const summary = buildSummary({
       event,
       items,
       participants,
+      participantFields,
       excludedOrders,
       groups,
       lastPlan: null,
@@ -415,6 +604,7 @@ interface SummaryInput {
   readonly event: AccommodationEventRow;
   readonly items: readonly AccommodationOrderItemRow[];
   readonly participants: readonly EventParticipant[];
+  readonly participantFields: readonly EventParticipantFieldDefinition[];
   readonly excludedOrders: number;
   readonly groups: readonly AccommodationGroupRow[];
   readonly lastPlan: AccommodationFixedPlan | null;
@@ -586,6 +776,7 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
     guestsFromParticipants,
     excludedOrders: input.excludedOrders,
     participants: input.participants,
+    participantFields: input.participantFields,
     canManage: input.canManage,
     canManageParticipants: input.canManageParticipants
   };
@@ -804,6 +995,20 @@ function requireReason(reason: string): void {
   if (trimmed.length < 3 || trimmed.length > 500) {
     throw new Error("Accommodation change reason is invalid");
   }
+}
+
+/**
+ * Ключ поля нужен только базе: в интерфейсе человек видит подпись. Русские подписи в
+ * `[a-z0-9_]` не переводятся, поэтому берём кусок нового идентификатора — коллизий не будет.
+ */
+function fieldKeyFor(label: string, idGenerator: IdGenerator): string {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  const suffix = idGenerator.newId().replace(/-/g, "").slice(0, 8);
+  return slug === "" ? `field_${suffix}` : `${slug}_${suffix}`;
 }
 
 function requireUuid(value: string): void {

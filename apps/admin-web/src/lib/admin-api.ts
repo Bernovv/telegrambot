@@ -62,7 +62,9 @@ import type {
 } from "@ticket-platform/contracts/admin-events";
 import type {
   AccommodationSummary,
-  CreateEventParticipantRequest
+  CreateEventParticipantFieldRequest,
+  CreateEventParticipantRequest,
+  UpdateEventParticipantRequest
 } from "@ticket-platform/contracts/admin-accommodation";
 
 export interface UserListFilters {
@@ -168,6 +170,56 @@ export function addEventParticipant(
     `events/${encodeURIComponent(eventId)}/participants`,
     "POST",
     input
+  );
+}
+
+export function updateEventParticipant(
+  eventId: string,
+  input: UpdateEventParticipantRequest
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participants/update`,
+    "POST",
+    input
+  );
+}
+
+export function addEventParticipantField(
+  eventId: string,
+  input: CreateEventParticipantFieldRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participant-fields`,
+    "POST",
+    input
+  );
+}
+
+export function removeEventParticipantField(input: {
+  readonly eventId: string;
+  readonly fieldId: string;
+}): Promise<{ readonly removed: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/participant-fields/delete`,
+    "POST",
+    { fieldId: input.fieldId }
+  );
+}
+
+export function setEventParticipantFieldValue(input: {
+  readonly eventId: string;
+  readonly participantId: string;
+  readonly fieldId: string;
+  readonly value: string | null;
+}): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(input.eventId)}/participant-fields/value`,
+    "POST",
+    {
+      participantId: input.participantId,
+      fieldId: input.fieldId,
+      value: input.value
+    }
   );
 }
 

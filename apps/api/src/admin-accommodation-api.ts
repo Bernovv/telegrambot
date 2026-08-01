@@ -13,7 +13,10 @@ import {
   UnauthorizedException
 } from "@nestjs/common";
 import type { AdminAccommodationService } from "@ticket-platform/application";
-import { EVENT_PARTICIPANT_SOURCES } from "@ticket-platform/contracts";
+import {
+  EVENT_PARTICIPANT_FIELD_TYPES,
+  EVENT_PARTICIPANT_SOURCES
+} from "@ticket-platform/contracts";
 import { z } from "zod";
 import {
   RequireAdminPermission,
@@ -21,6 +24,20 @@ import {
 } from "./admin-auth.js";
 
 const ADMIN_ACCOMMODATION = Symbol("ADMIN_ACCOMMODATION");
+
+type ParticipantChanges = {
+  displayName?: string;
+  phone?: string | null;
+  source?: (typeof EVENT_PARTICIPANT_SOURCES)[number];
+  ticketTitle?: string;
+  adults?: number;
+  children?: number;
+  sleepingPlaces?: number;
+  note?: string;
+  amountKopecks?: string | null;
+  paidAt?: Date | null;
+  paymentMethod?: string | null;
+};
 const uuid = z.string().uuid();
 
 const mergeBody = z.object({
@@ -53,6 +70,38 @@ const removeParticipantBody = z.object({
   reason: z.string().trim().min(3).max(500)
 }).strict();
 
+const updateParticipantBody = z.object({
+  participantId: uuid,
+  displayName: z.string().trim().min(1).max(200).optional(),
+  phone: z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/).nullable().optional(),
+  source: z.enum(EVENT_PARTICIPANT_SOURCES).optional(),
+  ticketTitle: z.string().trim().max(200).optional(),
+  adults: z.number().int().min(0).max(100).optional(),
+  children: z.number().int().min(0).max(100).optional(),
+  sleepingPlaces: z.number().int().min(0).max(200).optional(),
+  note: z.string().trim().max(500).optional(),
+  amountKopecks: z.string().regex(/^\d{1,15}$/).nullable().optional(),
+  paidAt: z.string().datetime().nullable().optional(),
+  paymentMethod: z.string().trim().min(1).max(80).nullable().optional()
+}).strict();
+
+const participantFieldBody = z.object({
+  label: z.string().trim().min(1).max(80),
+  type: z.enum(EVENT_PARTICIPANT_FIELD_TYPES),
+  options: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+  scope: z.enum(["event", "global"])
+}).strict();
+
+const participantFieldValueBody = z.object({
+  participantId: uuid,
+  fieldId: uuid,
+  value: z.string().max(500).nullable()
+}).strict();
+
+const deleteParticipantFieldBody = z.object({
+  fieldId: uuid
+}).strict();
+
 const excludeOrderBody = z.object({
   reason: z.string().trim().min(3).max(500)
 }).strict();
@@ -64,7 +113,11 @@ export type AdminAccommodationHandler = Pick<
   | "splitGroup"
   | "fixPlan"
   | "addParticipant"
+  | "updateParticipant"
   | "removeParticipant"
+  | "addParticipantField"
+  | "removeParticipantField"
+  | "setParticipantFieldValue"
   | "excludeOrder"
   | "includeOrder"
 >;
@@ -197,6 +250,119 @@ export class AdminParticipantsController {
       })
     );
     return { removed: true };
+  }
+
+  @Post("events/:eventId/participants/update")
+  @RequireAdminPermission("participants.manage")
+  async update(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(updateParticipantBody, body);
+    // Собираем изменения по одному: при `exactOptionalPropertyTypes` «ключа нет» и «ключ
+    // есть со значением undefined» — разные вещи, а разница тут смысловая: не менять
+    // против очистить.
+    const changes: ParticipantChanges = {};
+    if (parsed.displayName !== undefined) {
+      changes.displayName = parsed.displayName;
+    }
+    if (parsed.phone !== undefined) {
+      changes.phone = parsed.phone;
+    }
+    if (parsed.source !== undefined) {
+      changes.source = parsed.source;
+    }
+    if (parsed.ticketTitle !== undefined) {
+      changes.ticketTitle = parsed.ticketTitle;
+    }
+    if (parsed.adults !== undefined) {
+      changes.adults = parsed.adults;
+    }
+    if (parsed.children !== undefined) {
+      changes.children = parsed.children;
+    }
+    if (parsed.sleepingPlaces !== undefined) {
+      changes.sleepingPlaces = parsed.sleepingPlaces;
+    }
+    if (parsed.note !== undefined) {
+      changes.note = parsed.note;
+    }
+    if (parsed.amountKopecks !== undefined) {
+      changes.amountKopecks = parsed.amountKopecks;
+    }
+    if (parsed.paymentMethod !== undefined) {
+      changes.paymentMethod = parsed.paymentMethod;
+    }
+    if (parsed.paidAt !== undefined) {
+      changes.paidAt = parsed.paidAt === null ? null : new Date(parsed.paidAt);
+    }
+    await execute(() =>
+      this.handler.updateParticipant({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        participantId: parsed.participantId,
+        changes
+      })
+    );
+    return { updated: true };
+  }
+
+  @Post("events/:eventId/participant-fields")
+  @RequireAdminPermission("participants.manage")
+  async addField(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(participantFieldBody, body);
+    await execute(() =>
+      this.handler.addParticipantField({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        label: parsed.label,
+        type: parsed.type,
+        options: parsed.options ?? null,
+        scope: parsed.scope
+      })
+    );
+    return { added: true };
+  }
+
+  @Post("events/:eventId/participant-fields/delete")
+  @RequireAdminPermission("participants.manage")
+  async removeField(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(deleteParticipantFieldBody, body);
+    await execute(() =>
+      this.handler.removeParticipantField({
+        actor: requireActor(request),
+        fieldId: parsed.fieldId
+      })
+    );
+    return { removed: true };
+  }
+
+  @Post("events/:eventId/participant-fields/value")
+  @RequireAdminPermission("participants.manage")
+  async setFieldValue(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(participantFieldValueBody, body);
+    await execute(() =>
+      this.handler.setParticipantFieldValue({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        participantId: parsed.participantId,
+        fieldId: parsed.fieldId,
+        value: parsed.value
+      })
+    );
+    return { saved: true };
   }
 
   @Post("orders/:orderId/exclude")

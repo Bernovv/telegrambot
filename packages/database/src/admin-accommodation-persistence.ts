@@ -6,7 +6,10 @@ import type {
   AdminAccommodationRepository,
   CreateAccommodationGroupInput,
   CreateEventParticipantInput,
+  CreateParticipantFieldInput,
   DeleteEventParticipantInput,
+  SetParticipantFieldValueInput,
+  UpdateEventParticipantInput,
   ExcludeOrderInput,
   InsertAccommodationPlanInput
 } from "@ticket-platform/application";
@@ -14,6 +17,9 @@ import type {
   AccommodationFixedPlan,
   AccommodationTentCount,
   EventParticipant,
+  EventParticipantFieldDefinition,
+  EventParticipantFieldType,
+  EventParticipantFieldValue,
   EventParticipantSource
 } from "@ticket-platform/contracts";
 import type { SqlConnection, SqlConnectionPool } from "./postgres.js";
@@ -49,7 +55,27 @@ interface ParticipantResult {
   readonly sleeping_places: number;
   readonly note: string;
   readonly outreach_contact_id: string | null;
+  readonly amount_kopecks: string | null;
+  readonly paid_at: string | null;
+  readonly payment_method: string | null;
   readonly created_at: string;
+}
+
+interface ParticipantFieldRow {
+  readonly id: string;
+  readonly label: string;
+  readonly field_type: string;
+  readonly options: unknown;
+  readonly event_id: string | null;
+}
+
+interface ParticipantFieldValueRow {
+  readonly participant_id: string;
+  readonly field_definition_id: string;
+  readonly label: string;
+  readonly field_type: string;
+  readonly options: unknown;
+  readonly value_text: string | null;
 }
 
 interface GroupResult {
@@ -144,13 +170,44 @@ export class PostgresAdminAccommodationRepository
       const result = await connection.query<ParticipantResult>(
         `select
            id, display_name, phone_e164, source, ticket_title,
-           adults, children, sleeping_places, note, outreach_contact_id, created_at
+           adults, children, sleeping_places, note, outreach_contact_id,
+           amount_kopecks::text, paid_at, payment_method, created_at
          from public.event_participants
          where event_id = $1::uuid
            and deleted_at is null
          order by created_at`,
         [eventId]
       );
+
+      const values = await connection.query<ParticipantFieldValueRow>(
+        `select
+           v.participant_id,
+           v.field_definition_id,
+           d.label,
+           d.field_type,
+           d.options,
+           v.value_text
+         from public.event_participant_field_values v
+         join public.event_participant_field_definitions d
+           on d.id = v.field_definition_id
+         join public.event_participants p on p.id = v.participant_id
+         where p.event_id = $1::uuid
+           and p.deleted_at is null
+         order by d.position, d.created_at`,
+        [eventId]
+      );
+      const valuesByParticipant = new Map<string, EventParticipantFieldValue[]>();
+      for (const row of values.rows) {
+        const list = valuesByParticipant.get(row.participant_id) ?? [];
+        list.push({
+          fieldId: row.field_definition_id,
+          label: row.label,
+          type: row.field_type as EventParticipantFieldType,
+          options: toOptions(row.options),
+          value: row.value_text
+        });
+        valuesByParticipant.set(row.participant_id, list);
+      }
 
       return result.rows.map((row) => ({
         id: row.id,
@@ -163,6 +220,10 @@ export class PostgresAdminAccommodationRepository
         sleepingPlaces: row.sleeping_places,
         note: row.note,
         outreachContactId: row.outreach_contact_id,
+        amountKopecks: row.amount_kopecks,
+        paidAt: row.paid_at === null ? null : new Date(row.paid_at).toISOString(),
+        paymentMethod: row.payment_method,
+        customFields: valuesByParticipant.get(row.id) ?? [],
         createdAt: new Date(row.created_at).toISOString()
       }));
     });
@@ -206,6 +267,148 @@ export class PostgresAdminAccommodationRepository
           input.adminId
         ]
       );
+    });
+  }
+
+  async listParticipantFields(
+    eventId: string
+  ): Promise<readonly EventParticipantFieldDefinition[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<ParticipantFieldRow>(
+        `select id, label, field_type, options, event_id
+         from public.event_participant_field_definitions
+         where event_id is null or event_id = $1::uuid
+         order by position, created_at`,
+        [eventId]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        type: row.field_type as EventParticipantFieldType,
+        options: toOptions(row.options),
+        global: row.event_id === null
+      }));
+    });
+  }
+
+  async createParticipantField(input: CreateParticipantFieldInput): Promise<void> {
+    await this.write(async (connection) => {
+      // Позиция — просто «в конец списка», порядок полей менеджер пока не двигает.
+      await connection.query(
+        `insert into public.event_participant_field_definitions (
+           id, event_id, field_key, label, field_type, options, position,
+           created_by_admin_id
+         )
+         select
+           $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::jsonb,
+           coalesce(max(position), 0) + 1, $7::uuid
+         from public.event_participant_field_definitions
+         where event_id is not distinct from $2::uuid`,
+        [
+          input.fieldId,
+          input.eventId,
+          input.fieldKey,
+          input.label,
+          input.type,
+          input.options === null ? null : JSON.stringify(input.options),
+          input.adminId
+        ]
+      );
+    });
+  }
+
+  async deleteParticipantField(fieldId: string): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `delete from public.event_participant_field_definitions where id = $1::uuid`,
+        [fieldId]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
+  async setParticipantFieldValue(
+    input: SetParticipantFieldValueInput
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const participant = await connection.query<{ readonly id: string }>(
+        `select id from public.event_participants
+          where id = $1::uuid and event_id = $2::uuid and deleted_at is null`,
+        [input.participantId, input.eventId]
+      );
+      if (participant.rows.length === 0) {
+        return false;
+      }
+
+      if (input.value === null) {
+        await connection.query(
+          `delete from public.event_participant_field_values
+            where participant_id = $1::uuid and field_definition_id = $2::uuid`,
+          [input.participantId, input.fieldId]
+        );
+        return true;
+      }
+
+      await connection.query(
+        `insert into public.event_participant_field_values (
+           participant_id, field_definition_id, value_text
+         ) values ($1::uuid, $2::uuid, $3::text)
+         on conflict (participant_id, field_definition_id) do update
+           set value_text = excluded.value_text,
+               updated_at = now()`,
+        [input.participantId, input.fieldId, input.value]
+      );
+      return true;
+    });
+  }
+
+  /**
+   * Правка карточки. Каждое поле обновляется только если его прислали: `is not distinct from`
+   * здесь не годится — нужно отличать «не менять» от «очистить».
+   */
+  async updateParticipant(input: UpdateEventParticipantInput): Promise<boolean> {
+    return this.write(async (connection) => {
+      const changes = input.changes;
+      const result = await connection.query(
+        `update public.event_participants
+            set display_name = coalesce($3::text, display_name),
+                phone_e164 = case when $4::boolean then $5::text else phone_e164 end,
+                source = coalesce($6::text, source),
+                ticket_title = coalesce($7::text, ticket_title),
+                adults = coalesce($8::integer, adults),
+                children = coalesce($9::integer, children),
+                sleeping_places = coalesce($10::integer, sleeping_places),
+                note = coalesce($11::text, note),
+                amount_kopecks = case when $12::boolean then $13::bigint else amount_kopecks end,
+                paid_at = case when $14::boolean then $15::timestamptz else paid_at end,
+                payment_method = case when $16::boolean then $17::text else payment_method end,
+                updated_at = now()
+          where id = $1::uuid
+            and event_id = $2::uuid
+            and deleted_at is null`,
+        [
+          input.participantId,
+          input.eventId,
+          changes.displayName ?? null,
+          changes.phone !== undefined,
+          changes.phone ?? null,
+          changes.source ?? null,
+          changes.ticketTitle ?? null,
+          changes.adults ?? null,
+          changes.children ?? null,
+          changes.sleepingPlaces ?? null,
+          changes.note ?? null,
+          changes.amountKopecks !== undefined,
+          changes.amountKopecks ?? null,
+          changes.paidAt !== undefined,
+          changes.paidAt === undefined || changes.paidAt === null
+            ? null
+            : changes.paidAt.toISOString(),
+          changes.paymentMethod !== undefined,
+          changes.paymentMethod ?? null
+        ]
+      );
+      return result.rowCount > 0;
     });
   }
 
@@ -471,6 +674,14 @@ export function createAdminAccommodationPersistence(
   pool: SqlConnectionPool
 ): AdminAccommodationRepository {
   return new PostgresAdminAccommodationRepository(pool);
+}
+
+function toOptions(value: unknown): readonly string[] | null {
+  const parsed = typeof value === "string" ? safeParse(value) : value;
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed.filter((entry): entry is string => typeof entry === "string");
 }
 
 function toBundleComposition(value: unknown): readonly AccommodationBundleRole[] {

@@ -1,6 +1,7 @@
 "use client";
 
 import { PageError, PageLoading } from "@/components/page-state";
+import { ParticipantDrawer } from "@/components/participant-drawer";
 import {
   AdminApiError,
   addEventParticipant,
@@ -10,10 +11,11 @@ import {
   removeEventParticipant,
   splitAccommodationGroup
 } from "@/lib/admin-api";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatKopecks } from "@/lib/format";
 import type {
   AccommodationPartyView,
   AccommodationSummary,
+  EventParticipant,
   EventParticipantSource
 } from "@ticket-platform/contracts/admin-accommodation";
 import {
@@ -43,6 +45,7 @@ export default function EventAccommodationPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [openParticipantId, setOpenParticipantId] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -128,6 +131,10 @@ export default function EventAccommodationPage() {
   if (!summary) {
     return <PageError message="Сводка недоступна." retry={() => void load()} />;
   }
+
+  const openParticipant: EventParticipant | null = openParticipantId === null
+    ? null
+    : summary.participants.find((person) => person.id === openParticipantId) ?? null;
 
   const selectedOrderIds = summary.parties
     .filter((party) => selected.includes(party.key))
@@ -368,6 +375,7 @@ export default function EventAccommodationPage() {
                   <th>Тариф</th>
                   <th>Гостей</th>
                   <th>Мест</th>
+                  <th>Сумма</th>
                   <th>{summary.canManageParticipants ? "Действия" : ""}</th>
                 </tr>
               </thead>
@@ -375,11 +383,15 @@ export default function EventAccommodationPage() {
                 {summary.participants.map((person) => (
                   <tr key={person.id}>
                     <td>
-                      <div className="stacked-cell">
+                      <button
+                        className="outreach-contact-link"
+                        type="button"
+                        onClick={() => setOpenParticipantId(person.id)}
+                      >
                         <strong>{person.displayName}</strong>
-                        {person.phone ? <span className="muted">{person.phone}</span> : null}
-                        {person.note ? <span className="muted">{person.note}</span> : null}
-                      </div>
+                        <span>{person.phone ?? "телефон не указан"}</span>
+                      </button>
+                      {person.note ? <span className="muted">{person.note}</span> : null}
                     </td>
                     <td>{sourceLabel(person.source)}</td>
                     <td>{person.ticketTitle || "—"}</td>
@@ -390,6 +402,9 @@ export default function EventAccommodationPage() {
                       ) : null}
                     </td>
                     <td>{person.sleepingPlaces > 0 ? person.sleepingPlaces : "—"}</td>
+                    <td className="money-cell">
+                      {person.amountKopecks ? formatKopecks(person.amountKopecks) : "—"}
+                    </td>
                     <td>
                       {summary.canManageParticipants ? (
                         <button
@@ -532,6 +547,17 @@ export default function EventAccommodationPage() {
           </table>
         </div>
       </section>
+
+      {openParticipant ? (
+        <ParticipantDrawer
+          eventId={id}
+          participant={openParticipant}
+          fields={summary.participantFields}
+          canManage={summary.canManageParticipants}
+          onClose={() => setOpenParticipantId(null)}
+          onSaved={() => load()}
+        />
+      ) : null}
 
       <div className="accommodation-footnotes">
         <p>

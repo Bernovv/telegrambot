@@ -14,6 +14,33 @@ export const EVENT_PARTICIPANT_SOURCES = [
 
 export type EventParticipantSource = typeof EVENT_PARTICIPANT_SOURCES[number];
 
+export const EVENT_PARTICIPANT_FIELD_TYPES = [
+  "text",
+  "number",
+  "date",
+  "select"
+] as const;
+
+export type EventParticipantFieldType =
+  typeof EVENT_PARTICIPANT_FIELD_TYPES[number];
+
+export interface EventParticipantFieldDefinition {
+  readonly id: string;
+  readonly label: string;
+  readonly type: EventParticipantFieldType;
+  readonly options: readonly string[] | null;
+  /** Поле действует на всех мероприятиях, а не только на этом. */
+  readonly global: boolean;
+}
+
+export interface EventParticipantFieldValue {
+  readonly fieldId: string;
+  readonly label: string;
+  readonly type: EventParticipantFieldType;
+  readonly options: readonly string[] | null;
+  readonly value: string | null;
+}
+
 export interface EventParticipant {
   readonly id: string;
   readonly displayName: string;
@@ -25,6 +52,10 @@ export interface EventParticipant {
   readonly sleepingPlaces: number;
   readonly note: string;
   readonly outreachContactId: string | null;
+  readonly amountKopecks: string | null;
+  readonly paidAt: string | null;
+  readonly paymentMethod: string | null;
+  readonly customFields: readonly EventParticipantFieldValue[];
   readonly createdAt: string;
 }
 
@@ -38,6 +69,28 @@ export interface CreateEventParticipantRequest {
   readonly sleepingPlaces: number;
   readonly note?: string;
   readonly outreachContactId?: string;
+}
+
+export interface UpdateEventParticipantRequest {
+  readonly participantId: string;
+  readonly displayName?: string;
+  readonly phone?: string | null;
+  readonly source?: EventParticipantSource;
+  readonly ticketTitle?: string;
+  readonly adults?: number;
+  readonly children?: number;
+  readonly sleepingPlaces?: number;
+  readonly note?: string;
+  readonly amountKopecks?: string | null;
+  readonly paidAt?: string | null;
+  readonly paymentMethod?: string | null;
+}
+
+export interface CreateEventParticipantFieldRequest {
+  readonly label: string;
+  readonly type: EventParticipantFieldType;
+  readonly options?: readonly string[];
+  readonly scope: "event" | "global";
 }
 
 export interface DeleteEventParticipantRequest {
@@ -137,6 +190,7 @@ export interface AccommodationSummary {
   /** Заказы, помеченные тестовыми: в счёт не идут, из истории не удалены. */
   readonly excludedOrders: number;
   readonly participants: readonly EventParticipant[];
+  readonly participantFields: readonly EventParticipantFieldDefinition[];
   readonly canManage: boolean;
   readonly canManageParticipants: boolean;
 }
