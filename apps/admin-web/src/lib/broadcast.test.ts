@@ -16,15 +16,15 @@ const events = [
 
 test("spells out who receives the broadcast", () => {
   assert.equal(
-    describeAudience("", "", events),
+    describeAudience("orders", "", "", events),
     "Получатели: все участники всех мероприятий, у кого есть хотя бы один заказ."
   );
   assert.equal(
-    describeAudience("00000000-0000-4000-8000-000000000101", "paid", events),
+    describeAudience("orders", "00000000-0000-4000-8000-000000000101", "paid", events),
     "Получатели: участники мероприятия «Бизнес-Пикник» с заказом в статусе «Оплачен»."
   );
   assert.equal(
-    describeAudience("00000000-0000-4000-8000-000000000999", "", events),
+    describeAudience("orders", "00000000-0000-4000-8000-000000000999", "", events),
     "Получатели: все участники всех мероприятий, у кого есть хотя бы один заказ."
   );
 });

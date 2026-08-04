@@ -3,10 +3,7 @@ import { describe, it } from "node:test";
 import type { AdminPermission } from "@ticket-platform/contracts";
 import type { FastifyInstance } from "fastify";
 import { createApiApplication } from "./app.js";
-import type {
-  CountAdminBroadcastAudienceHandler,
-  CreateAdminBroadcastHandler
-} from "./admin-broadcast-api.js";
+import type { AdminBroadcastHandlers } from "./admin-broadcast-api.js";
 
 describe("admin broadcast HTTP contract", () => {
   it("requires the broadcasts.send permission and creates a campaign from a valid body", async () => {
@@ -214,6 +211,120 @@ describe("admin broadcast HTTP contract", () => {
     }
   });
 
+  it("принимает картинку, кнопку и сегмент аудитории и передаёт их дальше", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 1_600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminBroadcast: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const upload = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/broadcast-images",
+        headers: { authorization: "Bearer valid-token", "content-type": "application/json" },
+        payload: { fileName: "promo.png", contentBase64: "A".repeat(200) }
+      });
+      const created = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/broadcasts",
+        headers: { authorization: "Bearer valid-token", "content-type": "application/json" },
+        payload: {
+          messageText: "Успей купить",
+          targetAudience: "bot_users",
+          imageId: IMAGE_ID,
+          button: { text: "Купить билет", url: "https://biz-day.ru/tariffs" }
+        }
+      });
+
+      assert.equal(upload.statusCode, 201);
+      assert.equal(JSON.parse(upload.body).imageId, IMAGE_ID);
+      assert.equal(created.statusCode, 201);
+      const request = requests[1] as {
+        readonly targetAudience?: string;
+        readonly imageId?: string;
+        readonly button?: { readonly text: string; readonly url: string };
+      };
+      assert.equal(request.targetAudience, "bot_users");
+      assert.equal(request.imageId, IMAGE_ID);
+      assert.deepEqual(request.button, {
+        text: "Купить билет",
+        url: "https://biz-day.ru/tariffs"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("не принимает кнопку без https и картинку не по схеме", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 1_600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminBroadcast: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const insecureButton = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/broadcasts",
+        headers: { authorization: "Bearer valid-token", "content-type": "application/json" },
+        payload: {
+          messageText: "Привет",
+          button: { text: "Купить", url: "http://biz-day.ru" }
+        }
+      });
+      const emptyImage = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/broadcast-images",
+        headers: { authorization: "Bearer valid-token", "content-type": "application/json" },
+        payload: { fileName: "promo.png", contentBase64: "AAAA" }
+      });
+
+      assert.equal(insecureButton.statusCode, 400);
+      assert.equal(emptyImage.statusCode, 400);
+      assert.equal(requests.length, 0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("отдаёт историю рассылок под тем же разрешением", async () => {
+    const permissions: string[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 262_144,
+      readiness,
+      adminAuth: adminAuth(permissions),
+      adminBroadcast: handlers([])
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/api/v1/broadcasts",
+        headers: { authorization: "Bearer valid-token" }
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.body), { items: [] });
+      assert.deepEqual(permissions, ["broadcasts.send"]);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns 401 without a bearer token", async () => {
     const app = await createApiApplication({
       appVersion: "test",
@@ -240,10 +351,7 @@ describe("admin broadcast HTTP contract", () => {
   });
 });
 
-function handlers(requests: unknown[], audienceCount = 42): {
-  readonly create: CreateAdminBroadcastHandler;
-  readonly audience: CountAdminBroadcastAudienceHandler;
-} {
+function handlers(requests: unknown[], audienceCount = 42): AdminBroadcastHandlers {
   return {
     create: {
       async execute(input) {
@@ -255,6 +363,24 @@ function handlers(requests: unknown[], audienceCount = 42): {
       async execute(input) {
         requests.push(input);
         return { recipientCount: audienceCount, truncated: false, limit: 5_000 };
+      }
+    },
+    image: {
+      async execute(input) {
+        requests.push(input);
+        return {
+          imageId: IMAGE_ID,
+          mimeType: "image/png",
+          byteSize: 2_048,
+          width: 1_280,
+          height: 720
+        };
+      }
+    },
+    list: {
+      async execute(input) {
+        requests.push(input);
+        return { items: [] };
       }
     }
   };
@@ -302,3 +428,4 @@ const readiness = {
 
 const ADMIN_ID = "00000000-0000-4000-8000-000000000010";
 const EVENT_ID = "00000000-0000-4000-8000-000000000002";
+const IMAGE_ID = "00000000-0000-4000-8000-000000000003";

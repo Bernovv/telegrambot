@@ -1,6 +1,11 @@
 export type AdminBffMethod = "GET" | "POST" | "PATCH";
 
 export function getAdminMutationBodyLimit(path: string): number {
+  // Картинка рассылки идёт в base64 внутри JSON: мегабайт файла разрастается примерно
+  // до 1.4 МБ тела запроса.
+  if (path === "broadcast-images") {
+    return 1_500_000;
+  }
   if (/^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)) {
     return 524_288;
   }
@@ -26,11 +31,13 @@ export function isAllowedAdminApiPath(
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation$/i.test(path)
+      || path === "broadcasts"
       || path === "broadcasts/audience";
   }
   if (method === "POST") {
     return path === "events"
       || path === "broadcasts"
+      || path === "broadcast-images"
       || path === "outreach/campaigns"
       || path === "outreach/campaign-contacts/activities"
       || path === "outreach/campaign-contacts/assign"

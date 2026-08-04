@@ -138,7 +138,7 @@ async function testApplication(processor: TelegramUpdateProcessor, bodyLimitByte
       }
     },
     webhook: {
-      config: { pathSecret, headerSecret },
+      config: { pathSecret, headerSecret, bodyLimitBytes: 262_144 },
       processor
     }
   });

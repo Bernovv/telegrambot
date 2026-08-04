@@ -10,6 +10,8 @@ import {
   ConfirmPaymentService,
   CountAdminBroadcastAudienceService,
   CreateAdminBroadcastService,
+  ListAdminBroadcastsService,
+  StoreAdminBroadcastImageService,
   CreateAdminEventContentBlockService,
   CreateAdminEventPricingRuleService,
   CreateAdminEventProductService,
@@ -251,6 +253,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             ),
             audience: new CountAdminBroadcastAudienceService(
               persistence.adminBroadcastAudienceRepository
+            ),
+            image: new StoreAdminBroadcastImageService(
+              persistence.adminBroadcastImageRepository,
+              idGenerator
+            ),
+            list: new ListAdminBroadcastsService(
+              persistence.adminBroadcastHistoryRepository
             )
           };
         })()
@@ -495,10 +504,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
 
     app = await createApiApplication({
       appVersion: config.appVersion,
+      // 1.6 МБ — под мегабайтную картинку рассылки, раздутую base64 примерно на треть.
+      // Предел общий на весь API, поэтому больше не берём: у вебхуков Т-Банка и Telegram
+      // на этом же пределе стоит защита от переростков.
       bodyLimitBytes: Math.max(
         config.telegramWebhook.bodyLimitBytes,
         config.tbankPayments.bodyLimitBytes,
-        600_000
+        1_600_000
       ),
       readiness,
       ...(adminAuth ? { adminAuth } : {}),
@@ -528,7 +540,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             webhook: {
               config: {
                 pathSecret: config.telegramWebhook.pathSecret,
-                headerSecret: config.telegramWebhook.headerSecret
+                headerSecret: config.telegramWebhook.headerSecret,
+                bodyLimitBytes: config.telegramWebhook.bodyLimitBytes
               },
               processor
             }

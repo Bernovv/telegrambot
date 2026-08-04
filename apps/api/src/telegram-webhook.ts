@@ -12,6 +12,7 @@ import {
   Module,
   NotFoundException,
   Param,
+  PayloadTooLargeException,
   Post,
   UnauthorizedException
 } from "@nestjs/common";
@@ -56,6 +57,7 @@ const telegramUpdateSchema = z.object({
 export interface TelegramWebhookEndpointConfig {
   readonly pathSecret: string;
   readonly headerSecret: string;
+  readonly bodyLimitBytes: number;
 }
 
 @Injectable()
@@ -74,6 +76,12 @@ export class TelegramWebhookService {
 
     if (!headerSecret || !secretsEqual(headerSecret, this.config.headerSecret)) {
       throw new UnauthorizedException();
+    }
+
+    // Свой предел на размер обновления, а не общий по API: он один на все маршруты и поднят
+    // ради картинки в рассылке — вебхуку такой запас ни к чему.
+    if (Buffer.byteLength(JSON.stringify(body), "utf8") > this.config.bodyLimitBytes) {
+      throw new PayloadTooLargeException();
     }
 
     const parsed = telegramUpdateSchema.safeParse(body);

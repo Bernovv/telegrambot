@@ -8,8 +8,11 @@ import type {
   ConfirmAdminManualPaymentResult,
   AdminBroadcastAudienceFilters,
   AdminBroadcastAudienceResult,
+  AdminBroadcastListResult,
   CreateAdminBroadcastRequest,
   CreateAdminBroadcastResult,
+  UploadAdminBroadcastImageRequest,
+  UploadAdminBroadcastImageResult,
   CursorPage,
   RequestAdminFullRefundRequest,
   RequestAdminFullRefundResult
@@ -827,11 +830,24 @@ export function createBroadcast(
   return requestAdminMutation("broadcasts", "POST", input);
 }
 
+export function listBroadcasts(signal?: AbortSignal): Promise<AdminBroadcastListResult> {
+  return requestAdminApi<AdminBroadcastListResult>("broadcasts", signal);
+}
+
+export function uploadBroadcastImage(
+  input: UploadAdminBroadcastImageRequest
+): Promise<UploadAdminBroadcastImageResult> {
+  return requestAdminMutation("broadcast-images", "POST", input);
+}
+
 export function countBroadcastAudience(
   filters: AdminBroadcastAudienceFilters,
   signal?: AbortSignal
 ): Promise<AdminBroadcastAudienceResult> {
   const query = new URLSearchParams();
+  if (filters.targetAudience) {
+    query.set("targetAudience", filters.targetAudience);
+  }
   if (filters.targetEventId) {
     query.set("targetEventId", filters.targetEventId);
   }

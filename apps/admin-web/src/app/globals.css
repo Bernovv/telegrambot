@@ -3152,6 +3152,42 @@ tbody tr:hover {
   text-align: right;
 }
 
+.broadcast-extras {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.broadcast-image-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.broadcast-image-remove {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.broadcast-history-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.broadcast-history-button {
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .broadcast-audience {
   color: var(--text);
   font-size: 13px;
@@ -3177,6 +3213,10 @@ tbody tr:hover {
 }
 
 @media (max-width: 1050px) {
+  .broadcast-extras {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .metrics-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

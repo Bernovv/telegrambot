@@ -120,3 +120,125 @@ describe("GrammyTextNotificationSender", () => {
     }]]);
   });
 });
+
+describe("GrammyTextNotificationSender.sendBroadcastMessage", () => {
+  it("без картинки шлёт текст, с кнопкой-ссылкой в клавиатуре", async () => {
+    const calls: { readonly text: string; readonly markup: unknown }[] = [];
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage(_chatId, text, options) {
+        calls.push({ text, markup: options?.reply_markup });
+        return { message_id: 7 };
+      },
+      async sendPhoto() {
+        throw new Error("Unexpected photo call");
+      }
+    });
+
+    const result = await sender.sendBroadcastMessage("123456789", {
+      text: "  Успей купить  ",
+      image: null,
+      button: { text: "Купить билет", url: "https://biz-day.ru/tariffs" }
+    });
+
+    assert.deepEqual(result, { providerMessageId: "7" });
+    assert.equal(calls[0]?.text, "Успей купить");
+    assert.deepEqual(
+      (calls[0]?.markup as { readonly inline_keyboard: unknown[] }).inline_keyboard,
+      [[{ text: "Купить билет", url: "https://biz-day.ru/tariffs" }]]
+    );
+  });
+
+  it("с картинкой шлёт фото, а текст уходит подписью — и кнопка остаётся", async () => {
+    const calls: {
+      readonly caption: string;
+      readonly bytes: Uint8Array;
+      readonly markup: unknown;
+    }[] = [];
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage() {
+        throw new Error("Unexpected text call");
+      },
+      async sendPhoto(_chatId, photo, options) {
+        const raw = await photo.toRaw();
+        assert.ok(raw instanceof Uint8Array);
+        calls.push({
+          caption: options.caption,
+          bytes: raw,
+          markup: options.reply_markup
+        });
+        return { message_id: 9 };
+      }
+    });
+
+    const bytes = new Uint8Array(200).fill(7);
+    const result = await sender.sendBroadcastMessage("123456789", {
+      text: "Подпись",
+      image: { bytes, mimeType: "image/jpeg" },
+      button: { text: "Купить", url: "https://biz-day.ru" }
+    });
+
+    assert.deepEqual(result, { providerMessageId: "9" });
+    assert.equal(calls[0]?.caption, "Подпись");
+    assert.deepEqual(calls[0]?.bytes, bytes);
+    assert.ok(calls[0]?.markup);
+  });
+
+  it("режет по подписи, а не по длине сообщения, когда есть картинка", async () => {
+    let calls = 0;
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage() {
+        calls += 1;
+        return { message_id: 1 };
+      },
+      async sendPhoto() {
+        calls += 1;
+        return { message_id: 1 };
+      }
+    });
+    const image = { bytes: new Uint8Array(200).fill(1), mimeType: "image/png" as const };
+
+    await assert.rejects(
+      sender.sendBroadcastMessage("123", { text: "x".repeat(1_025), image, button: null }),
+      /broadcast text is invalid/
+    );
+    // Без картинки та же длина проходит: это уже обычное сообщение.
+    await sender.sendBroadcastMessage("123", {
+      text: "x".repeat(1_025),
+      image: null,
+      button: null
+    });
+    assert.equal(calls, 1);
+  });
+
+  it("не отправляет кнопку на не-https и не отправляет крошечную «картинку»", async () => {
+    let calls = 0;
+    const sender = new GrammyTextNotificationSender({
+      async sendMessage() {
+        calls += 1;
+        return { message_id: 1 };
+      },
+      async sendPhoto() {
+        calls += 1;
+        return { message_id: 1 };
+      }
+    });
+
+    await assert.rejects(
+      sender.sendBroadcastMessage("123", {
+        text: "Привет",
+        image: null,
+        button: { text: "Купить", url: "http://biz-day.ru" }
+      }),
+      /button URL is invalid/
+    );
+    await assert.rejects(
+      sender.sendBroadcastMessage("123", {
+        text: "Привет",
+        image: { bytes: new Uint8Array(10), mimeType: "image/png" },
+        button: null
+      }),
+      /broadcast image is invalid/
+    );
+    assert.equal(calls, 0);
+  });
+});

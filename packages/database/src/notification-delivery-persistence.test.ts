@@ -120,8 +120,13 @@ describe("PostgreSQL notification delivery persistence", () => {
         return rows([{
           message_text: "Скоро старт!",
           is_test: false,
+          target_audience: "orders",
           target_event_id: "event-1",
-          target_order_status: "paid"
+          target_order_status: "paid",
+          button_text: null,
+          button_url: null,
+          image_mime_type: null,
+          image_bytes: null
         }]);
       }
       return rows([
@@ -136,6 +141,8 @@ describe("PostgreSQL notification delivery persistence", () => {
     assert.deepEqual(context, {
       messageText: "Скоро старт!",
       isTest: false,
+      image: null,
+      button: null,
       recipients: [
         { userId: "user-1", recipientExternalUserId: "201" },
         { userId: "user-2", recipientExternalUserId: "202" }
@@ -156,14 +163,25 @@ describe("PostgreSQL notification delivery persistence", () => {
     const connection = new FakeConnection(() => rows([{
       message_text: "Проверка",
       is_test: true,
+      target_audience: "orders",
       target_event_id: null,
-      target_order_status: null
+      target_order_status: null,
+      button_text: null,
+      button_url: null,
+      image_mime_type: null,
+      image_bytes: null
     }]));
     const repository = new PostgresNotificationContextRepository(new FakePool(connection));
 
     const context = await repository.getBroadcastContext(broadcastId);
 
-    assert.deepEqual(context, { messageText: "Проверка", isTest: true, recipients: [] });
+    assert.deepEqual(context, {
+      messageText: "Проверка",
+      isTest: true,
+      image: null,
+      button: null,
+      recipients: []
+    });
     assert.equal(connection.queries.filter((query) => query.text.includes("from public.orders o")).length, 0);
   });
 

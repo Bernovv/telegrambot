@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ADMIN_BROADCAST_AUDIENCE_LIMIT,
+  ADMIN_BROADCAST_HISTORY_LIMIT,
   CountAdminBroadcastAudienceService,
-  CreateAdminBroadcastService
+  CreateAdminBroadcastService,
+  ListAdminBroadcastsService
 } from "./admin-broadcast.js";
 import type { AdminBroadcastRepository, CreateAdminBroadcastInput } from "./admin-broadcast.js";
 import type { AdminRequestActor } from "@ticket-platform/contracts";
@@ -16,6 +18,9 @@ describe("CreateAdminBroadcastService", () => {
     const repository: AdminBroadcastRepository = {
       async createBroadcast(input) {
         created.push(input);
+      },
+      async imageExists() {
+        return true;
       }
     };
     const service = new CreateAdminBroadcastService(
@@ -38,8 +43,11 @@ describe("CreateAdminBroadcastService", () => {
       id: "id-1",
       createdByAdminId: "019c0123-4567-789a-bcde-f01234567800",
       messageText: "Скоро старт!",
+      targetAudience: "orders",
       targetEventId: "019c0123-4567-789a-bcde-f01234567801",
       targetOrderStatus: "paid",
+      button: null,
+      imageId: null,
       isTest: false
     }]);
     assert.equal(appended.length, 1);
@@ -57,7 +65,7 @@ describe("CreateAdminBroadcastService", () => {
   it("allows a broadcast with no filters (targets every reachable user)", async () => {
     const created: (CreateAdminBroadcastInput & { readonly id: string })[] = [];
     const service = new CreateAdminBroadcastService(
-      { async createBroadcast(input) { created.push(input); } },
+      repositoryFor(created),
       outboxWriter([]),
       unitOfWork(),
       idGenerator()
@@ -75,7 +83,7 @@ describe("CreateAdminBroadcastService", () => {
 
   it("rejects an actor without the broadcasts.send permission", async () => {
     const service = new CreateAdminBroadcastService(
-      { async createBroadcast() {} },
+      repositoryFor([]),
       outboxWriter([]),
       unitOfWork(),
       idGenerator()
@@ -93,7 +101,7 @@ describe("CreateAdminBroadcastService", () => {
 
   it("rejects an empty or too-long message", async () => {
     const service = new CreateAdminBroadcastService(
-      { async createBroadcast() {} },
+      repositoryFor([]),
       outboxWriter([]),
       unitOfWork(),
       idGenerator()
@@ -115,7 +123,7 @@ describe("CreateAdminBroadcastService", () => {
 
   it("rejects an invalid target order status", async () => {
     const service = new CreateAdminBroadcastService(
-      { async createBroadcast() {} },
+      repositoryFor([]),
       outboxWriter([]),
       unitOfWork(),
       idGenerator()
@@ -135,7 +143,7 @@ describe("CreateAdminBroadcastService", () => {
   it("сохраняет пробный прогон отдельным признаком", async () => {
     const created: (CreateAdminBroadcastInput & { readonly id: string })[] = [];
     const service = new CreateAdminBroadcastService(
-      { async createBroadcast(input) { created.push(input); } },
+      repositoryFor(created),
       outboxWriter([]),
       unitOfWork(),
       idGenerator()
@@ -149,6 +157,144 @@ describe("CreateAdminBroadcastService", () => {
     });
 
     assert.equal(created[0]?.isTest, true);
+  });
+
+  it("сохраняет кнопку и картинку, а текст мерит подписью к фото", async () => {
+    const created: (CreateAdminBroadcastInput & { readonly id: string })[] = [];
+    const service = new CreateAdminBroadcastService(
+      repositoryFor(created),
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+
+    await service.execute({
+      actor: broadcastActor(),
+      messageText: "Успей купить",
+      button: { text: "  Купить билет  ", url: "https://biz-day.ru/tariffs" },
+      imageId: "019c0123-4567-789a-bcde-f01234567802",
+      now: new Date("2026-07-27T10:00:00.000Z")
+    });
+
+    assert.deepEqual(created[0]?.button, {
+      text: "Купить билет",
+      url: "https://biz-day.ru/tariffs"
+    });
+    assert.equal(created[0]?.imageId, "019c0123-4567-789a-bcde-f01234567802");
+  });
+
+  it("с картинкой текст длиннее подписи не принимает, без неё — принимает", async () => {
+    const created: (CreateAdminBroadcastInput & { readonly id: string })[] = [];
+    const service = new CreateAdminBroadcastService(
+      repositoryFor(created),
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+    const longText = "x".repeat(1_025);
+
+    await assert.rejects(
+      () => service.execute({
+        actor: broadcastActor(),
+        messageText: longText,
+        imageId: "019c0123-4567-789a-bcde-f01234567802",
+        now: new Date()
+      }),
+      /message text is invalid/
+    );
+
+    await service.execute({
+      actor: broadcastActor(),
+      messageText: longText,
+      now: new Date()
+    });
+    assert.equal(created.length, 1);
+  });
+
+  it("не создаёт кампанию со ссылкой на несуществующую картинку", async () => {
+    const service = new CreateAdminBroadcastService(
+      repositoryFor([], false),
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+
+    await assert.rejects(
+      () => service.execute({
+        actor: broadcastActor(),
+        messageText: "Привет",
+        imageId: "019c0123-4567-789a-bcde-f01234567802",
+        now: new Date()
+      }),
+      /Broadcast image was not found/
+    );
+  });
+
+  it("отклоняет кнопку без https и без надписи", async () => {
+    const service = new CreateAdminBroadcastService(
+      repositoryFor([]),
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+
+    await assert.rejects(
+      () => service.execute({
+        actor: broadcastActor(),
+        messageText: "Привет",
+        button: { text: "Купить", url: "http://biz-day.ru" },
+        now: new Date()
+      }),
+      /button URL is invalid/
+    );
+    await assert.rejects(
+      () => service.execute({
+        actor: broadcastActor(),
+        messageText: "Привет",
+        button: { text: "   ", url: "https://biz-day.ru" },
+        now: new Date()
+      }),
+      /button text is invalid/
+    );
+  });
+
+  it("не принимает фильтры по заказам вместе с аудиторией «все, кто открывал бота»", async () => {
+    const service = new CreateAdminBroadcastService(
+      repositoryFor([]),
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+
+    await assert.rejects(
+      () => service.execute({
+        actor: broadcastActor(),
+        messageText: "Привет",
+        targetAudience: "bot_users",
+        targetOrderStatus: "paid",
+        now: new Date()
+      }),
+      /does not accept order filters/
+    );
+  });
+});
+
+describe("ListAdminBroadcastsService", () => {
+  it("отдаёт историю только с разрешением на рассылки", async () => {
+    const service = new ListAdminBroadcastsService({
+      async listBroadcasts(limit) {
+        assert.equal(limit, ADMIN_BROADCAST_HISTORY_LIMIT);
+        return [];
+      }
+    });
+
+    assert.deepEqual(await service.execute({ actor: broadcastActor() }), { items: [] });
+    await assert.rejects(
+      () => service.execute({
+        actor: { ...broadcastActor(), permission: "participants.export" as never }
+      }),
+      /broadcast permission is invalid/
+    );
   });
 });
 
@@ -174,6 +320,7 @@ describe("CountAdminBroadcastAudienceService", () => {
       limit: ADMIN_BROADCAST_AUDIENCE_LIMIT
     });
     assert.deepEqual(asked, [{
+      targetAudience: "orders",
       targetEventId: "019c0123-4567-789a-bcde-f01234567801",
       targetOrderStatus: "paid"
     }]);
@@ -206,6 +353,20 @@ describe("CountAdminBroadcastAudienceService", () => {
     );
   });
 });
+
+function repositoryFor(
+  created: (CreateAdminBroadcastInput & { readonly id: string })[],
+  imageExists = true
+): AdminBroadcastRepository {
+  return {
+    async createBroadcast(input) {
+      created.push(input);
+    },
+    async imageExists() {
+      return imageExists;
+    }
+  };
+}
 
 function outboxWriter(sink: unknown[]): OutboxWriter {
   return {

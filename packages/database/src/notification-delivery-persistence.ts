@@ -64,20 +64,32 @@ interface QuestionnaireIntroContextRow {
 interface BroadcastRow {
   readonly message_text: string;
   readonly is_test: boolean;
+  readonly target_audience: string;
   readonly target_event_id: string | null;
   readonly target_order_status: string | null;
+  readonly button_text: string | null;
+  readonly button_url: string | null;
+  readonly image_mime_type: "image/png" | "image/jpeg" | null;
+  readonly image_bytes: Buffer | null;
 }
 
 /**
- * Кто попадает в рассылку: по одному сообщению на человека, у кого есть заказ под фильтрами
- * и живая telegram-привязка. Без привязки или с заблокированным ботом отправить физически
- * некуда, поэтому такие отсеиваются здесь, а не превращаются в ошибку доставки.
+ * Кто попадает в рассылку. Общий для двух сегментов принцип: по одному сообщению на человека
+ * и только там, где есть живая telegram-привязка. Без привязки или с заблокированным ботом
+ * отправить физически некуда, поэтому такие отсеиваются здесь, а не превращаются в ошибку
+ * доставки.
  *
- * Тот же текст используют и отправка, и предварительный подсчёт получателей в админке
+ * Один и тот же текст используют и отправка, и предварительный подсчёт в админке
  * ($1 — мероприятие, $2 — статус заказа): показанное перед отправкой число обязано совпадать
  * с тем, что реально уйдёт, поэтому запрос ровно один на оба случая.
  */
-export const BROADCAST_AUDIENCE_SELECT =
+export function broadcastAudienceSelect(targetAudience: string): string {
+  return targetAudience === "bot_users"
+    ? BOT_USERS_AUDIENCE_SELECT
+    : ORDERS_AUDIENCE_SELECT;
+}
+
+const ORDERS_AUDIENCE_SELECT =
   `select distinct on (o.user_id)
      o.user_id,
      identity.external_user_id as recipient_external_user_id
@@ -91,7 +103,32 @@ export const BROADCAST_AUDIENCE_SELECT =
    ) identity on true
    where identity.is_bot_blocked = false
      and ($1::uuid is null or o.event_id = $1::uuid)
-     and ($2::text is null or o.status = $2::text)`;
+     and ($2::text is null or o.status = $2::text)
+   order by o.user_id`;
+
+/**
+ * Все, кто открывал бота. Идём от привязок, а не от заказов, — в этом и смысл сегмента:
+ * человек без единого заказа иначе недостижим. Параметры не используются, но объявлены, чтобы
+ * оба запроса вызывались одинаково и подсчёт нельзя было случайно позвать с другой сигнатурой.
+ */
+const BOT_USERS_AUDIENCE_SELECT =
+  `select distinct on (u.id)
+     u.id as user_id,
+     identity.external_user_id as recipient_external_user_id
+   from public.users u
+   join lateral (
+     select external_user_id, is_bot_blocked
+     from public.messenger_identities
+     where user_id = u.id and channel = 'telegram'
+     order by last_seen_at desc, id
+     limit 1
+   ) identity on true
+   where identity.is_bot_blocked = false
+     and u.is_blocked = false
+     and u.is_deleted = false
+     and $1::uuid is null
+     and $2::text is null
+   order by u.id`;
 
 interface BroadcastRecipientRow {
   readonly user_id: string;
@@ -339,9 +376,19 @@ implements
   async getBroadcastContext(broadcastId: string): Promise<BroadcastContext | null> {
     const broadcastResult = await query<BroadcastRow>(
       this.pool,
-      `select message_text, is_test, target_event_id, target_order_status
-       from public.admin_broadcasts
-       where id = $1`,
+      `select
+         b.message_text,
+         b.is_test,
+         b.target_audience,
+         b.target_event_id,
+         b.target_order_status,
+         b.button_text,
+         b.button_url,
+         image.mime_type as image_mime_type,
+         image.bytes as image_bytes
+       from public.admin_broadcasts b
+       left join public.admin_broadcast_images image on image.id = b.image_id
+       where b.id = $1`,
       [broadcastId]
     );
     const broadcast = broadcastResult.rows[0];
@@ -349,22 +396,34 @@ implements
       return null;
     }
 
+    const content = {
+      messageText: broadcast.message_text,
+      image: broadcast.image_bytes && broadcast.image_mime_type
+        ? {
+            bytes: new Uint8Array(broadcast.image_bytes),
+            mimeType: broadcast.image_mime_type
+          }
+        : null,
+      button: broadcast.button_text && broadcast.button_url
+        ? { text: broadcast.button_text, url: broadcast.button_url }
+        : null
+    } as const;
+
     // У пробного прогона получателей в базе нет — их подставляет воркер из конфигурации,
-    // поэтому по заказам не ходим вовсе.
+    // поэтому за аудиторией не ходим вовсе.
     if (broadcast.is_test) {
-      return { messageText: broadcast.message_text, isTest: true, recipients: [] };
+      return { ...content, isTest: true, recipients: [] };
     }
 
     const recipientResult = await query<BroadcastRecipientRow>(
       this.pool,
-      `${BROADCAST_AUDIENCE_SELECT}
-       order by o.user_id
+      `${broadcastAudienceSelect(broadcast.target_audience)}
        limit ${ADMIN_BROADCAST_AUDIENCE_LIMIT}`,
       [broadcast.target_event_id, broadcast.target_order_status]
     );
 
     return {
-      messageText: broadcast.message_text,
+      ...content,
       isTest: false,
       recipients: recipientResult.rows.map((row) => ({
         userId: row.user_id,

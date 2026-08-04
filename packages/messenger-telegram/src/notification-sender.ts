@@ -11,8 +11,20 @@ export interface TelegramNotificationApi {
   sendPhoto(
     chatId: string | number,
     photo: InputFile,
-    options: { readonly caption: string }
+    options: {
+      readonly caption: string;
+      readonly reply_markup?: InlineKeyboard;
+    }
   ): Promise<{ readonly message_id: number }>;
+}
+
+export interface TelegramBroadcastMessage {
+  readonly text: string;
+  readonly image: {
+    readonly bytes: Uint8Array;
+    readonly mimeType: "image/png" | "image/jpeg";
+  } | null;
+  readonly button: { readonly text: string; readonly url: string } | null;
 }
 
 export class GrammyTextNotificationSender {
@@ -31,6 +43,55 @@ export class GrammyTextNotificationSender {
     validateMessageId(message.message_id);
 
     return { providerMessageId: String(message.message_id) };
+  }
+
+  async sendBroadcastMessage(
+    recipientId: string,
+    message: TelegramBroadcastMessage
+  ): Promise<{ readonly providerMessageId: string }> {
+    validateRecipient(recipientId);
+    const text = message.text.trim();
+    // Предел зависит от того, чем сообщение окажется: подписью к фото или обычным текстом.
+    if (!text || text.length > (message.image ? 1_024 : 4_096)) {
+      throw new Error("Telegram broadcast text is invalid");
+    }
+
+    const keyboard = message.button ? new InlineKeyboard() : null;
+    if (keyboard && message.button) {
+      validateButtonText(message.button.text);
+      if (!message.button.url.startsWith("https://") || message.button.url.length > 2_048) {
+        throw new Error("Telegram broadcast button URL is invalid");
+      }
+      keyboard.url(message.button.text, message.button.url);
+    }
+
+    if (message.image) {
+      if (
+        (message.image.mimeType !== "image/png" && message.image.mimeType !== "image/jpeg")
+        || message.image.bytes.byteLength < 100
+        || message.image.bytes.byteLength > 10 * 1_024 * 1_024
+      ) {
+        throw new Error("Telegram broadcast image is invalid");
+      }
+      const photo = await this.api.sendPhoto(
+        recipientId,
+        new InputFile(
+          message.image.bytes,
+          message.image.mimeType === "image/png" ? "broadcast.png" : "broadcast.jpg"
+        ),
+        { caption: text, ...(keyboard ? { reply_markup: keyboard } : {}) }
+      );
+      validateMessageId(photo.message_id);
+      return { providerMessageId: String(photo.message_id) };
+    }
+
+    const sent = await this.api.sendMessage(
+      recipientId,
+      text,
+      ...(keyboard ? [{ reply_markup: keyboard }] : [])
+    );
+    validateMessageId(sent.message_id);
+    return { providerMessageId: String(sent.message_id) };
   }
 
   async sendImage(

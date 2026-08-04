@@ -159,5 +159,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260804100000_broadcast_test_run",
     description: "Mark a broadcast as a test run delivered only to the administrator chats",
     destructive: false
+  },
+  {
+    id: "20260804140000_broadcast_audience_button_image",
+    description: "Add audience selection, a link button and an image to broadcast campaigns",
+    destructive: false
   }
 ];

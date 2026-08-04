@@ -37,8 +37,12 @@ describe("PostgreSQL admin broadcast persistence", () => {
       "broadcast-1",
       "019c0123-4567-789a-bcde-f01234567800",
       "Скоро старт!",
+      "orders",
       "019c0123-4567-789a-bcde-f01234567801",
       "paid",
+      null,
+      null,
+      null,
       false
     ]);
     assert.equal(
@@ -56,6 +60,7 @@ describe("PostgreSQL admin broadcast persistence", () => {
     const persistence = createAdminBroadcastPersistence(new FakePool(connection));
 
     const count = await persistence.adminBroadcastAudienceRepository.countAudience({
+      targetAudience: "orders",
       targetEventId: "019c0123-4567-789a-bcde-f01234567801",
       targetOrderStatus: "paid"
     });
@@ -87,7 +92,96 @@ describe("PostgreSQL admin broadcast persistence", () => {
     });
 
     const insert = findQuery(connection, "insert into public.admin_broadcasts");
-    assert.deepEqual(insert.values.slice(3), [null, null, true]);
+    assert.deepEqual(insert.values.slice(3), ["orders", null, null, null, null, null, true]);
+  });
+
+  it("для аудитории «все, кто открывал бота» считает по привязкам, а не по заказам", async () => {
+    const connection = new FakeConnection(() => ({
+      rows: [{ recipient_count: "812" }],
+      rowCount: 1
+    }));
+    const persistence = createAdminBroadcastPersistence(new FakePool(connection));
+
+    const count = await persistence.adminBroadcastAudienceRepository.countAudience({
+      targetAudience: "bot_users",
+      targetEventId: null,
+      targetOrderStatus: null
+    });
+
+    assert.equal(count, 812);
+    const select = findQuery(connection, "from public.users u");
+    assert.doesNotMatch(select.text, /public\.orders/);
+    assert.match(select.text, /u\.is_deleted = false/);
+  });
+
+  it("история отдаёт название мероприятия и автора, а не голые идентификаторы", async () => {
+    const connection = new FakeConnection(() => ({
+      rows: [{
+        id: "broadcast-1",
+        status: "completed",
+        is_test: false,
+        message_text: "Скоро старт!",
+        target_audience: "orders",
+        target_event_title: "Бизнес-Пикник",
+        target_order_status: "paid",
+        has_image: true,
+        button_text: "Купить билет",
+        created_by_admin_name: "Люба",
+        recipient_count: 12,
+        sent_count: 11,
+        failed_count: 1,
+        created_at: new Date("2026-08-01T10:00:00.000Z"),
+        completed_at: new Date("2026-08-01T10:02:00.000Z")
+      }],
+      rowCount: 1
+    }));
+    const persistence = createAdminBroadcastPersistence(new FakePool(connection));
+
+    const items = await persistence.adminBroadcastHistoryRepository.listBroadcasts(50);
+
+    assert.deepEqual(items, [{
+      id: "broadcast-1",
+      status: "completed",
+      isTest: false,
+      messageText: "Скоро старт!",
+      targetAudience: "orders",
+      targetEventTitle: "Бизнес-Пикник",
+      targetOrderStatus: "paid",
+      hasImage: true,
+      buttonText: "Купить билет",
+      createdByAdminName: "Люба",
+      recipientCount: 12,
+      sentCount: 11,
+      failedCount: 1,
+      createdAt: "2026-08-01T10:00:00.000Z",
+      completedAt: "2026-08-01T10:02:00.000Z"
+    }]);
+  });
+
+  it("картинка ложится в базу байтами вместе с разобранными размерами", async () => {
+    const connection = new FakeConnection(() => affected());
+    const persistence = createAdminBroadcastPersistence(new FakePool(connection));
+
+    await persistence.adminBroadcastImageRepository.storeImage({
+      id: "image-1",
+      uploadedByAdminId: "019c0123-4567-789a-bcde-f01234567800",
+      mimeType: "image/jpeg",
+      byteSize: 3,
+      width: 800,
+      height: 600,
+      bytes: new Uint8Array([1, 2, 3])
+    });
+
+    const insert = findQuery(connection, "insert into public.admin_broadcast_images");
+    assert.deepEqual(insert.values.slice(0, 6), [
+      "image-1",
+      "019c0123-4567-789a-bcde-f01234567800",
+      "image/jpeg",
+      3,
+      800,
+      600
+    ]);
+    assert.ok(Buffer.isBuffer(insert.values[6]));
   });
 });
 

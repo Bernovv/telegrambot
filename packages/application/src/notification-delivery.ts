@@ -67,9 +67,21 @@ export interface BroadcastRecipient {
   readonly recipientExternalUserId: string;
 }
 
+export interface BroadcastImage {
+  readonly bytes: Uint8Array;
+  readonly mimeType: "image/png" | "image/jpeg";
+}
+
+export interface BroadcastLinkButton {
+  readonly text: string;
+  readonly url: string;
+}
+
 export interface BroadcastContext {
   readonly messageText: string;
   readonly isTest: boolean;
+  readonly image: BroadcastImage | null;
+  readonly button: BroadcastLinkButton | null;
   readonly recipients: readonly BroadcastRecipient[];
 }
 
@@ -177,7 +189,22 @@ export interface TicketPngRenderer {
   renderPng(publicToken: string): Promise<TicketPng>;
 }
 
+export interface BroadcastMessage {
+  readonly text: string;
+  readonly image: BroadcastImage | null;
+  readonly button: BroadcastLinkButton | null;
+}
+
 export interface NotificationSender extends TextNotificationSender {
+  /**
+   * Сообщение рассылки: текст, при наличии картинки — подписью к ней, и одна кнопка-ссылка.
+   * Отдельный метод, а не флаги у sendText: у фотографии другой предел длины и другой вызов
+   * Telegram, и путать их с обычным текстовым уведомлением нечем.
+   */
+  sendBroadcastMessage(
+    recipientId: string,
+    message: BroadcastMessage
+  ): Promise<{ readonly providerMessageId: string }>;
   sendImage(
     recipientId: string,
     image: TicketPng,
@@ -647,7 +674,7 @@ export class HandleNotificationJobService {
     if (!context) {
       throw new Error("Admin broadcast context was not found");
     }
-    validateBroadcastMessage(context.messageText);
+    validateBroadcastMessage(context.messageText, context.image !== null);
 
     // Пробный прогон не ходит в аудиторию: получатели — административные чаты из конфигурации,
     // те же, куда приходят уведомления о покупках.
@@ -673,7 +700,11 @@ export class HandleNotificationJobService {
       const outcome = await this.deliverBroadcastToRecipient(
         event,
         input,
-        context.messageText,
+        {
+          text: context.messageText,
+          image: context.image,
+          button: context.button
+        },
         recipient
       );
 
@@ -721,7 +752,7 @@ export class HandleNotificationJobService {
   private async deliverBroadcastToRecipient(
     event: Extract<NotificationEvent, { readonly eventType: "AdminBroadcastRequested" }>,
     input: HandleNotificationJobInput,
-    messageText: string,
+    message: BroadcastMessage,
     recipient: BroadcastRecipient
   ): Promise<"delivered" | "duplicate" | "blocked" | "unreachable" | "transient"> {
     const idempotencyKey = `telegram:broadcast:${event.broadcastId}:${
@@ -737,7 +768,8 @@ export class HandleNotificationJobService {
           aggregateId: event.broadcastId,
           recipientId: recipient.recipientExternalUserId,
           idempotencyKey,
-          send: () => this.sender.sendText(recipient.recipientExternalUserId, messageText)
+          send: () =>
+            this.sender.sendBroadcastMessage(recipient.recipientExternalUserId, message)
         });
       } catch (error) {
         const failure = classifyBroadcastSendFailure(error);
@@ -1101,9 +1133,10 @@ function formatEventReminderMessage(cadenceStep: ReminderCadenceStep, eventTitle
   }
 }
 
-function validateBroadcastMessage(messageText: string): void {
+function validateBroadcastMessage(messageText: string, hasImage: boolean): void {
   const length = messageText.trim().length;
-  if (length < 1 || length > 3_500) {
+  // С картинкой текст уходит подписью к фото, а её Telegram обрезает на 1024 символах.
+  if (length < 1 || length > (hasImage ? 1_024 : 3_500)) {
     throw new Error("Admin broadcast message is invalid");
   }
 }

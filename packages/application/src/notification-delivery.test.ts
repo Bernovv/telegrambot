@@ -560,11 +560,62 @@ describe("HandleNotificationJobService", () => {
     assert.deepEqual(broadcasts.completedCalls, [[broadcastId, 2, 0]]);
   });
 
+  it("доносит картинку и кнопку до отправителя без изменений", async () => {
+    const sender = new RecordingSender();
+    const image = {
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/png" as const
+    };
+    const button = { text: "Купить билет", url: "https://biz-day.ru/tariffs" };
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new FakeBroadcasts({ ...broadcastContext, image, button })
+    );
+
+    await service.execute(execution(broadcastJob));
+
+    assert.equal(sender.broadcasts.length, 2);
+    assert.ok(sender.broadcasts.every((sent) => sent.image === image));
+    assert.ok(sender.broadcasts.every((sent) => sent.button === button));
+  });
+
+  it("не отправляет рассылку, где текст длиннее подписи к картинке", async () => {
+    const broadcasts = new FakeBroadcasts({
+      ...broadcastContext,
+      messageText: "x".repeat(1_025),
+      image: { bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" }
+    });
+    const service = createService(
+      new MemoryLedger(),
+      new RecordingSender(),
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts
+    );
+
+    await assert.rejects(
+      service.execute(execution(broadcastJob)),
+      /broadcast message is invalid/
+    );
+    assert.deepEqual(broadcasts.sendingCalls, []);
+  });
+
   it("пробная рассылка уходит в административные чаты, а не в аудиторию", async () => {
     const sender = new RecordingSender();
     const broadcasts = new FakeBroadcasts({
       messageText: broadcastContext.messageText,
       isTest: true,
+      image: null,
+      button: null,
       recipients: []
     });
     const service = createService(
@@ -672,6 +723,10 @@ class TelegramFailingSender implements NotificationSender {
     private readonly failures: ReadonlyMap<string, readonly TelegramApiError[]>
   ) {}
 
+  async sendBroadcastMessage(recipientId: string, message: { readonly text: string }) {
+    return this.sendText(recipientId, message.text);
+  }
+
   async sendText(recipientId: string, text: string) {
     const attempt = this.attempts.get(recipientId) ?? 0;
     this.attempts.set(recipientId, attempt + 1);
@@ -767,8 +822,30 @@ class RecordingSender implements NotificationSender {
 
   constructor(private readonly failOnceWhenTextIncludes?: string) {}
 
+  readonly broadcasts: {
+    readonly recipientId: string;
+    readonly image: unknown;
+    readonly button: unknown;
+  }[] = [];
+
   async sendText(recipientId: string, text: string) {
     return this.record(recipientId, text);
+  }
+
+  async sendBroadcastMessage(
+    recipientId: string,
+    message: {
+      readonly text: string;
+      readonly image: unknown;
+      readonly button: unknown;
+    }
+  ) {
+    this.broadcasts.push({
+      recipientId,
+      image: message.image,
+      button: message.button
+    });
+    return this.record(recipientId, message.text);
   }
 
   async sendImage(
@@ -1058,6 +1135,8 @@ const broadcastId = "019c0123-4567-789a-bcde-f01234567998";
 const broadcastContext: BroadcastContext = {
   messageText: "Скоро старт! Не забудьте паспорт.",
   isTest: false,
+  image: null,
+  button: null,
   recipients: [
     { userId: "019c0123-4567-789a-bcde-f0123456799e", recipientExternalUserId: "201" },
     { userId: "019c0123-4567-789a-bcde-f0123456799f", recipientExternalUserId: "202" }

@@ -172,10 +172,31 @@ export interface RequestAdminFullRefundResult {
   readonly created: boolean;
 }
 
+export type AdminBroadcastAudience = "orders" | "bot_users";
+
+export const ADMIN_BROADCAST_AUDIENCES: readonly AdminBroadcastAudience[] = [
+  "orders",
+  "bot_users"
+];
+
+/** Длина текста: без картинки это сообщение, с картинкой — подпись к фото. */
+export const ADMIN_BROADCAST_TEXT_LIMIT = 3_500;
+export const ADMIN_BROADCAST_CAPTION_LIMIT = 1_024;
+
+export const ADMIN_BROADCAST_IMAGE_MAX_BYTES = 1_048_576;
+
+export interface AdminBroadcastButton {
+  readonly text: string;
+  readonly url: string;
+}
+
 export interface CreateAdminBroadcastRequest {
   readonly messageText: string;
+  readonly targetAudience?: AdminBroadcastAudience;
   readonly targetEventId?: string;
   readonly targetOrderStatus?: AdminOrderStatus;
+  readonly button?: AdminBroadcastButton;
+  readonly imageId?: string;
   readonly isTest?: boolean;
 }
 
@@ -184,6 +205,7 @@ export interface CreateAdminBroadcastResult {
 }
 
 export interface AdminBroadcastAudienceFilters {
+  readonly targetAudience?: AdminBroadcastAudience;
   readonly targetEventId?: string;
   readonly targetOrderStatus?: AdminOrderStatus;
 }
@@ -192,4 +214,40 @@ export interface AdminBroadcastAudienceResult {
   readonly recipientCount: number;
   readonly truncated: boolean;
   readonly limit: number;
+}
+
+export interface UploadAdminBroadcastImageRequest {
+  readonly fileName: string;
+  /** Содержимое файла в base64 — без префикса data:. */
+  readonly contentBase64: string;
+}
+
+export interface UploadAdminBroadcastImageResult {
+  readonly imageId: string;
+  readonly mimeType: "image/png" | "image/jpeg";
+  readonly byteSize: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface AdminBroadcastSummary {
+  readonly id: string;
+  readonly status: "pending" | "sending" | "completed" | "cancelled";
+  readonly isTest: boolean;
+  readonly messageText: string;
+  readonly targetAudience: AdminBroadcastAudience;
+  readonly targetEventTitle: string | null;
+  readonly targetOrderStatus: AdminOrderStatus | null;
+  readonly hasImage: boolean;
+  readonly buttonText: string | null;
+  readonly createdByAdminName: string | null;
+  readonly recipientCount: number | null;
+  readonly sentCount: number;
+  readonly failedCount: number;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface AdminBroadcastListResult {
+  readonly items: readonly AdminBroadcastSummary[];
 }
