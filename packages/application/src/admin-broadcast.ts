@@ -33,6 +33,7 @@ export interface CreateAdminBroadcastInput {
   readonly messageText: string;
   readonly targetEventId: string | null;
   readonly targetOrderStatus: AdminBroadcastOrderStatus | null;
+  readonly isTest: boolean;
 }
 
 export interface AdminBroadcastRepository {
@@ -41,6 +42,50 @@ export interface AdminBroadcastRepository {
 
 export interface CreateAdminBroadcastResult {
   readonly broadcastId: string;
+}
+
+/** Верхняя граница выборки получателей, та же, что у воркера при отправке. */
+export const ADMIN_BROADCAST_AUDIENCE_LIMIT = 5_000;
+
+export interface AdminBroadcastAudienceRepository {
+  countAudience(input: {
+    readonly targetEventId: string | null;
+    readonly targetOrderStatus: AdminBroadcastOrderStatus | null;
+  }): Promise<number>;
+}
+
+export interface CountAdminBroadcastAudienceResult {
+  readonly recipientCount: number;
+  readonly truncated: boolean;
+  readonly limit: number;
+}
+
+export class CountAdminBroadcastAudienceService {
+  constructor(private readonly repository: AdminBroadcastAudienceRepository) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly targetEventId?: string;
+    readonly targetOrderStatus?: string;
+  }): Promise<CountAdminBroadcastAudienceResult> {
+    requireBroadcastPermission(input.actor);
+    const targetEventId = parseOptionalUuid(
+      input.targetEventId,
+      "Broadcast target event ID is invalid"
+    );
+    const targetOrderStatus = parseOptionalOrderStatus(input.targetOrderStatus);
+
+    const recipientCount = await this.repository.countAudience({
+      targetEventId,
+      targetOrderStatus
+    });
+
+    return {
+      recipientCount,
+      truncated: recipientCount > ADMIN_BROADCAST_AUDIENCE_LIMIT,
+      limit: ADMIN_BROADCAST_AUDIENCE_LIMIT
+    };
+  }
 }
 
 export class CreateAdminBroadcastService {
@@ -56,6 +101,7 @@ export class CreateAdminBroadcastService {
     readonly messageText: string;
     readonly targetEventId?: string;
     readonly targetOrderStatus?: string;
+    readonly isTest?: boolean;
     readonly now: Date;
   }): Promise<CreateAdminBroadcastResult> {
     requireBroadcastPermission(input.actor);
@@ -74,7 +120,8 @@ export class CreateAdminBroadcastService {
         createdByAdminId: input.actor.adminId,
         messageText,
         targetEventId,
-        targetOrderStatus
+        targetOrderStatus,
+        isTest: input.isTest === true
       });
       await this.outboxWriter.append(broadcastRequestedEvent(broadcastId, this.idGenerator.newId(), input.now));
       return { broadcastId };

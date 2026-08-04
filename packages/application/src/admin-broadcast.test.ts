@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CreateAdminBroadcastService } from "./admin-broadcast.js";
+import {
+  ADMIN_BROADCAST_AUDIENCE_LIMIT,
+  CountAdminBroadcastAudienceService,
+  CreateAdminBroadcastService
+} from "./admin-broadcast.js";
 import type { AdminBroadcastRepository, CreateAdminBroadcastInput } from "./admin-broadcast.js";
 import type { AdminRequestActor } from "@ticket-platform/contracts";
 import type { OutboxWriter, UnitOfWork } from "./identity.js";
@@ -35,7 +39,8 @@ describe("CreateAdminBroadcastService", () => {
       createdByAdminId: "019c0123-4567-789a-bcde-f01234567800",
       messageText: "Скоро старт!",
       targetEventId: "019c0123-4567-789a-bcde-f01234567801",
-      targetOrderStatus: "paid"
+      targetOrderStatus: "paid",
+      isTest: false
     }]);
     assert.equal(appended.length, 1);
     assert.deepEqual(appended[0], {
@@ -124,6 +129,80 @@ describe("CreateAdminBroadcastService", () => {
         now: new Date()
       }),
       /target order status is invalid/
+    );
+  });
+
+  it("сохраняет пробный прогон отдельным признаком", async () => {
+    const created: (CreateAdminBroadcastInput & { readonly id: string })[] = [];
+    const service = new CreateAdminBroadcastService(
+      { async createBroadcast(input) { created.push(input); } },
+      outboxWriter([]),
+      unitOfWork(),
+      idGenerator()
+    );
+
+    await service.execute({
+      actor: broadcastActor(),
+      messageText: "Проверка",
+      isTest: true,
+      now: new Date("2026-07-27T10:00:00.000Z")
+    });
+
+    assert.equal(created[0]?.isTest, true);
+  });
+});
+
+describe("CountAdminBroadcastAudienceService", () => {
+  it("возвращает число получателей по тем же фильтрам, что и отправка", async () => {
+    const asked: unknown[] = [];
+    const service = new CountAdminBroadcastAudienceService({
+      async countAudience(input) {
+        asked.push(input);
+        return 137;
+      }
+    });
+
+    const result = await service.execute({
+      actor: broadcastActor(),
+      targetEventId: "019c0123-4567-789a-bcde-f01234567801",
+      targetOrderStatus: "paid"
+    });
+
+    assert.deepEqual(result, {
+      recipientCount: 137,
+      truncated: false,
+      limit: ADMIN_BROADCAST_AUDIENCE_LIMIT
+    });
+    assert.deepEqual(asked, [{
+      targetEventId: "019c0123-4567-789a-bcde-f01234567801",
+      targetOrderStatus: "paid"
+    }]);
+  });
+
+  it("предупреждает, что за один раз уйдёт не вся аудитория", async () => {
+    const service = new CountAdminBroadcastAudienceService({
+      async countAudience() {
+        return ADMIN_BROADCAST_AUDIENCE_LIMIT + 1;
+      }
+    });
+
+    const result = await service.execute({ actor: broadcastActor() });
+
+    assert.equal(result.truncated, true);
+  });
+
+  it("не считает аудиторию без разрешения на рассылки", async () => {
+    const service = new CountAdminBroadcastAudienceService({
+      async countAudience() {
+        throw new Error("не должно вызываться");
+      }
+    });
+
+    await assert.rejects(
+      () => service.execute({
+        actor: { ...broadcastActor(), permission: "participants.export" as never }
+      }),
+      /broadcast permission is invalid/
     );
   });
 });

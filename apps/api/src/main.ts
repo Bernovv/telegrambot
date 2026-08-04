@@ -8,6 +8,7 @@ import {
   AdvanceTelegramScenarioService,
   AuthorizeAdminRequestService,
   ConfirmPaymentService,
+  CountAdminBroadcastAudienceService,
   CreateAdminBroadcastService,
   CreateAdminEventContentBlockService,
   CreateAdminEventPricingRuleService,
@@ -241,12 +242,17 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
     const adminBroadcast = adminAuth
       ? (() => {
           const persistence = createAdminBroadcastPersistence(pool);
-          return new CreateAdminBroadcastService(
-            persistence.adminBroadcastRepository,
-            persistence.outboxWriter,
-            persistence.unitOfWork,
-            idGenerator
-          );
+          return {
+            create: new CreateAdminBroadcastService(
+              persistence.adminBroadcastRepository,
+              persistence.outboxWriter,
+              persistence.unitOfWork,
+              idGenerator
+            ),
+            audience: new CountAdminBroadcastAudienceService(
+              persistence.adminBroadcastAudienceRepository
+            )
+          };
         })()
       : undefined;
     const adminOutreach = adminAuth

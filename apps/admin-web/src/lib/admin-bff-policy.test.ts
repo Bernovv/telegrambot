@@ -11,6 +11,8 @@ import {
 
 test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("GET", "events"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "broadcasts/audience"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "broadcasts"), false);
   assert.equal(isAllowedAdminApiPath("GET", "outreach/campaigns"), true);
   assert.equal(
     isAllowedAdminApiPath(

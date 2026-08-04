@@ -1,18 +1,30 @@
 "use client";
 
 import { PageError, PageLoading } from "@/components/page-state";
-import { AdminApiError, createBroadcast, listEvents } from "@/lib/admin-api";
-import { broadcastErrorMessage, describeAudience } from "@/lib/broadcast";
+import {
+  AdminApiError,
+  countBroadcastAudience,
+  createBroadcast,
+  listEvents
+} from "@/lib/admin-api";
+import {
+  audienceWarning,
+  broadcastErrorMessage,
+  describeAudience,
+  recipientCountLabel
+} from "@/lib/broadcast";
 import { orderStatusLabel } from "@/lib/format";
 import {
   ADMIN_ORDER_STATUSES,
+  type AdminBroadcastAudienceResult,
   type AdminOrderStatus
 } from "@ticket-platform/contracts";
 import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
-import { BadgeCheck, LoaderCircle, Megaphone } from "lucide-react";
+import { BadgeCheck, LoaderCircle, Megaphone, TestTube } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 const MESSAGE_LIMIT = 3_500;
+const AUDIENCE_DEBOUNCE_MS = 300;
 
 export default function BroadcastsPage() {
   const [events, setEvents] = useState<readonly AdminEventSummary[] | null>(null);
@@ -20,7 +32,9 @@ export default function BroadcastsPage() {
   const [messageText, setMessageText] = useState("");
   const [targetEventId, setTargetEventId] = useState("");
   const [targetOrderStatus, setTargetOrderStatus] = useState<AdminOrderStatus | "">("");
-  const [sending, setSending] = useState(false);
+  const [audience, setAudience] = useState<AdminBroadcastAudienceResult | null>(null);
+  const [audienceError, setAudienceError] = useState<string | null>(null);
+  const [sending, setSending] = useState<"live" | "test" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -47,31 +61,78 @@ export default function BroadcastsPage() {
     return () => controller.abort();
   }, [loadEvents]);
 
-  async function submit(formEvent: FormEvent<HTMLFormElement>) {
-    formEvent.preventDefault();
+  // Пересчитываем аудиторию при смене условий. Пауза — чтобы переключение двух списков подряд
+  // не отправляло два запроса, отмена — чтобы ответ на устаревшие условия не перезаписал свежий.
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setAudienceError(null);
+      countBroadcastAudience(
+        {
+          ...(targetEventId ? { targetEventId } : {}),
+          ...(targetOrderStatus ? { targetOrderStatus } : {})
+        },
+        controller.signal
+      )
+        .then((result) => setAudience(result))
+        .catch((caught: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setAudience(null);
+          setAudienceError(broadcastErrorMessage(caught));
+        });
+    }, AUDIENCE_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [targetEventId, targetOrderStatus]);
+
+  async function send(mode: "live" | "test") {
     const text = messageText.trim();
-    if (sending || text.length === 0) {
+    if (sending !== null || text.length === 0) {
       return;
     }
-    setSending(true);
+    if (mode === "live" && !confirmLiveSend(audience)) {
+      return;
+    }
+
+    setSending(mode);
     setError(null);
     setNotice(null);
     try {
-      const result = await createBroadcast({
+      await createBroadcast({
         messageText: text,
         ...(targetEventId ? { targetEventId } : {}),
-        ...(targetOrderStatus ? { targetOrderStatus } : {})
+        ...(targetOrderStatus ? { targetOrderStatus } : {}),
+        ...(mode === "test" ? { isTest: true } : {})
       });
-      setMessageText("");
       setNotice(
-        `Рассылка ${result.broadcastId} поставлена в очередь. Сообщения уйдут фоновым воркером.`
+        mode === "test"
+          ? "Пробное сообщение поставлено в очередь — оно придёт только в административные чаты. Текст в форме сохранён."
+          : "Рассылка поставлена в очередь. Сообщения уйдут фоновым воркером."
       );
+      if (mode === "live") {
+        setMessageText("");
+      }
     } catch (caught) {
       setError(broadcastErrorMessage(caught));
     } finally {
-      setSending(false);
+      setSending(null);
     }
   }
+
+  function submit(formEvent: FormEvent<HTMLFormElement>) {
+    formEvent.preventDefault();
+    void send("live");
+  }
+
+  const warning = audience
+    ? audienceWarning(audience.recipientCount, audience.truncated, audience.limit)
+    : null;
+  const busy = sending !== null;
 
   return (
     <>
@@ -97,13 +158,13 @@ export default function BroadcastsPage() {
         ) : null}
 
         {events !== null ? (
-          <form className="broadcast-form" onSubmit={(value) => void submit(value)}>
+          <form className="broadcast-form" onSubmit={submit}>
             <div className="broadcast-filters">
               <label className="field">
                 <span>Мероприятие</span>
                 <select
                   value={targetEventId}
-                  disabled={sending}
+                  disabled={busy}
                   onChange={(changeEvent) =>
                     setTargetEventId(changeEvent.target.value)}
                 >
@@ -117,7 +178,7 @@ export default function BroadcastsPage() {
                 <span>Статус заказа</span>
                 <select
                   value={targetOrderStatus}
-                  disabled={sending}
+                  disabled={busy}
                   onChange={(changeEvent) =>
                     setTargetOrderStatus(
                       changeEvent.target.value as AdminOrderStatus | ""
@@ -140,7 +201,7 @@ export default function BroadcastsPage() {
                 value={messageText}
                 maxLength={MESSAGE_LIMIT}
                 required
-                disabled={sending}
+                disabled={busy}
                 placeholder="Напишите текст так, как его увидит участник в чате."
                 onChange={(changeEvent) => setMessageText(changeEvent.target.value)}
               />
@@ -150,12 +211,16 @@ export default function BroadcastsPage() {
             </p>
 
             <p className="muted">
-              {describeAudience(
-                targetEventId,
-                targetOrderStatus,
-                events
-              )}
+              {describeAudience(targetEventId, targetOrderStatus, events)}
             </p>
+            <p className="broadcast-audience" aria-live="polite">
+              {audienceError
+                ? `Не удалось посчитать получателей: ${audienceError}`
+                : audience === null
+                  ? "Считаем получателей..."
+                  : `Сейчас под условия попадает ${recipientCountLabel(audience.recipientCount)}.`}
+            </p>
+            {warning ? <p className="form-error">{warning}</p> : null}
 
             {error ? <p className="form-error">{error}</p> : null}
             {notice ? (
@@ -169,17 +234,39 @@ export default function BroadcastsPage() {
               <button
                 className="primary-button"
                 type="submit"
-                disabled={sending || messageText.trim().length === 0}
+                disabled={busy || messageText.trim().length === 0}
               >
-                {sending
+                {sending === "live"
                   ? <LoaderCircle className="spin" size={17} />
                   : <Megaphone size={17} />}
-                {sending ? "Ставим в очередь..." : "Отправить рассылку"}
+                {sending === "live" ? "Ставим в очередь..." : "Отправить рассылку"}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy || messageText.trim().length === 0}
+                onClick={() => void send("test")}
+                title="Сообщение придёт только в административные чаты"
+              >
+                {sending === "test"
+                  ? <LoaderCircle className="spin" size={17} />
+                  : <TestTube size={17} />}
+                {sending === "test" ? "Отправляем..." : "Сначала себе"}
               </button>
             </div>
           </form>
         ) : null}
       </section>
     </>
+  );
+}
+
+// Отправку нельзя отозвать, поэтому число получателей проговариваем вслух прямо перед стартом.
+function confirmLiveSend(audience: AdminBroadcastAudienceResult | null): boolean {
+  const target = audience === null
+    ? "всем, кто попадает под выбранные условия"
+    : recipientCountLabel(audience.recipientCount);
+  return window.confirm(
+    `Отправить сообщение ${target}? Отменить отправку будет нельзя.`
   );
 }

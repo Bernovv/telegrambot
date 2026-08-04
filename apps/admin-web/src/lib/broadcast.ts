@@ -16,6 +16,42 @@ export function describeAudience(
   return `Получатели: участники ${scope} с заказом в статусе «${orderStatusLabel(targetOrderStatus)}».`;
 }
 
+export function recipientCountLabel(count: number): string {
+  return `${count} ${pluralizeRecipients(count)}`;
+}
+
+/** «1 получатель», «2 получателя», «5 получателей» — иначе число в интерфейсе выглядит машинным. */
+export function pluralizeRecipients(count: number): string {
+  const tail = Math.abs(count) % 100;
+  if (tail >= 11 && tail <= 14) {
+    return "получателей";
+  }
+  switch (tail % 10) {
+    case 1:
+      return "получатель";
+    case 2:
+    case 3:
+    case 4:
+      return "получателя";
+    default:
+      return "получателей";
+  }
+}
+
+export function audienceWarning(
+  recipientCount: number,
+  truncated: boolean,
+  limit: number
+): string | null {
+  if (truncated) {
+    return `Под условия попадает ${recipientCountLabel(recipientCount)}, но за один раз уходит не больше ${limit}. Сузьте условия.`;
+  }
+  if (recipientCount === 0) {
+    return "Под эти условия не попадает никто — сообщение никуда не уйдёт.";
+  }
+  return null;
+}
+
 export function broadcastErrorMessage(error: unknown): string {
   if (!(error instanceof AdminApiError)) {
     return "Сервис рассылок временно недоступен.";

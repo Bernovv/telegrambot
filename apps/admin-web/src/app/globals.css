@@ -3152,6 +3152,12 @@ tbody tr:hover {
   text-align: right;
 }
 
+.broadcast-audience {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .broadcast-actions {
   display: flex;
   justify-content: flex-end;

@@ -176,8 +176,20 @@ export interface CreateAdminBroadcastRequest {
   readonly messageText: string;
   readonly targetEventId?: string;
   readonly targetOrderStatus?: AdminOrderStatus;
+  readonly isTest?: boolean;
 }
 
 export interface CreateAdminBroadcastResult {
   readonly broadcastId: string;
+}
+
+export interface AdminBroadcastAudienceFilters {
+  readonly targetEventId?: string;
+  readonly targetOrderStatus?: AdminOrderStatus;
+}
+
+export interface AdminBroadcastAudienceResult {
+  readonly recipientCount: number;
+  readonly truncated: boolean;
+  readonly limit: number;
 }

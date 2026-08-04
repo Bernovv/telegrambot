@@ -13,6 +13,7 @@ import type {
   ScenarioDeliveryContext,
   TicketDeliveryContext
 } from "@ticket-platform/application";
+import { ADMIN_BROADCAST_AUDIENCE_LIMIT } from "@ticket-platform/application";
 import type {
   SqlConnectionPool,
   SqlQueryResult
@@ -62,7 +63,35 @@ interface QuestionnaireIntroContextRow {
 
 interface BroadcastRow {
   readonly message_text: string;
+  readonly is_test: boolean;
+  readonly target_event_id: string | null;
+  readonly target_order_status: string | null;
 }
+
+/**
+ * Кто попадает в рассылку: по одному сообщению на человека, у кого есть заказ под фильтрами
+ * и живая telegram-привязка. Без привязки или с заблокированным ботом отправить физически
+ * некуда, поэтому такие отсеиваются здесь, а не превращаются в ошибку доставки.
+ *
+ * Тот же текст используют и отправка, и предварительный подсчёт получателей в админке
+ * ($1 — мероприятие, $2 — статус заказа): показанное перед отправкой число обязано совпадать
+ * с тем, что реально уйдёт, поэтому запрос ровно один на оба случая.
+ */
+export const BROADCAST_AUDIENCE_SELECT =
+  `select distinct on (o.user_id)
+     o.user_id,
+     identity.external_user_id as recipient_external_user_id
+   from public.orders o
+   join lateral (
+     select external_user_id, is_bot_blocked
+     from public.messenger_identities
+     where user_id = o.user_id and channel = 'telegram'
+     order by last_seen_at desc, id
+     limit 1
+   ) identity on true
+   where identity.is_bot_blocked = false
+     and ($1::uuid is null or o.event_id = $1::uuid)
+     and ($2::text is null or o.status = $2::text)`;
 
 interface BroadcastRecipientRow {
   readonly user_id: string;
@@ -310,7 +339,7 @@ implements
   async getBroadcastContext(broadcastId: string): Promise<BroadcastContext | null> {
     const broadcastResult = await query<BroadcastRow>(
       this.pool,
-      `select message_text
+      `select message_text, is_test, target_event_id, target_order_status
        from public.admin_broadcasts
        where id = $1`,
       [broadcastId]
@@ -320,38 +349,38 @@ implements
       return null;
     }
 
-    // Only distinct, reachable (non-blocked, telegram-linked) users are returned -- a recipient
-    // with no telegram identity or a blocked bot simply cannot be messaged, so they are excluded
-    // here rather than surfaced as a per-recipient delivery failure.
+    // У пробного прогона получателей в базе нет — их подставляет воркер из конфигурации,
+    // поэтому по заказам не ходим вовсе.
+    if (broadcast.is_test) {
+      return { messageText: broadcast.message_text, isTest: true, recipients: [] };
+    }
+
     const recipientResult = await query<BroadcastRecipientRow>(
       this.pool,
-      `select distinct on (o.user_id)
-         o.user_id,
-         identity.external_user_id as recipient_external_user_id
-       from public.orders o
-       join lateral (
-         select external_user_id, is_bot_blocked
-         from public.messenger_identities
-         where user_id = o.user_id and channel = 'telegram'
-         order by last_seen_at desc, id
-         limit 1
-       ) identity on true
-       join public.admin_broadcasts b on b.id = $1
-       where identity.is_bot_blocked = false
-         and (b.target_event_id is null or o.event_id = b.target_event_id)
-         and (b.target_order_status is null or o.status = b.target_order_status)
+      `${BROADCAST_AUDIENCE_SELECT}
        order by o.user_id
-       limit 5000`,
-      [broadcastId]
+       limit ${ADMIN_BROADCAST_AUDIENCE_LIMIT}`,
+      [broadcast.target_event_id, broadcast.target_order_status]
     );
 
     return {
       messageText: broadcast.message_text,
+      isTest: false,
       recipients: recipientResult.rows.map((row) => ({
         userId: row.user_id,
         recipientExternalUserId: row.recipient_external_user_id
       }))
     };
+  }
+
+  async markRecipientBlocked(userId: string): Promise<void> {
+    await query(
+      this.pool,
+      `update public.messenger_identities
+       set is_bot_blocked = true
+       where user_id = $1 and channel = 'telegram' and is_bot_blocked = false`,
+      [userId]
+    );
   }
 
   async markBroadcastSending(broadcastId: string, startedAt: Date): Promise<void> {

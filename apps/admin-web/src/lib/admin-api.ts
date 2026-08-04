@@ -6,6 +6,8 @@ import type {
   AdminUserSummary,
   ConfirmAdminManualPaymentRequest,
   ConfirmAdminManualPaymentResult,
+  AdminBroadcastAudienceFilters,
+  AdminBroadcastAudienceResult,
   CreateAdminBroadcastRequest,
   CreateAdminBroadcastResult,
   CursorPage,
@@ -823,6 +825,24 @@ export function createBroadcast(
   input: CreateAdminBroadcastRequest
 ): Promise<CreateAdminBroadcastResult> {
   return requestAdminMutation("broadcasts", "POST", input);
+}
+
+export function countBroadcastAudience(
+  filters: AdminBroadcastAudienceFilters,
+  signal?: AbortSignal
+): Promise<AdminBroadcastAudienceResult> {
+  const query = new URLSearchParams();
+  if (filters.targetEventId) {
+    query.set("targetEventId", filters.targetEventId);
+  }
+  if (filters.targetOrderStatus) {
+    query.set("targetOrderStatus", filters.targetOrderStatus);
+  }
+  const search = query.toString();
+  return requestAdminApi<AdminBroadcastAudienceResult>(
+    `broadcasts/audience${search ? `?${search}` : ""}`,
+    signal
+  );
 }
 
 export function buildParticipantsExportPath(eventId: string): string {

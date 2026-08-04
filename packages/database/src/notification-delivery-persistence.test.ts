@@ -117,7 +117,12 @@ describe("PostgreSQL notification delivery persistence", () => {
   it("loads a broadcast's message and its distinct reachable recipients, or null when unknown", async () => {
     const found = new FakeConnection((text) => {
       if (text.includes("from public.admin_broadcasts")) {
-        return rows([{ message_text: "Скоро старт!" }]);
+        return rows([{
+          message_text: "Скоро старт!",
+          is_test: false,
+          target_event_id: "event-1",
+          target_order_status: "paid"
+        }]);
       }
       return rows([
         { user_id: "user-1", recipient_external_user_id: "201" },
@@ -130,20 +135,47 @@ describe("PostgreSQL notification delivery persistence", () => {
 
     assert.deepEqual(context, {
       messageText: "Скоро старт!",
+      isTest: false,
       recipients: [
         { userId: "user-1", recipientExternalUserId: "201" },
         { userId: "user-2", recipientExternalUserId: "202" }
       ]
     });
-    assert.match(findQuery(found, "from public.orders o").text, /is_bot_blocked = false/);
-    assert.match(
-      findQuery(found, "from public.orders o").text,
-      /target_event_id is null or o\.event_id = b\.target_event_id/
-    );
+    const audience = findQuery(found, "from public.orders o");
+    assert.match(audience.text, /is_bot_blocked = false/);
+    // Фильтры приходят параметрами, а не подзапросом по кампании: тот же запрос считает
+    // получателей в админке до отправки.
+    assert.deepEqual(audience.values, ["event-1", "paid"]);
 
     const notFound = new FakeConnection(() => rows([]));
     const missingRepository = new PostgresNotificationContextRepository(new FakePool(notFound));
     assert.equal(await missingRepository.getBroadcastContext(broadcastId), null);
+  });
+
+  it("не ходит за аудиторией для пробной рассылки: получателей подставит воркер", async () => {
+    const connection = new FakeConnection(() => rows([{
+      message_text: "Проверка",
+      is_test: true,
+      target_event_id: null,
+      target_order_status: null
+    }]));
+    const repository = new PostgresNotificationContextRepository(new FakePool(connection));
+
+    const context = await repository.getBroadcastContext(broadcastId);
+
+    assert.deepEqual(context, { messageText: "Проверка", isTest: true, recipients: [] });
+    assert.equal(connection.queries.filter((query) => query.text.includes("from public.orders o")).length, 0);
+  });
+
+  it("помечает заблокировавшего бота, чтобы следующая рассылка его не трогала", async () => {
+    const connection = new FakeConnection(() => affected());
+    const repository = new PostgresNotificationContextRepository(new FakePool(connection));
+
+    await repository.markRecipientBlocked("user-1");
+
+    const update = findQuery(connection, "set is_bot_blocked = true");
+    assert.match(update.text, /channel = 'telegram' and is_bot_blocked = false/);
+    assert.deepEqual(update.values, ["user-1"]);
   });
 
   it("transitions a broadcast from pending to sending, then to completed with final counts", async () => {

@@ -261,7 +261,8 @@ describe("loadWorkerConfig", () => {
       adminChatIds: ["-1001234567890"],
       ticketTokenSecret: "s".repeat(32),
       leaseSeconds: 60,
-      localConcurrency: 2
+      localConcurrency: 2,
+      broadcastMessagesPerSecond: 20
     });
   });
 

@@ -38,13 +38,56 @@ describe("PostgreSQL admin broadcast persistence", () => {
       "019c0123-4567-789a-bcde-f01234567800",
       "Скоро старт!",
       "019c0123-4567-789a-bcde-f01234567801",
-      "paid"
+      "paid",
+      false
     ]);
     assert.equal(
       findQueries(connection, "insert into public.outbox_events").length,
       1
     );
     assert.ok(connection.queries.some((query) => query.text === "commit"));
+  });
+
+  it("считает аудиторию тем же запросом, что и отправка, и по тем же параметрам", async () => {
+    const connection = new FakeConnection(() => ({
+      rows: [{ recipient_count: "137" }],
+      rowCount: 1
+    }));
+    const persistence = createAdminBroadcastPersistence(new FakePool(connection));
+
+    const count = await persistence.adminBroadcastAudienceRepository.countAudience({
+      targetEventId: "019c0123-4567-789a-bcde-f01234567801",
+      targetOrderStatus: "paid"
+    });
+
+    assert.equal(count, 137);
+    const select = findQuery(connection, "from public.orders o");
+    assert.deepEqual(select.values, ["019c0123-4567-789a-bcde-f01234567801", "paid"]);
+    // Тот же отбор, что при отправке: иначе показанное число разойдётся с реальностью.
+    assert.match(select.text, /identity\.is_bot_blocked = false/);
+    assert.match(select.text, /\$1::uuid is null or o\.event_id = \$1::uuid/);
+    assert.match(select.text, /\$2::text is null or o\.status = \$2::text/);
+  });
+
+  it("пробная рассылка сохраняется с признаком и без фильтров", async () => {
+    const connection = new FakeConnection(() => affected());
+    const persistence = createAdminBroadcastPersistence(new FakePool(connection));
+    const service = new CreateAdminBroadcastService(
+      persistence.adminBroadcastRepository,
+      persistence.outboxWriter,
+      persistence.unitOfWork,
+      sequenceIdGenerator(["broadcast-2", "outbox-2"])
+    );
+
+    await service.execute({
+      actor: broadcastActor(),
+      messageText: "Проверка перед отправкой",
+      isTest: true,
+      now: new Date("2026-07-27T10:00:00.000Z")
+    });
+
+    const insert = findQuery(connection, "insert into public.admin_broadcasts");
+    assert.deepEqual(insert.values.slice(3), [null, null, true]);
   });
 });
 

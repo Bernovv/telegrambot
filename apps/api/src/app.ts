@@ -55,6 +55,7 @@ import {
 } from "./participants-export-api.js";
 import {
   AdminBroadcastApiModule,
+  type CountAdminBroadcastAudienceHandler,
   type CreateAdminBroadcastHandler
 } from "./admin-broadcast-api.js";
 import {
@@ -133,7 +134,10 @@ export interface ApiApplicationOptions {
   readonly adminOperations?: AdminOperationsHandlers;
   readonly adminEvents?: AdminEventsHandlers;
   readonly participantsExport?: ExportParticipantsHandler;
-  readonly adminBroadcast?: CreateAdminBroadcastHandler;
+  readonly adminBroadcast?: {
+    readonly create: CreateAdminBroadcastHandler;
+    readonly audience: CountAdminBroadcastAudienceHandler;
+  };
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminAccommodation?: AdminAccommodationHandler;
   readonly tbankWebhook?: {
@@ -177,7 +181,10 @@ class ApiModule {
           ? [ParticipantsExportApiModule.register(options.participantsExport)]
           : []),
         ...(options.adminBroadcast
-          ? [AdminBroadcastApiModule.register(options.adminBroadcast)]
+          ? [AdminBroadcastApiModule.register(
+              options.adminBroadcast.create,
+              options.adminBroadcast.audience
+            )]
           : []),
         ...(options.adminOutreach
           ? [AdminOutreachApiModule.register(options.adminOutreach)]

@@ -129,6 +129,7 @@ export interface WorkerConfig extends AppConfig {
         readonly ticketTokenSecret: string;
         readonly leaseSeconds: number;
         readonly localConcurrency: number;
+        readonly broadcastMessagesPerSecond: number;
       };
 }
 
@@ -310,6 +311,14 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
           "NOTIFICATION_WORKER_CONCURRENCY",
           1,
           20
+        ),
+        // Telegram принимает от бота порядка 30 сообщений в секунду и режет всё сверх этого
+        // ответом 429. Держим запас: у воркера есть и другие отправки, кроме рассылки.
+        broadcastMessagesPerSecond: parseBoundedInteger(
+          env.BROADCAST_MESSAGES_PER_SECOND ?? "20",
+          "BROADCAST_MESSAGES_PER_SECOND",
+          1,
+          30
         )
       }
     : { enabled: false };

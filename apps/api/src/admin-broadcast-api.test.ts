@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import type { AdminPermission } from "@ticket-platform/contracts";
 import type { FastifyInstance } from "fastify";
 import { createApiApplication } from "./app.js";
-import type { CreateAdminBroadcastHandler } from "./admin-broadcast-api.js";
+import type {
+  CountAdminBroadcastAudienceHandler,
+  CreateAdminBroadcastHandler
+} from "./admin-broadcast-api.js";
 
 describe("admin broadcast HTTP contract", () => {
   it("requires the broadcasts.send permission and creates a campaign from a valid body", async () => {
@@ -14,7 +17,7 @@ describe("admin broadcast HTTP contract", () => {
       bodyLimitBytes: 262_144,
       readiness,
       adminAuth: adminAuth(permissions),
-      adminBroadcast: handler(requests)
+      adminBroadcast: handlers(requests)
     });
     await app.init();
 
@@ -55,7 +58,7 @@ describe("admin broadcast HTTP contract", () => {
       bodyLimitBytes: 262_144,
       readiness,
       adminAuth: adminAuth([]),
-      adminBroadcast: handler(requests)
+      adminBroadcast: handlers(requests)
     });
     await app.init();
 
@@ -82,7 +85,7 @@ describe("admin broadcast HTTP contract", () => {
       bodyLimitBytes: 262_144,
       readiness,
       adminAuth: adminAuth([]),
-      adminBroadcast: handler(requests)
+      adminBroadcast: handlers(requests)
     });
     await app.init();
 
@@ -116,13 +119,108 @@ describe("admin broadcast HTTP contract", () => {
     }
   });
 
+  it("считает аудиторию по тем же фильтрам и требует то же разрешение", async () => {
+    const permissions: string[] = [];
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 262_144,
+      readiness,
+      adminAuth: adminAuth(permissions),
+      adminBroadcast: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "GET",
+        url: `/api/v1/broadcasts/audience?targetEventId=${EVENT_ID}&targetOrderStatus=paid`,
+        headers: { authorization: "Bearer valid-token" }
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(permissions, ["broadcasts.send"]);
+      assert.deepEqual(JSON.parse(response.body), {
+        recipientCount: 42,
+        truncated: false,
+        limit: 5_000
+      });
+      assert.deepEqual(requests[0], {
+        actor: {
+          adminId: ADMIN_ID,
+          authSubject: "auth-1",
+          roleCodes: ["content_manager"],
+          permission: "broadcasts.send"
+        },
+        targetEventId: EVENT_ID,
+        targetOrderStatus: "paid"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("отклоняет подсчёт по неизвестному фильтру, а не молча его игнорирует", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 262_144,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminBroadcast: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "GET",
+        url: "/api/v1/broadcasts/audience?targetOrderStatus=shipped",
+        headers: { authorization: "Bearer valid-token" }
+      });
+
+      assert.equal(response.statusCode, 400);
+      assert.equal(requests.length, 0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("принимает пробную рассылку и передаёт признак дальше", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 262_144,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminBroadcast: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/broadcasts",
+        headers: { authorization: "Bearer valid-token", "content-type": "application/json" },
+        payload: { messageText: "Проверка", isTest: true }
+      });
+
+      assert.equal(response.statusCode, 201);
+      assert.equal((requests[0] as { readonly isTest?: boolean }).isTest, true);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns 401 without a bearer token", async () => {
     const app = await createApiApplication({
       appVersion: "test",
       bodyLimitBytes: 262_144,
       readiness,
       adminAuth: adminAuth([]),
-      adminBroadcast: handler([])
+      adminBroadcast: handlers([])
     });
     await app.init();
 
@@ -142,11 +240,22 @@ describe("admin broadcast HTTP contract", () => {
   });
 });
 
-function handler(requests: unknown[]): CreateAdminBroadcastHandler {
+function handlers(requests: unknown[], audienceCount = 42): {
+  readonly create: CreateAdminBroadcastHandler;
+  readonly audience: CountAdminBroadcastAudienceHandler;
+} {
   return {
-    async execute(input) {
-      requests.push(input);
-      return { broadcastId: "broadcast-1" };
+    create: {
+      async execute(input) {
+        requests.push(input);
+        return { broadcastId: "broadcast-1" };
+      }
+    },
+    audience: {
+      async execute(input) {
+        requests.push(input);
+        return { recipientCount: audienceCount, truncated: false, limit: 5_000 };
+      }
     }
   };
 }

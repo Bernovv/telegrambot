@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
 import { startQuestionnaireDraft, type QuestionnaireDraftRepository } from "./participant-questionnaire.js";
@@ -60,12 +61,15 @@ export interface ReminderContextRepository {
 }
 
 export interface BroadcastRecipient {
-  readonly userId: string;
+  // Пробная рассылка уходит в административные чаты, за которыми не стоит участник, поэтому
+  // получатель бывает без userId. Ключ идемпотентности тогда строится по номеру чата.
+  readonly userId: string | null;
   readonly recipientExternalUserId: string;
 }
 
 export interface BroadcastContext {
   readonly messageText: string;
+  readonly isTest: boolean;
   readonly recipients: readonly BroadcastRecipient[];
 }
 
@@ -78,7 +82,39 @@ export interface BroadcastContextRepository {
     failedCount: number,
     completedAt: Date
   ): Promise<void>;
+  markRecipientBlocked(userId: string): Promise<void>;
 }
+
+export interface BroadcastPacing {
+  /** Пауза между сообщениями и перед повтором. */
+  wait(milliseconds: number): Promise<void>;
+}
+
+export interface BroadcastDeliveryOptions {
+  /** Сколько сообщений в секунду отдаём в Telegram. */
+  readonly messagesPerSecond: number;
+  /** Сколько раз повторяем отправку одному получателю при временной ошибке. */
+  readonly transientAttempts: number;
+  /**
+   * Сколько получателей подряд может упасть с временной ошибкой, прежде чем мы признаём это
+   * не единичным сбоем, а недоступностью Telegram, и отдаём задачу очереди на повтор целиком.
+   */
+  readonly transientFailureStreakLimit: number;
+}
+
+export const DEFAULT_BROADCAST_DELIVERY_OPTIONS: BroadcastDeliveryOptions = {
+  messagesPerSecond: 20,
+  transientAttempts: 3,
+  transientFailureStreakLimit: 10
+};
+
+export const realTimePacing: BroadcastPacing = {
+  async wait(milliseconds: number): Promise<void> {
+    if (milliseconds > 0) {
+      await sleep(milliseconds);
+    }
+  }
+};
 
 export interface NotificationContextRepository {
   getTicketDeliveryContext(
@@ -179,6 +215,56 @@ export interface HandleNotificationJobResult {
   readonly delivered: number;
   readonly duplicates: number;
   readonly ignored: boolean;
+  /** Заполняется только рассылкой: получатели, которым отправить не удалось. */
+  readonly failed?: number;
+}
+
+export type BroadcastSendFailure =
+  /** Человек заблокировал бота — исключаем его из будущих рассылок. */
+  | { readonly kind: "blocked" }
+  /** Чата больше нет или аккаунт удалён — повторять бессмысленно, но и флаг ставить не за что. */
+  | { readonly kind: "unreachable" }
+  /** Лимит, сеть, пятисотка — можно повторить, при 429 Telegram сам говорит через сколько. */
+  | { readonly kind: "transient"; readonly retryAfterSeconds: number | null };
+
+/**
+ * Разбирает ошибку отправки, не завися от grammy: у её `GrammyError` поля `error_code`,
+ * `description` и `parameters.retry_after` лежат прямо на объекте ошибки — ровно так, как их
+ * вернул Telegram. Всё, что не опознали (сеть, таймаут, пятисотка), считаем временным:
+ * ошибочно счесть сбой постоянным — значит молча не доставить сообщение.
+ */
+export function classifyBroadcastSendFailure(error: unknown): BroadcastSendFailure {
+  const record = error as Record<string, unknown> | null | undefined;
+  const code = typeof record?.error_code === "number" ? record.error_code : null;
+  const description =
+    typeof record?.description === "string" ? record.description.toLowerCase() : "";
+
+  if (code === 429) {
+    return { kind: "transient", retryAfterSeconds: retryAfterSeconds(record) };
+  }
+  if (code === 403) {
+    return /blocked|kicked/.test(description)
+      ? { kind: "blocked" }
+      : { kind: "unreachable" };
+  }
+  if (
+    code === 400
+    && /chat not found|user not found|peer_id_invalid|chat_id is empty/.test(description)
+  ) {
+    return { kind: "unreachable" };
+  }
+  return { kind: "transient", retryAfterSeconds: null };
+}
+
+function retryAfterSeconds(record: Record<string, unknown> | null | undefined): number | null {
+  const parameters = record?.parameters;
+  if (typeof parameters !== "object" || parameters === null) {
+    return null;
+  }
+  const value = (parameters as Record<string, unknown>).retry_after;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.min(Math.ceil(value), 300)
+    : null;
 }
 
 type NotificationEvent =
@@ -253,7 +339,10 @@ export class HandleNotificationJobService {
     private readonly questionnaireContexts?: QuestionnaireIntroContextRepository,
     private readonly questionnaireDrafts?: QuestionnaireDraftRepository,
     private readonly reminderContexts?: ReminderContextRepository,
-    private readonly broadcastContexts?: BroadcastContextRepository
+    private readonly broadcastContexts?: BroadcastContextRepository,
+    private readonly broadcastOptions: BroadcastDeliveryOptions =
+      DEFAULT_BROADCAST_DELIVERY_OPTIONS,
+    private readonly broadcastPacing: BroadcastPacing = realTimePacing
   ) {
     if (adminChatIds.length === 0) {
       throw new Error("Administrator notification chat ID is invalid");
@@ -560,32 +649,63 @@ export class HandleNotificationJobService {
     }
     validateBroadcastMessage(context.messageText);
 
+    // Пробный прогон не ходит в аудиторию: получатели — административные чаты из конфигурации,
+    // те же, куда приходят уведомления о покупках.
+    const recipients = context.isTest
+      ? this.adminChatIds.map((chatId) => ({
+          userId: null,
+          recipientExternalUserId: chatId
+        }))
+      : context.recipients;
+
     await broadcasts.markBroadcastSending(event.broadcastId, input.handledAt);
 
+    const pauseMs = Math.ceil(1_000 / this.broadcastOptions.messagesPerSecond);
     let delivered = 0;
     let duplicates = 0;
-    for (const recipient of context.recipients) {
-      const result = await this.deliverOnce({
+    let failed = 0;
+    let transientStreak = 0;
+
+    for (const [index, recipient] of recipients.entries()) {
+      if (index > 0) {
+        await this.broadcastPacing.wait(pauseMs);
+      }
+      const outcome = await this.deliverBroadcastToRecipient(
         event,
         input,
-        kind: "admin_broadcast",
-        aggregateId: event.broadcastId,
-        recipientId: recipient.recipientExternalUserId,
-        idempotencyKey: `telegram:broadcast:${event.broadcastId}:${recipient.userId}`,
-        send: () => this.sender.sendText(recipient.recipientExternalUserId, context.messageText)
-      });
-      delivered += result === "delivered" ? 1 : 0;
-      duplicates += result === "duplicate" ? 1 : 0;
+        context.messageText,
+        recipient
+      );
+
+      if (outcome === "delivered" || outcome === "duplicate") {
+        transientStreak = 0;
+        delivered += outcome === "delivered" ? 1 : 0;
+        duplicates += outcome === "duplicate" ? 1 : 0;
+        continue;
+      }
+
+      failed += 1;
+      if (outcome === "blocked" && recipient.userId) {
+        await broadcasts.markRecipientBlocked(recipient.userId);
+      }
+      if (outcome !== "transient") {
+        transientStreak = 0;
+        continue;
+      }
+
+      // Одна временная ошибка — не повод хоронить кампанию, поэтому получатель просто уходит
+      // в failed_count. А вот подряд идущие означают, что Telegram недоступен целиком: тогда
+      // бросаем, очередь повторит задачу позже, а уже отправленные пропустит по идемпотентности.
+      transientStreak += 1;
+      if (transientStreak >= this.broadcastOptions.transientFailureStreakLimit) {
+        throw new Error("Admin broadcast aborted: Telegram is not accepting messages");
+      }
     }
 
-    // Reached only once every recipient in this attempt succeeded (or was already sent by a
-    // prior attempt) -- a mid-loop failure throws and aborts before this point, leaving the
-    // campaign in 'sending' so a retried job resumes: already-sent recipients are skipped by
-    // the ledger's idempotency key, so no one is messaged twice.
     await broadcasts.markBroadcastCompleted(
       event.broadcastId,
       delivered + duplicates,
-      0,
+      failed,
       input.handledAt
     );
 
@@ -593,8 +713,49 @@ export class HandleNotificationJobService {
       eventType: event.eventType,
       delivered,
       duplicates,
+      failed,
       ignored: false
     };
+  }
+
+  private async deliverBroadcastToRecipient(
+    event: Extract<NotificationEvent, { readonly eventType: "AdminBroadcastRequested" }>,
+    input: HandleNotificationJobInput,
+    messageText: string,
+    recipient: BroadcastRecipient
+  ): Promise<"delivered" | "duplicate" | "blocked" | "unreachable" | "transient"> {
+    const idempotencyKey = `telegram:broadcast:${event.broadcastId}:${
+      recipient.userId ?? `chat:${recipient.recipientExternalUserId}`
+    }`;
+
+    for (let attempt = 1; attempt <= this.broadcastOptions.transientAttempts; attempt += 1) {
+      try {
+        return await this.deliverOnce({
+          event,
+          input,
+          kind: "admin_broadcast",
+          aggregateId: event.broadcastId,
+          recipientId: recipient.recipientExternalUserId,
+          idempotencyKey,
+          send: () => this.sender.sendText(recipient.recipientExternalUserId, messageText)
+        });
+      } catch (error) {
+        const failure = classifyBroadcastSendFailure(error);
+        if (failure.kind !== "transient") {
+          return failure.kind;
+        }
+        if (attempt === this.broadcastOptions.transientAttempts) {
+          return "transient";
+        }
+        await this.broadcastPacing.wait(
+          failure.retryAfterSeconds === null
+            ? 1_000 * attempt
+            : failure.retryAfterSeconds * 1_000
+        );
+      }
+    }
+
+    return "transient";
   }
 
   private async deliverOnce(options: {

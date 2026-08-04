@@ -154,5 +154,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260801140000_order_cancellation_and_contact_removal",
     description: "Add the orders.cancel permission and soft removal of a contact from a campaign",
     destructive: false
+  },
+  {
+    id: "20260804100000_broadcast_test_run",
+    description: "Mark a broadcast as a test run delivered only to the administrator chats",
+    destructive: false
   }
 ];

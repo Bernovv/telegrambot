@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   HandleNotificationJobService,
+  classifyBroadcastSendFailure,
   type AdminPurchaseContext,
   type BroadcastContext,
   type BroadcastContextRepository,
+  type BroadcastDeliveryOptions,
+  type BroadcastPacing,
   type ClaimNotificationDeliveryInput,
   type NotificationSender,
   type NotificationContextRepository,
@@ -364,12 +368,14 @@ describe("HandleNotificationJobService", () => {
       eventType: "AdminBroadcastRequested",
       delivered: 2,
       duplicates: 0,
+      failed: 0,
       ignored: false
     });
     assert.deepEqual(retry, {
       eventType: "AdminBroadcastRequested",
       delivered: 0,
       duplicates: 2,
+      failed: 0,
       ignored: false
     });
     assert.equal(sender.messages.length, 2);
@@ -380,12 +386,15 @@ describe("HandleNotificationJobService", () => {
     assert.deepEqual(broadcasts.completedCalls[1], [broadcastId, 2, 0]);
   });
 
-  it("resumes a broadcast after a partial failure without repeating an already-sent recipient", async () => {
-    const ledger = new MemoryLedger();
-    const sender = new FailOnceForRecipientSender("202");
+  it("не бросает всю рассылку из-за одного заблокировавшего бота: помечает его и идёт дальше", async () => {
+    const sender = new TelegramFailingSender(
+      new Map([
+        ["201", [new TelegramApiError(403, "Forbidden: bot was blocked by the user")]]
+      ])
+    );
     const broadcasts = new FakeBroadcasts(broadcastContext);
     const service = createService(
-      ledger,
+      new MemoryLedger(),
       sender,
       new RecordingRenderer(),
       undefined,
@@ -395,51 +404,230 @@ describe("HandleNotificationJobService", () => {
       broadcasts
     );
 
-    await assert.rejects(service.execute(execution(broadcastJob)), /Telegram send failed/);
+    const result = await service.execute(execution(broadcastJob));
+
+    assert.deepEqual(result, {
+      eventType: "AdminBroadcastRequested",
+      delivered: 1,
+      duplicates: 0,
+      failed: 1,
+      ignored: false
+    });
+    assert.deepEqual(sender.messages.map((message) => message.recipientId), ["202"]);
+    assert.deepEqual(broadcasts.blockedUserIds, ["019c0123-4567-789a-bcde-f0123456799e"]);
+    // Кампания закрыта, а не осталась висеть в 'sending' до конца времён.
+    assert.deepEqual(broadcasts.completedCalls, [[broadcastId, 1, 1]]);
+  });
+
+  it("удалённый чат идёт в неудачные, но флаг блокировки не ставит: причина другая", async () => {
+    const sender = new TelegramFailingSender(
+      new Map([["201", [new TelegramApiError(400, "Bad Request: chat not found")]]])
+    );
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts
+    );
+
+    const result = await service.execute(execution(broadcastJob));
+
+    assert.equal(result.failed, 1);
+    assert.equal(result.delivered, 1);
+    assert.deepEqual(broadcasts.blockedUserIds, []);
+  });
+
+  it("повторяет отправку после 429 и выдерживает паузу, которую назвал Telegram", async () => {
+    const sender = new TelegramFailingSender(
+      new Map([
+        [
+          "201",
+          [new TelegramApiError(429, "Too Many Requests: retry after 2", { retry_after: 2 })]
+        ]
+      ])
+    );
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const pacing = new CountingPacing();
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts,
+      undefined,
+      DEFAULT_BROADCAST_DELIVERY_OPTIONS,
+      pacing
+    );
+
+    const result = await service.execute(execution(broadcastJob));
+
+    assert.equal(result.delivered, 2);
+    assert.equal(result.failed, 0);
+    assert.ok(pacing.waits.includes(2_000));
+  });
+
+  it("держит заданный темп: между сообщениями выдерживается пауза", async () => {
+    const pacing = new CountingPacing();
+    const service = createService(
+      new MemoryLedger(),
+      new RecordingSender(),
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new FakeBroadcasts(broadcastContext),
+      undefined,
+      { ...DEFAULT_BROADCAST_DELIVERY_OPTIONS, messagesPerSecond: 4 },
+      pacing
+    );
+
+    await service.execute(execution(broadcastJob));
+
+    // Двое получателей — одна пауза, перед первым ждать нечего.
+    assert.deepEqual(pacing.waits, [250]);
+  });
+
+  it("сдаётся и отдаёт задачу очереди, когда временные ошибки идут подряд", async () => {
+    const outage = new TelegramApiError(500, "Internal Server Error");
+    const sender = new TelegramFailingSender(
+      new Map([
+        ["201", [outage, outage, outage]],
+        ["202", [outage, outage, outage]]
+      ])
+    );
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts,
+      undefined,
+      { ...DEFAULT_BROADCAST_DELIVERY_OPTIONS, transientFailureStreakLimit: 2 }
+    );
+
+    await assert.rejects(
+      service.execute(execution(broadcastJob)),
+      /Telegram is not accepting messages/
+    );
+    // Кампания осталась в 'sending' — очередь повторит задачу, уже отправленные не повторятся.
+    assert.deepEqual(broadcasts.completedCalls, []);
+  });
+
+  it("после прерывания повторный прогон не пишет тем, кому уже написал", async () => {
+    const outage = new TelegramApiError(500, "Internal Server Error");
+    const sender = new TelegramFailingSender(
+      new Map([["202", [outage, outage, outage]]])
+    );
+    const broadcasts = new FakeBroadcasts(broadcastContext);
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts,
+      undefined,
+      { ...DEFAULT_BROADCAST_DELIVERY_OPTIONS, transientFailureStreakLimit: 1 }
+    );
+
+    await assert.rejects(service.execute(execution(broadcastJob)));
     const retry = await service.execute(execution(broadcastJob));
 
     assert.deepEqual(retry, {
       eventType: "AdminBroadcastRequested",
       delivered: 1,
       duplicates: 1,
+      failed: 0,
       ignored: false
     });
     assert.equal(sender.messages.filter((message) => message.recipientId === "201").length, 1);
-    assert.equal(sender.messages.filter((message) => message.recipientId === "202").length, 2);
-    assert.equal(broadcasts.completedCalls.length, 1);
-    assert.deepEqual(broadcasts.completedCalls[0], [broadcastId, 2, 0]);
+    assert.equal(sender.messages.filter((message) => message.recipientId === "202").length, 1);
+    assert.deepEqual(broadcasts.completedCalls, [[broadcastId, 2, 0]]);
+  });
+
+  it("пробная рассылка уходит в административные чаты, а не в аудиторию", async () => {
+    const sender = new RecordingSender();
+    const broadcasts = new FakeBroadcasts({
+      messageText: broadcastContext.messageText,
+      isTest: true,
+      recipients: []
+    });
+    const service = createService(
+      new MemoryLedger(),
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      broadcasts,
+      ["-1001234567890", "555"]
+    );
+
+    const result = await service.execute(execution(broadcastJob));
+
+    assert.equal(result.delivered, 2);
+    assert.deepEqual(
+      sender.messages.map((message) => message.recipientId),
+      ["-1001234567890", "555"]
+    );
+    assert.ok(sender.messages.every((message) => message.text === broadcastContext.messageText));
   });
 });
 
-class FailOnceForRecipientSender implements NotificationSender {
-  readonly messages: { readonly recipientId: string; readonly text: string }[] = [];
-  private failed = false;
-
-  constructor(private readonly failOnceForRecipientId: string) {}
-
-  async sendText(recipientId: string, text: string) {
-    this.messages.push({ recipientId, text });
-    if (recipientId === this.failOnceForRecipientId && !this.failed) {
-      this.failed = true;
-      const error = new Error("Telegram send failed");
-      error.name = "Telegram API/429";
-      throw error;
-    }
-    return { providerMessageId: String(this.messages.length) };
-  }
-
-  async sendImage(recipientId: string, _image: unknown, _fileName: string, caption: string) {
-    return this.sendText(recipientId, caption);
-  }
-
-  async sendScenarioPresentation(recipientId: string, _sessionId: string, presentation: { readonly text: string }) {
-    return this.sendText(recipientId, presentation.text);
-  }
-}
+describe("classifyBroadcastSendFailure", () => {
+  it("различает блокировку, недоступный чат, лимит и всё остальное", () => {
+    assert.deepEqual(
+      classifyBroadcastSendFailure(
+        new TelegramApiError(403, "Forbidden: bot was blocked by the user")
+      ),
+      { kind: "blocked" }
+    );
+    assert.deepEqual(
+      classifyBroadcastSendFailure(new TelegramApiError(403, "Forbidden: user is deactivated")),
+      { kind: "unreachable" }
+    );
+    assert.deepEqual(
+      classifyBroadcastSendFailure(new TelegramApiError(400, "Bad Request: chat not found")),
+      { kind: "unreachable" }
+    );
+    assert.deepEqual(
+      classifyBroadcastSendFailure(
+        new TelegramApiError(429, "Too Many Requests", { retry_after: 7 })
+      ),
+      { kind: "transient", retryAfterSeconds: 7 }
+    );
+    // Незнакомую ошибку считаем временной: молча не доставить хуже, чем повторить лишний раз.
+    assert.deepEqual(
+      classifyBroadcastSendFailure(new Error("socket hang up")),
+      { kind: "transient", retryAfterSeconds: null }
+    );
+    assert.deepEqual(
+      classifyBroadcastSendFailure(new TelegramApiError(400, "Bad Request: message is too long")),
+      { kind: "transient", retryAfterSeconds: null }
+    );
+  });
+});
 
 class FakeBroadcasts implements BroadcastContextRepository {
   readonly sendingCalls: string[] = [];
   readonly completedCalls: [string, number, number][] = [];
+  readonly blockedUserIds: string[] = [];
 
   constructor(private readonly context: BroadcastContext) {}
 
@@ -457,6 +645,59 @@ class FakeBroadcasts implements BroadcastContextRepository {
     failedCount: number
   ) {
     this.completedCalls.push([broadcastId, sentCount, failedCount]);
+  }
+
+  async markRecipientBlocked(userId: string) {
+    this.blockedUserIds.push(userId);
+  }
+}
+
+/** Ошибка ровно той формы, в какой её отдаёт Telegram и пробрасывает grammy. */
+class TelegramApiError extends Error {
+  constructor(
+    readonly error_code: number,
+    readonly description: string,
+    readonly parameters?: { readonly retry_after: number }
+  ) {
+    super(description);
+    this.name = "GrammyError";
+  }
+}
+
+class TelegramFailingSender implements NotificationSender {
+  readonly messages: { readonly recipientId: string; readonly text: string }[] = [];
+  private readonly attempts = new Map<string, number>();
+
+  constructor(
+    private readonly failures: ReadonlyMap<string, readonly TelegramApiError[]>
+  ) {}
+
+  async sendText(recipientId: string, text: string) {
+    const attempt = this.attempts.get(recipientId) ?? 0;
+    this.attempts.set(recipientId, attempt + 1);
+    const planned = this.failures.get(recipientId)?.[attempt];
+    if (planned) {
+      throw planned;
+    }
+    this.messages.push({ recipientId, text });
+    return { providerMessageId: `m-${this.messages.length}` };
+  }
+
+  async sendImage(): Promise<{ readonly providerMessageId: string }> {
+    throw new Error("not used");
+  }
+
+  async sendScenarioPresentation(): Promise<{ readonly providerMessageId: string }> {
+    throw new Error("not used");
+  }
+}
+
+/** Считает паузы, но не ждёт: тест не должен зависеть от настоящего времени. */
+class CountingPacing {
+  readonly waits: number[] = [];
+
+  async wait(milliseconds: number) {
+    this.waits.push(milliseconds);
   }
 }
 
@@ -581,7 +822,9 @@ function createService(
   questionnaireDrafts?: QuestionnaireDraftRepository,
   reminderContexts?: ReminderContextRepository,
   broadcastContexts?: BroadcastContextRepository,
-  adminChatIds: readonly string[] = ["-1001234567890"]
+  adminChatIds: readonly string[] = ["-1001234567890"],
+  broadcastOptions: BroadcastDeliveryOptions = DEFAULT_BROADCAST_DELIVERY_OPTIONS,
+  broadcastPacing: BroadcastPacing = new CountingPacing()
 ): HandleNotificationJobService {
   let id = 0;
   const contexts: NotificationContextRepository = {
@@ -614,7 +857,9 @@ function createService(
     questionnaireContexts,
     questionnaireDrafts,
     reminderContexts,
-    broadcastContexts
+    broadcastContexts,
+    broadcastOptions,
+    broadcastPacing
   );
 }
 
@@ -812,6 +1057,7 @@ const broadcastId = "019c0123-4567-789a-bcde-f01234567998";
 
 const broadcastContext: BroadcastContext = {
   messageText: "Скоро старт! Не забудьте паспорт.",
+  isTest: false,
   recipients: [
     { userId: "019c0123-4567-789a-bcde-f0123456799e", recipientExternalUserId: "201" },
     { userId: "019c0123-4567-789a-bcde-f0123456799f", recipientExternalUserId: "202" }

@@ -11,6 +11,7 @@ ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID=<numeric-chat-id>[,<numeric-chat-id>...]
 ORDER_TOKEN_SECRET=<same-secret-as-api>
 NOTIFICATION_DELIVERY_LEASE_SECONDS=60
 NOTIFICATION_WORKER_CONCURRENCY=2
+BROADCAST_MESSAGES_PER_SECOND=20
 ```
 
 Restart the worker and verify that its startup log does not contain
@@ -61,6 +62,35 @@ Graphify input, object storage, or the database during routine delivery.
   outbox row manually; the owner-bound callback emits `TicketRedeliveryRequested`.
 - Unknown outcome around a worker crash: inspect the chat and delivery row before redrive. Telegram
   may have accepted the message before `markSent`, so one duplicate is possible.
+
+## Рассылки
+
+Кампания живёт в `public.admin_broadcasts`. Один воркер разворачивает её в получателей и шлёт
+их последовательно, не быстрее `BROADCAST_MESSAGES_PER_SECOND`.
+
+```sql
+select id, status, is_test, recipient_count, sent_count, failed_count, started_at, completed_at
+from public.admin_broadcasts
+order by created_at desc
+limit 10;
+```
+
+Как воркер поступает с ошибкой конкретного получателя:
+
+| Ответ Telegram | Что делает воркер |
+|---|---|
+| 403 «blocked by the user» / «bot was kicked» | `failed_count + 1`, ставит `is_bot_blocked` — следующие рассылки его не тронут |
+| 403 иное, 400 «chat not found» | `failed_count + 1`, флаг не ставит: причина не в блокировке |
+| 429 | ждёт `retry_after` и повторяет, до трёх попыток на получателя |
+| сеть, 5xx, незнакомая ошибка | повтор с нарастающей паузой, затем `failed_count + 1` |
+
+Десять временных ошибок подряд означают, что недоступен сам Telegram: воркер бросает задачу
+целиком, pg-boss повторит её позже, а уже отправленные получатели пропускаются по ключу
+идемпотентности `telegram:broadcast:<id>:<user_id>`. Поэтому кампания в статусе `sending` дольше
+нескольких минут — это повод посмотреть в очередь, а не в базу.
+
+Кампания с `is_test = true` уходит только в чаты из `ADMIN_NOTIFICATION_TELEGRAM_CHAT_ID`,
+фильтры по мероприятию и статусу заказа для неё не применяются.
 
 ## Validation
 

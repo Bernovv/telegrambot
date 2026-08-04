@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   ConfirmPaymentService,
   DispatchOutboxBatchService,
+  DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   ExpireOrdersBatchService,
   HandleNotificationJobService,
   HmacTicketReferenceGenerator,
@@ -215,7 +216,11 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         notificationPersistence.notificationContexts,
         questionnairePersistence.questionnaireDraftRepository,
         notificationPersistence.notificationContexts,
-        notificationPersistence.notificationContexts
+        notificationPersistence.notificationContexts,
+        {
+          ...DEFAULT_BROADCAST_DELIVERY_OPTIONS,
+          messagesPerSecond: notificationConfig.broadcastMessagesPerSecond
+        }
       );
 
       await boss.work<DomainEventJobV1>(
@@ -234,11 +239,12 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
                 handledAt: new Date(),
                 leaseSeconds: notificationConfig.leaseSeconds
               });
-              if (result.delivered > 0 || result.duplicates > 0) {
+              if (result.delivered > 0 || result.duplicates > 0 || (result.failed ?? 0) > 0) {
                 logger.info("notification domain event handled", {
                   eventType: result.eventType,
                   delivered: result.delivered,
-                  duplicates: result.duplicates
+                  duplicates: result.duplicates,
+                  ...(result.failed === undefined ? {} : { failed: result.failed })
                 });
               }
             } catch (error) {
