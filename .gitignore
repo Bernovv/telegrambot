@@ -6,6 +6,12 @@ build/
 .next/
 coverage/
 *.tsbuildinfo
+
+# Сборка рядом с исходниками: так выглядит tsc, запущенный без -p из папки пакета.
+# В репозитории этих файлов быть не должно — они устаревают и ломают линтер.
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
 tmp/
 temp/
 

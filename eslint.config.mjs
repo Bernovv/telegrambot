@@ -8,7 +8,10 @@ export default tseslint.config(
       "**/.next/**",
       "**/node_modules/**",
       ".tools/**",
-      "graphify-out/**"
+      "graphify-out/**",
+      // Объявления типов здесь только генерируются: своих .d.ts мы не пишем, а брошенная
+      // рядом с исходниками сборка иначе валит линт ошибкой разбора, а не замечанием.
+      "**/*.d.ts"
     ]
   },
   eslint.configs.recommended,
@@ -89,7 +92,11 @@ export default tseslint.config(
     // Служебные команды, которые запускают руками на сервере. У них нет ни логгера, ни места,
     // куда писать: весь вывод предназначен человеку в терминале. В самих сервисах console
     // по-прежнему запрещён.
-    files: ["apps/worker/src/dead-letter.ts", "apps/worker/src/set-price.ts"],
+    files: [
+      "apps/worker/src/dead-letter.ts",
+      "apps/worker/src/set-price.ts",
+      "apps/worker/src/broadcast-status.ts"
+    ],
     rules: {
       "no-console": "off"
     }
