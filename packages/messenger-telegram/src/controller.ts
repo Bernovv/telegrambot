@@ -26,18 +26,9 @@ import { encodeScenarioCallback } from "./scenario-callback.js";
 import type {
   PurchaseFlowResult,
   PurchaseTicketType,
-  QuestionnaireFlowResult,
-  QuestionnaireFocusArea,
-  QuestionnaireStage,
   ReferralBalanceResult
 } from "@ticket-platform/application";
 import {
-  askCityReply,
-  askFocusAreaReply,
-  askJoinChatReply,
-  askNicheReply,
-  askStageReply,
-  askWishReply,
   catalogUnavailableReply,
   chooseFamilyTicketReply,
   chooseTicketReply,
@@ -47,7 +38,6 @@ import {
   faqReply,
   invalidChildQuantityReply,
   invalidQuantityReply,
-  invalidQuestionnaireTextReply,
   menuReply,
   myBonusesReply,
   myBonusesUnavailableReply,
@@ -59,8 +49,6 @@ import {
   phoneRequiredReply,
   requestPhoneReply,
   programAndPricingReply,
-  questionnaireCompletedReply,
-  questionnaireUnavailableReply,
   welcomeReply
 } from "./scenario-content.js";
 
@@ -153,20 +141,6 @@ export interface TelegramReferralBalanceUseCase {
   execute(query: { readonly externalUserId: string }): Promise<ReferralBalanceResult>;
 }
 
-export interface TelegramQuestionnaireUseCase {
-  handleText(externalUserId: string, text: string, now: Date): Promise<QuestionnaireFlowResult>;
-  handleStageChoice(externalUserId: string, stage: QuestionnaireStage): Promise<QuestionnaireFlowResult>;
-  handleFocusAreaChoice(
-    externalUserId: string,
-    focusArea: QuestionnaireFocusArea
-  ): Promise<QuestionnaireFlowResult>;
-  handleJoinChatChoice(
-    externalUserId: string,
-    joinChat: boolean,
-    now: Date
-  ): Promise<QuestionnaireFlowResult>;
-}
-
 export interface TelegramOfferAcceptanceView {
   readonly callbackText: string;
   readonly replacementText?: string;
@@ -190,7 +164,6 @@ export class TelegramUpdateController {
     private readonly scenario?: TelegramScenarioUseCases,
     private readonly purchaseFlow?: TelegramPurchaseFlowUseCase,
     private readonly referralBalance?: TelegramReferralBalanceUseCase,
-    private readonly questionnaire?: TelegramQuestionnaireUseCase,
     private readonly phoneAccess?: TelegramPhoneAccessUseCase
   ) {}
 
@@ -426,59 +399,6 @@ export class TelegramUpdateController {
     return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
   }
 
-  /**
-   * Same silence convention as onQuantityText/onChildQuantityText: free text also reaches the
-   * questionnaire, so it stays silent (`[]`) when there's no in-progress questionnaire draft —
-   * only an explicit button tap (onQuestionnaireStageChoice etc.) shows a "draft unavailable" reply.
-   */
-  async onQuestionnaireText(
-    externalUserId: string,
-    text: string,
-    now: Date
-  ): Promise<readonly TelegramReplyModel[]> {
-    if (!this.questionnaire) {
-      return [];
-    }
-    const result = await this.questionnaire.handleText(externalUserId, text, now);
-    return result.kind === "no_active_draft" ? [] : mapQuestionnaireResult(result);
-  }
-
-  async onQuestionnaireStageChoice(
-    externalUserId: string,
-    stage: QuestionnaireStage
-  ): Promise<readonly TelegramReplyModel[]> {
-    if (!this.questionnaire) {
-      return [questionnaireUnavailableReply()];
-    }
-    return mapQuestionnaireResult(await this.questionnaire.handleStageChoice(externalUserId, stage));
-  }
-
-  async onQuestionnaireFocusAreaChoice(
-    externalUserId: string,
-    focusArea: QuestionnaireFocusArea
-  ): Promise<readonly TelegramReplyModel[]> {
-    if (!this.questionnaire) {
-      return [questionnaireUnavailableReply()];
-    }
-    return mapQuestionnaireResult(
-      await this.questionnaire.handleFocusAreaChoice(externalUserId, focusArea)
-    );
-  }
-
-  async onQuestionnaireJoinChatChoice(
-    externalUserId: string,
-    joinChat: boolean,
-    now: Date
-  ): Promise<readonly TelegramReplyModel[]> {
-    if (!this.questionnaire) {
-      return [questionnaireUnavailableReply()];
-    }
-    return mapQuestionnaireResult(
-      await this.questionnaire.handleJoinChatChoice(externalUserId, joinChat, now),
-      joinChat
-    );
-  }
-
   async onContact(command: HandleTelegramContactCommand): Promise<readonly TelegramReplyModel[]> {
     const result = await this.handleContact.execute(command);
 
@@ -704,35 +624,6 @@ function mapPurchaseFlowResult(result: PurchaseFlowResult): readonly TelegramRep
       return [catalogUnavailableReply()];
     case "no_active_draft":
       return [noActiveDraftReply()];
-  }
-}
-
-function mapQuestionnaireResult(
-  result: QuestionnaireFlowResult,
-  joinChatForCompleted?: boolean
-): readonly TelegramReplyModel[] {
-  switch (result.kind) {
-    case "ask_name":
-      // Q1 is asked by the intro push message (notification-delivery.ts), never by this mapper.
-      return [];
-    case "ask_city":
-      return [askCityReply()];
-    case "ask_niche":
-      return [askNicheReply()];
-    case "ask_stage":
-      return [askStageReply()];
-    case "ask_wish":
-      return [askWishReply()];
-    case "ask_focus_area":
-      return [askFocusAreaReply()];
-    case "ask_join_chat":
-      return [askJoinChatReply()];
-    case "invalid_text":
-      return [invalidQuestionnaireTextReply()];
-    case "completed":
-      return [questionnaireCompletedReply(joinChatForCompleted ?? false)];
-    case "no_active_draft":
-      return [questionnaireUnavailableReply()];
   }
 }
 

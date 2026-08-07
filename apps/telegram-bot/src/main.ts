@@ -14,7 +14,6 @@ import {
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
   TelegramPurchaseFlowService,
-  TelegramQuestionnaireService,
   HmacOrderReferenceGenerator,
   type IdGenerator
 } from "@ticket-platform/application";
@@ -23,7 +22,6 @@ import {
   createOfferAcceptancePersistence,
   createNodePostgresPool,
   createOrderSalesPersistence,
-  createParticipantQuestionnairePersistence,
   createPhonePersistence,
   createReferralBalancePersistence,
   createTelegramAccessPersistence,
@@ -170,12 +168,6 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
   const phoneAccessService = new CheckTelegramPhoneAccessService(
     createTelegramAccessPersistence(pool).phoneStatusRepository
   );
-  const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
-  const questionnaireService = new TelegramQuestionnaireService(
-    questionnairePersistence.questionnaireDraftRepository,
-    questionnairePersistence.questionnaireResponseRepository,
-    phonePersistence.telegramUserResolver
-  );
   const controller = new TelegramUpdateController(
     startService,
     contactService,
@@ -186,7 +178,6 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     scenario,
     purchaseFlowService,
     referralBalanceService,
-    questionnaireService,
     phoneAccessService
   );
   const bot = createTelegramBot(config.telegramBotToken, controller, logger, {

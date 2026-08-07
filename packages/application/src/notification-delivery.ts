@@ -1,12 +1,13 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
-import { startQuestionnaireDraft, type QuestionnaireDraftRepository } from "./participant-questionnaire.js";
 
+// `questionnaire_prompt` больше не отправляется: анкета бота убрана из сценария 08.08.2026.
+// В проверке notification_deliveries_kind_check это значение осталось — им подписаны уже
+// доставленные сообщения, и снимать его из ограничения нельзя.
 export type NotificationDeliveryKind =
   | "ticket_user"
   | "admin_purchase"
-  | "questionnaire_prompt"
   | "event_reminder"
   | "admin_broadcast";
 
@@ -38,16 +39,6 @@ export interface AdminPurchaseContext {
 export interface ScenarioDeliveryContext {
   readonly recipientExternalUserId: string | null;
   readonly recipientBlocked: boolean;
-}
-
-export interface QuestionnaireIntroContext {
-  readonly recipientExternalUserId: string | null;
-  readonly recipientBlocked: boolean;
-  readonly eventTitle: string;
-}
-
-export interface QuestionnaireIntroContextRepository {
-  getQuestionnaireIntroContext(orderId: string): Promise<QuestionnaireIntroContext | null>;
 }
 
 export interface ReminderRecipientContext {
@@ -328,13 +319,6 @@ type NotificationEvent =
       readonly presentations: readonly ScenarioPresentationModel[];
     }
   | {
-      readonly eventType: "ParticipantQuestionnaireRequested";
-      readonly sourceEventId: string;
-      readonly orderId: string;
-      readonly userId: string;
-      readonly eventId: string;
-    }
-  | {
       readonly eventType: "EventReminderDue";
       readonly sourceEventId: string;
       readonly orderId: string;
@@ -363,8 +347,6 @@ export class HandleNotificationJobService {
     private readonly idGenerator: IdGenerator,
     private readonly adminChatIds: readonly string[],
     private readonly scenarioPaymentContinuation?: ScenarioPaymentContinuation,
-    private readonly questionnaireContexts?: QuestionnaireIntroContextRepository,
-    private readonly questionnaireDrafts?: QuestionnaireDraftRepository,
     private readonly reminderContexts?: ReminderContextRepository,
     private readonly broadcastContexts?: BroadcastContextRepository,
     private readonly broadcastOptions: BroadcastDeliveryOptions =
@@ -423,9 +405,6 @@ export class HandleNotificationJobService {
     }
     if (event.eventType === "TicketRedeliveryRequested") {
       return this.deliverTickets(event, input);
-    }
-    if (event.eventType === "ParticipantQuestionnaireRequested") {
-      return this.deliverQuestionnairePrompt(event, input);
     }
     if (event.eventType === "EventReminderDue") {
       return this.deliverEventReminder(event, input);
@@ -571,53 +550,6 @@ export class HandleNotificationJobService {
       eventType: event.eventType,
       delivered,
       duplicates,
-      ignored: false
-    };
-  }
-
-  private async deliverQuestionnairePrompt(
-    event: Extract<NotificationEvent, { readonly eventType: "ParticipantQuestionnaireRequested" }>,
-    input: HandleNotificationJobInput
-  ): Promise<HandleNotificationJobResult> {
-    if (!this.questionnaireContexts || !this.questionnaireDrafts) {
-      return { eventType: event.eventType, delivered: 0, duplicates: 0, ignored: true };
-    }
-
-    const context = await this.questionnaireContexts.getQuestionnaireIntroContext(event.orderId);
-    if (!context) {
-      throw new Error("Questionnaire intro context was not found");
-    }
-    const recipientId = context.recipientExternalUserId;
-    if (!recipientId || context.recipientBlocked) {
-      throw new Error("Telegram questionnaire recipient is unavailable");
-    }
-    const draftRepository = this.questionnaireDrafts;
-
-    const result = await this.deliverOnce({
-      event,
-      input,
-      kind: "questionnaire_prompt",
-      aggregateId: event.orderId,
-      recipientId,
-      idempotencyKey: `telegram:questionnaire:${event.orderId}`,
-      send: async () => {
-        const { alreadyStarted } = await startQuestionnaireDraft(draftRepository, {
-          orderId: event.orderId,
-          userId: event.userId,
-          eventId: event.eventId,
-          now: input.handledAt
-        });
-        if (alreadyStarted) {
-          return { providerMessageId: "already-started" };
-        }
-        return this.sender.sendText(recipientId, formatQuestionnaireIntroMessage(context.eventTitle));
-      }
-    });
-
-    return {
-      eventType: event.eventType,
-      delivered: result === "delivered" ? 1 : 0,
-      duplicates: result === "duplicate" ? 1 : 0,
       ignored: false
     };
   }
@@ -860,7 +792,6 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
     && event.type !== "AdminPurchaseNotificationRequested"
     && event.type !== "PaymentConfirmed"
     && event.type !== "ScenarioPresentationRequested"
-    && event.type !== "ParticipantQuestionnaireRequested"
     && event.type !== "EventReminderDue"
     && event.type !== "AdminBroadcastRequested"
   ) {
@@ -898,16 +829,6 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
 
   if (event.type === "AdminPurchaseNotificationRequested") {
     return { eventType: event.type, sourceEventId, orderId };
-  }
-
-  if (event.type === "ParticipantQuestionnaireRequested") {
-    return {
-      eventType: event.type,
-      sourceEventId,
-      orderId,
-      userId: uuid(payload.userId, "Notification user ID is invalid"),
-      eventId: uuid(payload.eventId, "Notification event ID is invalid")
-    };
   }
 
   if (event.type === "EventReminderDue") {
@@ -1139,16 +1060,6 @@ function validateBroadcastMessage(messageText: string, hasImage: boolean): void 
   if (length < 1 || length > (hasImage ? 1_024 : 3_500)) {
     throw new Error("Admin broadcast message is invalid");
   }
-}
-
-function formatQuestionnaireIntroMessage(eventTitle: string): string {
-  return [
-    `Место на «${singleLine(eventTitle, 200)}» за вами!`,
-    "",
-    "Заполним короткую анкету участника — пара минут, поможет собрать программу под вас.",
-    "",
-    "Как вас зовут?"
-  ].join("\n");
 }
 
 function formatKopecks(amount: bigint): string {

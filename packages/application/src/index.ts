@@ -37,7 +37,6 @@ export * from "./tbank-payments.js";
 export * from "./tbank-reconciliation.js";
 export * from "./tbank-refunds.js";
 export * from "./referral-balance.js";
-export * from "./participant-questionnaire.js";
 export * from "./event-reminders.js";
 export * from "./participants-export.js";
 export * from "./admin-broadcast.js";

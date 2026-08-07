@@ -103,7 +103,7 @@ describe("PostgreSQL payment confirmation persistence", () => {
       findQuery(connection, "insert into public.audit_log").values[1],
       "admin-1"
     );
-    assert.equal(findQueries(connection, "insert into public.outbox_events").length, 4);
+    assert.equal(findQueries(connection, "insert into public.outbox_events").length, 3);
     assert.equal(connection.queries.at(-1)?.text, "commit");
   });
 

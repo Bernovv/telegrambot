@@ -438,7 +438,6 @@ describe("доступ к разделам без телефона", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       access
     );
   }

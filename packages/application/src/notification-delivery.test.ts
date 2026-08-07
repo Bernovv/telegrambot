@@ -13,15 +13,12 @@ import {
   type NotificationSender,
   type NotificationContextRepository,
   type NotificationDeliveryLedger,
-  type QuestionnaireIntroContext,
-  type QuestionnaireIntroContextRepository,
   type ReminderContextRepository,
   type ReminderRecipientContext,
   type ScenarioPaymentContinuation,
   type TicketPngRenderer,
   type TicketDeliveryContext
 } from "./notification-delivery.js";
-import type { QuestionnaireDraft, QuestionnaireDraftRepository } from "./participant-questionnaire.js";
 
 describe("HandleNotificationJobService", () => {
   it("шлёт одно подтверждение на заказ, а не по одному на место, и не повторяется", async () => {
@@ -96,8 +93,6 @@ describe("HandleNotificationJobService", () => {
       ledger,
       sender,
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -219,8 +214,12 @@ describe("HandleNotificationJobService", () => {
     assert.equal(sender.messages.length, 0);
   });
 
-  it("is ignored when no questionnaire collaborators are configured", async () => {
-    const service = createService(new MemoryLedger(), new RecordingSender());
+  // Анкета бота убрана 08.08.2026, но её события могли остаться в очереди с прошлых покупок.
+  // Обработчик обязан такое просто пропустить, а не упасть: упавшая задача уходит в повторы,
+  // а оттуда — в очередь мёртвых писем, где её потом ищут руками.
+  it("ignores a questionnaire event left over in the queue", async () => {
+    const sender = new RecordingSender();
+    const service = createService(new MemoryLedger(), sender);
 
     const result = await service.execute(execution(questionnaireJob));
 
@@ -230,36 +229,7 @@ describe("HandleNotificationJobService", () => {
       duplicates: 0,
       ignored: true
     });
-  });
-
-  it("sends the first question once and initializes the draft, deduplicating a retry", async () => {
-    const ledger = new MemoryLedger();
-    const sender = new RecordingSender();
-    const drafts = new Map<string, QuestionnaireDraft>();
-    const service = createService(ledger, sender, new RecordingRenderer(), undefined, {
-      async getQuestionnaireIntroContext() {
-        return questionnaireContext;
-      }
-    }, fakeQuestionnaireDrafts(drafts));
-
-    const first = await service.execute(execution(questionnaireJob));
-    const second = await service.execute(execution(questionnaireJob));
-
-    assert.deepEqual(first, {
-      eventType: "ParticipantQuestionnaireRequested",
-      delivered: 1,
-      duplicates: 0,
-      ignored: false
-    });
-    assert.deepEqual(second, {
-      eventType: "ParticipantQuestionnaireRequested",
-      delivered: 0,
-      duplicates: 1,
-      ignored: false
-    });
-    assert.equal(sender.messages.length, 1);
-    assert.match(sender.messages[0]?.text ?? "", /Как вас зовут\?/);
-    assert.deepEqual(drafts.get(adminContext.userId)?.step, "awaiting_name");
+    assert.equal(sender.messages.length, 0);
   });
 
   it("is ignored for an event reminder when no reminder context repository is configured", async () => {
@@ -278,7 +248,7 @@ describe("HandleNotificationJobService", () => {
   it("sends the right copy for each cadence step and deduplicates a retry", async () => {
     const ledger = new MemoryLedger();
     const sender = new RecordingSender();
-    const service = createService(ledger, sender, new RecordingRenderer(), undefined, undefined, undefined, {
+    const service = createService(ledger, sender, new RecordingRenderer(), undefined, {
       async getReminderContext() {
         return reminderContext;
       }
@@ -314,8 +284,6 @@ describe("HandleNotificationJobService", () => {
       new MemoryLedger(),
       new RecordingSender(),
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       {
         async getReminderContext() {
@@ -354,8 +322,6 @@ describe("HandleNotificationJobService", () => {
       ledger,
       sender,
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       broadcasts
@@ -399,8 +365,6 @@ describe("HandleNotificationJobService", () => {
       new RecordingRenderer(),
       undefined,
       undefined,
-      undefined,
-      undefined,
       broadcasts
     );
 
@@ -430,8 +394,6 @@ describe("HandleNotificationJobService", () => {
       new RecordingRenderer(),
       undefined,
       undefined,
-      undefined,
-      undefined,
       broadcasts
     );
 
@@ -459,8 +421,6 @@ describe("HandleNotificationJobService", () => {
       new RecordingRenderer(),
       undefined,
       undefined,
-      undefined,
-      undefined,
       broadcasts,
       undefined,
       DEFAULT_BROADCAST_DELIVERY_OPTIONS,
@@ -480,8 +440,6 @@ describe("HandleNotificationJobService", () => {
       new MemoryLedger(),
       new RecordingSender(),
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       new FakeBroadcasts(broadcastContext),
@@ -511,8 +469,6 @@ describe("HandleNotificationJobService", () => {
       new RecordingRenderer(),
       undefined,
       undefined,
-      undefined,
-      undefined,
       broadcasts,
       undefined,
       { ...DEFAULT_BROADCAST_DELIVERY_OPTIONS, transientFailureStreakLimit: 2 }
@@ -536,8 +492,6 @@ describe("HandleNotificationJobService", () => {
       new MemoryLedger(),
       sender,
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       broadcasts,
@@ -573,8 +527,6 @@ describe("HandleNotificationJobService", () => {
       new RecordingRenderer(),
       undefined,
       undefined,
-      undefined,
-      undefined,
       new FakeBroadcasts({ ...broadcastContext, image, button })
     );
 
@@ -595,8 +547,6 @@ describe("HandleNotificationJobService", () => {
       new MemoryLedger(),
       new RecordingSender(),
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       broadcasts
@@ -622,8 +572,6 @@ describe("HandleNotificationJobService", () => {
       new MemoryLedger(),
       sender,
       new RecordingRenderer(),
-      undefined,
-      undefined,
       undefined,
       undefined,
       broadcasts,
@@ -895,8 +843,6 @@ function createService(
   sender: NotificationSender,
   renderer: TicketPngRenderer = new RecordingRenderer(),
   continuation?: ScenarioPaymentContinuation,
-  questionnaireContexts?: QuestionnaireIntroContextRepository,
-  questionnaireDrafts?: QuestionnaireDraftRepository,
   reminderContexts?: ReminderContextRepository,
   broadcastContexts?: BroadcastContextRepository,
   adminChatIds: readonly string[] = ["-1001234567890"],
@@ -931,27 +877,11 @@ function createService(
     { newId() { id += 1; return `delivery-${id}`; } },
     adminChatIds,
     continuation,
-    questionnaireContexts,
-    questionnaireDrafts,
     reminderContexts,
     broadcastContexts,
     broadcastOptions,
     broadcastPacing
   );
-}
-
-function fakeQuestionnaireDrafts(store: Map<string, QuestionnaireDraft>): QuestionnaireDraftRepository {
-  return {
-    async getDraft(userId) {
-      return store.get(userId) ?? null;
-    },
-    async setDraft(userId, draft) {
-      store.set(userId, draft);
-    },
-    async clearDraft(userId) {
-      store.delete(userId);
-    }
-  };
 }
 
 class RecordingRenderer implements TicketPngRenderer {
@@ -1083,12 +1013,6 @@ const scenarioPresentationJob = {
       }]
     }
   }
-};
-
-const questionnaireContext: QuestionnaireIntroContext = {
-  recipientExternalUserId: "123456789",
-  recipientBlocked: false,
-  eventTitle: "Business Picnic"
 };
 
 const questionnaireJob = {

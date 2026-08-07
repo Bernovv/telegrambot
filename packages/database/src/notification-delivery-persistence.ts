@@ -6,8 +6,6 @@ import type {
   ClaimNotificationDeliveryResult,
   NotificationContextRepository,
   NotificationDeliveryLedger,
-  QuestionnaireIntroContext,
-  QuestionnaireIntroContextRepository,
   ReminderContextRepository,
   ReminderRecipientContext,
   ScenarioDeliveryContext,
@@ -55,7 +53,7 @@ interface ScenarioDeliveryContextRow {
   readonly recipient_blocked: boolean | null;
 }
 
-interface QuestionnaireIntroContextRow {
+interface RecipientContextRow {
   readonly event_title: string;
   readonly recipient_external_user_id: string | null;
   readonly recipient_blocked: boolean | null;
@@ -138,7 +136,6 @@ interface BroadcastRecipientRow {
 export class PostgresNotificationContextRepository
 implements
   NotificationContextRepository,
-  QuestionnaireIntroContextRepository,
   ReminderContextRepository,
   BroadcastContextRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
@@ -300,50 +297,8 @@ implements
       : null;
   }
 
-  async getQuestionnaireIntroContext(orderId: string): Promise<QuestionnaireIntroContext | null> {
-    const result = await query<QuestionnaireIntroContextRow>(
-      this.pool,
-      `select
-         coalesce(nullif(orders.event_snapshot ->> 'title', ''), events.title) as event_title,
-         identity.external_user_id as recipient_external_user_id,
-         identity.is_bot_blocked as recipient_blocked
-       from public.orders orders
-       join public.events events on events.id = orders.event_id
-       left join lateral (
-         select external_user_id, is_bot_blocked
-         from public.messenger_identities
-         where user_id = orders.user_id
-           and channel = 'telegram'
-         order by last_seen_at desc, id
-         limit 1
-       ) identity on true
-       left join lateral (
-         select value_normalized
-         from public.user_contacts
-         where user_id = orders.user_id
-           and contact_type = 'phone'
-           and verification_status in ('verified', 'imported')
-         order by is_primary desc, verified_at desc nulls last, created_at desc
-         limit 1
-       ) contact on true
-       where orders.id = $1
-         and orders.status in ('paid', 'partially_refunded')`,
-      [orderId]
-    );
-    const row = result.rows[0];
-    if (!row) {
-      return null;
-    }
-
-    return {
-      eventTitle: row.event_title,
-      recipientExternalUserId: row.recipient_external_user_id,
-      recipientBlocked: row.recipient_blocked ?? false
-    };
-  }
-
   async getReminderContext(userId: string, eventId: string): Promise<ReminderRecipientContext | null> {
-    const result = await query<QuestionnaireIntroContextRow>(
+    const result = await query<RecipientContextRow>(
       this.pool,
       `select
          e.title as event_title,

@@ -8,7 +8,7 @@ import type { IdGenerator, OutboxWriter, UnitOfWork } from "./identity.js";
  * ExpireOrdersBatchService/order-expiry.ts: a worker sweep claims due work inside a transaction and
  * appends one outbox event per claim; actual Telegram delivery happens later via the existing
  * outbox -> pg-boss -> HandleNotificationJobService path (notification-delivery.ts), same as
- * TicketsIssued/AdminPurchaseNotificationRequested/ParticipantQuestionnaireRequested.
+ * TicketsIssued/AdminPurchaseNotificationRequested.
  */
 
 export type ReminderCadenceStep = "10d" | "7d" | "3d" | "1d" | "day_of";

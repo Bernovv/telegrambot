@@ -51,8 +51,7 @@ describe("ConfirmPaymentService", () => {
       [
         "PaymentConfirmed",
         "TicketsIssued",
-        "AdminPurchaseNotificationRequested",
-        "ParticipantQuestionnaireRequested"
+        "AdminPurchaseNotificationRequested"
       ]
     );
     assert.equal(events[0]?.payload.walletCapturedKopecks, "10000");

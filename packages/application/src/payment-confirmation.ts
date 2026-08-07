@@ -443,15 +443,6 @@ function paymentEvents(
       schemaVersion: 1,
       payload: basePayload,
       occurredAt: command.confirmedAt
-    },
-    {
-      eventId: idGenerator.newId(),
-      aggregateType: "order",
-      aggregateId: order.id,
-      eventType: "ParticipantQuestionnaireRequested",
-      schemaVersion: 1,
-      payload: basePayload,
-      occurredAt: command.confirmedAt
     }
   ];
 }

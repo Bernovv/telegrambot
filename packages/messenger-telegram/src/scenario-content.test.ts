@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  askCityReply,
-  askFocusAreaReply,
-  askJoinChatReply,
-  askNicheReply,
-  askStageReply,
-  askWishReply,
   catalogUnavailableReply,
   chooseFamilyTicketReply,
   chooseTicketReply,
@@ -14,7 +8,6 @@ import {
   enterChildQuantityReply,
   enterQuantityReply,
   faqReply,
-  invalidQuestionnaireTextReply,
   mainMenuButtons,
   menuReply,
   myBonusesReply,
@@ -24,9 +17,7 @@ import {
   orderOfferStepReply,
   partnerLinkReply,
   partnerProgramReply,
-  programAndPricingReply,
-  questionnaireCompletedReply,
-  questionnaireUnavailableReply
+  programAndPricingReply
 } from "./scenario-content.js";
 
 describe("scenario-content", () => {
@@ -193,61 +184,5 @@ describe("scenario-content", () => {
 
   it("asks the user to /start first when bonuses cannot be looked up", () => {
     assert.ok(myBonusesUnavailableReply().inlineButtons?.length);
-  });
-
-  it("asks city, niche, and the post-event wish as free text, with no buttons", () => {
-    assert.equal(askCityReply().inlineButtons, undefined);
-    assert.equal(askNicheReply().inlineButtons, undefined);
-    assert.equal(askWishReply().inlineButtons, undefined);
-  });
-
-  it("offers the five documented stages as buttons with the exact stage slugs", () => {
-    const labels = askStageReply().inlineButtons?.map((b) => b.text);
-    assert.deepEqual(labels, [
-      "Только собираю продукт",
-      "Уже есть продукт/услуга",
-      "Есть клиенты, хочу больше структуры",
-      "Хочу усилить продажи",
-      "Хочу окружение и перезагрузку"
-    ]);
-    const callbacks = askStageReply().inlineButtons?.map((b) => ("callbackData" in b ? b.callbackData : ""));
-    assert.deepEqual(callbacks, [
-      "anketa_stage:only_building_product",
-      "anketa_stage:have_product_or_service",
-      "anketa_stage:have_clients_want_structure",
-      "anketa_stage:want_more_sales",
-      "anketa_stage:want_environment_reset"
-    ]);
-  });
-
-  it("offers the six documented focus areas as buttons with the exact focus slugs", () => {
-    const callbacks = askFocusAreaReply().inlineButtons?.map((b) => ("callbackData" in b ? b.callbackData : ""));
-    assert.deepEqual(callbacks, [
-      "anketa_focus:packaging",
-      "anketa_focus:content",
-      "anketa_focus:sales",
-      "anketa_focus:positioning",
-      "anketa_focus:energy_resource",
-      "anketa_focus:environment"
-    ]);
-  });
-
-  it("asks yes/no for joining the participant chat", () => {
-    const callbacks = askJoinChatReply().inlineButtons?.map((b) => ("callbackData" in b ? b.callbackData : ""));
-    assert.deepEqual(callbacks, ["anketa_join_chat:yes", "anketa_join_chat:no"]);
-  });
-
-  it("gives a way to try again when free text is invalid", () => {
-    assert.ok(invalidQuestionnaireTextReply().text.length > 0);
-  });
-
-  it("thanks the user differently depending on whether they want the participant chat", () => {
-    assert.match(questionnaireCompletedReply(true).text, /добавим вас в чат/);
-    assert.doesNotMatch(questionnaireCompletedReply(false).text, /добавим вас в чат/);
-    assert.deepEqual(questionnaireCompletedReply(true).inlineButtons, mainMenuButtons());
-  });
-
-  it("never leaves the user stuck when the questionnaire is unavailable", () => {
-    assert.ok(questionnaireUnavailableReply().inlineButtons?.length);
   });
 });

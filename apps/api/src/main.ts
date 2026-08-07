@@ -46,7 +46,6 @@ import {
   StartTelegramScenarioService,
   SubmitTelegramScenarioInputService,
   TelegramPurchaseFlowService,
-  TelegramQuestionnaireService,
   UpdateAdminEventGeneralService,
   UpdateAdminEventContentBlockService,
   UpdateAdminEventPricingRuleService,
@@ -68,7 +67,6 @@ import {
   PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
-  createParticipantQuestionnairePersistence,
   createParticipantsExportPersistence,
   createPostgresHealthProbes,
   createPhonePersistence,
@@ -410,12 +408,6 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       const phoneAccessService = new CheckTelegramPhoneAccessService(
         createTelegramAccessPersistence(pool).phoneStatusRepository
       );
-      const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
-      const questionnaireService = new TelegramQuestionnaireService(
-        questionnairePersistence.questionnaireDraftRepository,
-        questionnairePersistence.questionnaireResponseRepository,
-        phonePersistence.telegramUserResolver
-      );
       const ticketPersistence = createTelegramTicketAccessPersistence(pool);
       const startService = new HandleTelegramStartService(
         startPersistence.identityRepository,
@@ -486,7 +478,6 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           scenario,
           purchaseFlowService,
           referralBalanceService,
-          questionnaireService,
           phoneAccessService
         ),
         logger,

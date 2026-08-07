@@ -28,7 +28,6 @@ export * from "./tbank-refund-persistence.js";
 export * from "./telegram-purchase-flow-persistence.js";
 export * from "./referral-persistence.js";
 export * from "./referral-balance-persistence.js";
-export * from "./participant-questionnaire-persistence.js";
 export * from "./event-reminder-persistence.js";
 export * from "./participants-export-persistence.js";
 export * from "./admin-broadcast-persistence.js";

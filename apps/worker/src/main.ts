@@ -21,7 +21,6 @@ import {
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
   createOrderExpiryPersistence,
-  createParticipantQuestionnairePersistence,
   createPaymentConfirmationPersistence,
   createScenarioRuntimePersistence,
   createTBankReconciliationPersistence,
@@ -195,7 +194,6 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     const notificationConfig = config.telegramNotifications;
     if (notificationConfig.enabled) {
       const notificationPersistence = createNotificationDeliveryPersistence(pool);
-      const questionnairePersistence = createParticipantQuestionnairePersistence(pool, idGenerator);
       const scenarioPersistence = createScenarioRuntimePersistence(pool, idGenerator);
       const scenarioPaymentContinuation =
         new ResumeTelegramScenarioAfterPaymentService(
@@ -213,8 +211,6 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         idGenerator,
         notificationConfig.adminChatIds,
         scenarioPaymentContinuation,
-        notificationPersistence.notificationContexts,
-        questionnairePersistence.questionnaireDraftRepository,
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationContexts,
         {

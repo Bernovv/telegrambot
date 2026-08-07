@@ -90,9 +90,9 @@ export function createTelegramBot(
 
   /**
    * Scenario-driven dialogs (per-event, admin-published) take priority when configured; otherwise
-   * falls back to the hardcoded purchase flow (headcount, then optional child headcount) and then
-   * the participant questionnaire (name/city/niche/wish). Silent when none has an active draft
-   * waiting -- see onScenarioInput/onQuantityText/onChildQuantityText/onQuestionnaireText.
+   * falls back to the hardcoded purchase flow (headcount, then optional child headcount).
+   * Silent when neither has an active draft waiting -- see onScenarioInput/onQuantityText/
+   * onChildQuantityText.
    */
   bot.on("message:text", async (ctx) => {
     if (!ctx.from || ctx.chat.type !== "private") {
@@ -125,16 +125,6 @@ export function createTelegramBot(
     );
     if (childQuantityReplies.length > 0) {
       await sendReplies(ctx.reply.bind(ctx), childQuantityReplies);
-      return;
-    }
-
-    const questionnaireReplies = await controller.onQuestionnaireText(
-      externalUserId,
-      ctx.message.text,
-      new Date()
-    );
-    if (questionnaireReplies.length > 0) {
-      await sendReplies(ctx.reply.bind(ctx), questionnaireReplies);
     }
   });
 
@@ -314,47 +304,6 @@ export function createTelegramBot(
   bot.callbackQuery("my_bonuses", async (ctx) => {
     await ctx.answerCallbackQuery();
     const replies = await controller.onMyBonuses(String(ctx.from.id));
-    await sendReplies(ctx.reply.bind(ctx), replies);
-  });
-
-  bot.callbackQuery(
-    /^anketa_stage:(only_building_product|have_product_or_service|have_clients_want_structure|want_more_sales|want_environment_reset)$/,
-    async (ctx) => {
-      await ctx.answerCallbackQuery();
-      const stage = ctx.match[1] as
-        | "only_building_product"
-        | "have_product_or_service"
-        | "have_clients_want_structure"
-        | "want_more_sales"
-        | "want_environment_reset";
-      const replies = await controller.onQuestionnaireStageChoice(String(ctx.from.id), stage);
-      await sendReplies(ctx.reply.bind(ctx), replies);
-    }
-  );
-
-  bot.callbackQuery(
-    /^anketa_focus:(packaging|content|sales|positioning|energy_resource|environment)$/,
-    async (ctx) => {
-      await ctx.answerCallbackQuery();
-      const focusArea = ctx.match[1] as
-        | "packaging"
-        | "content"
-        | "sales"
-        | "positioning"
-        | "energy_resource"
-        | "environment";
-      const replies = await controller.onQuestionnaireFocusAreaChoice(String(ctx.from.id), focusArea);
-      await sendReplies(ctx.reply.bind(ctx), replies);
-    }
-  );
-
-  bot.callbackQuery(/^anketa_join_chat:(yes|no)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const replies = await controller.onQuestionnaireJoinChatChoice(
-      String(ctx.from.id),
-      ctx.match[1] === "yes",
-      new Date()
-    );
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 

@@ -67,31 +67,6 @@ describe("PostgreSQL notification delivery persistence", () => {
     );
   });
 
-  it("loads the questionnaire intro context for a paid order, or null when the order is not paid", async () => {
-    const found = new FakeConnection(() => rows([{
-      event_title: "Business Picnic",
-      recipient_external_user_id: "123456789",
-      recipient_blocked: false
-    }]));
-    const repository = new PostgresNotificationContextRepository(new FakePool(found));
-
-    const context = await repository.getQuestionnaireIntroContext(orderId);
-
-    assert.deepEqual(context, {
-      eventTitle: "Business Picnic",
-      recipientExternalUserId: "123456789",
-      recipientBlocked: false
-    });
-    assert.match(
-      findQuery(found, "from public.orders orders").text,
-      /orders\.status in \('paid', 'partially_refunded'\)/
-    );
-
-    const notFound = new FakeConnection(() => rows([]));
-    const missingRepository = new PostgresNotificationContextRepository(new FakePool(notFound));
-    assert.equal(await missingRepository.getQuestionnaireIntroContext(orderId), null);
-  });
-
   it("loads the reminder recipient context by user and event, or null when the event is unknown", async () => {
     const found = new FakeConnection(() => rows([{
       event_title: "Business Picnic",
