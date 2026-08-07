@@ -1,5 +1,4 @@
 import type {
-  AccommodationBundleRole,
   AccommodationEventRow,
   AccommodationGroupRow,
   AccommodationOrderItemRow,
@@ -22,6 +21,7 @@ import type {
   EventParticipantFieldValue,
   EventParticipantSource
 } from "@ticket-platform/contracts";
+import { toBundleComposition } from "./bundle-composition.js";
 import type { SqlConnection, SqlConnectionPool } from "./postgres.js";
 
 interface EventResult {
@@ -703,26 +703,6 @@ function toOptions(value: unknown): readonly string[] | null {
     return null;
   }
   return parsed.filter((entry): entry is string => typeof entry === "string");
-}
-
-function toBundleComposition(value: unknown): readonly AccommodationBundleRole[] {
-  const parsed = typeof value === "string" ? safeParse(value) : value;
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-
-  const roles: AccommodationBundleRole[] = [];
-  for (const entry of parsed) {
-    if (typeof entry !== "object" || entry === null) {
-      continue;
-    }
-    const role = (entry as { role?: unknown }).role;
-    const quantity = (entry as { quantity?: unknown }).quantity;
-    if (typeof role === "string" && typeof quantity === "number") {
-      roles.push({ role, quantity });
-    }
-  }
-  return roles;
 }
 
 function toTentCounts(value: unknown): readonly AccommodationTentCount[] {

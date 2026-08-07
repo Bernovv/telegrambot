@@ -43,4 +43,5 @@ export * from "./admin-broadcast.js";
 export * from "./admin-broadcast-image.js";
 export * from "./admin-outreach.js";
 export * from "./admin-accommodation.js";
+export * from "./admin-event-participants.js";
 export * from "./telegram-access.js";

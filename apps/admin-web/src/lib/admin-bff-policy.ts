@@ -30,6 +30,7 @@ export function isAllowedAdminApiPath(
       || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields)?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation$/i.test(path)
       || path === "broadcasts"
       || path === "broadcasts/audience";

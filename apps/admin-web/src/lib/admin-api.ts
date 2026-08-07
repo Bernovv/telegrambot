@@ -75,6 +75,7 @@ import type {
   CreateEventParticipantRequest,
   UpdateEventParticipantRequest
 } from "@ticket-platform/contracts/admin-accommodation";
+import type { EventParticipantsView } from "@ticket-platform/contracts/admin-participants";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -130,6 +131,16 @@ export function getAccommodationSummary(
 ): Promise<AccommodationSummary> {
   return requestAdminApi(
     `events/${encodeURIComponent(eventId)}/accommodation`,
+    signal
+  );
+}
+
+export function getEventParticipants(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventParticipantsView> {
+  return requestAdminApi(
+    `events/${encodeURIComponent(eventId)}/participants`,
     signal
   );
 }

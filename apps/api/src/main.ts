@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
   AdminAccommodationService,
+  AdminEventParticipantsService,
   AdminCancelOrderService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
@@ -64,6 +65,7 @@ import {
   createAdminEventsPersistence,
   createAdminOperationsPersistence,
   createAdminAccommodationPersistence,
+  createAdminEventParticipantsPersistence,
   PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
@@ -278,6 +280,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           createAdminAccommodationPersistence(pool),
           { now: () => new Date() },
           idGenerator
+        )
+      : undefined;
+    const adminEventParticipants = adminAuth
+      ? new AdminEventParticipantsService(
+          createAdminEventParticipantsPersistence(pool).repository,
+          { now: () => new Date() }
         )
       : undefined;
     const orders = adminAuth
@@ -513,6 +521,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminBroadcast ? { adminBroadcast } : {}),
       ...(adminOutreach ? { adminOutreach } : {}),
       ...(adminAccommodation ? { adminAccommodation } : {}),
+      ...(adminEventParticipants ? { adminEventParticipants } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

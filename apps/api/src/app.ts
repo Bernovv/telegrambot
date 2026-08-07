@@ -63,7 +63,8 @@ import {
 } from "./admin-outreach-api.js";
 import {
   AdminAccommodationApiModule,
-  type AdminAccommodationHandler
+  type AdminAccommodationHandler,
+  type AdminEventParticipantsHandler
 } from "./admin-accommodation-api.js";
 import {
   TBankWebhookModule,
@@ -136,6 +137,7 @@ export interface ApiApplicationOptions {
   readonly adminBroadcast?: AdminBroadcastHandlers;
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminAccommodation?: AdminAccommodationHandler;
+  readonly adminEventParticipants?: AdminEventParticipantsHandler;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -182,8 +184,11 @@ class ApiModule {
         ...(options.adminOutreach
           ? [AdminOutreachApiModule.register(options.adminOutreach)]
           : []),
-        ...(options.adminAccommodation
-          ? [AdminAccommodationApiModule.register(options.adminAccommodation)]
+        ...(options.adminAccommodation && options.adminEventParticipants
+          ? [AdminAccommodationApiModule.register(
+              options.adminAccommodation,
+              options.adminEventParticipants
+            )]
           : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(

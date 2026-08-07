@@ -40,6 +40,9 @@
       ],
       "@ticket-platform/contracts/admin-accommodation": [
         "../../packages/contracts/src/admin-accommodation.ts"
+      ],
+      "@ticket-platform/contracts/admin-participants": [
+        "../../packages/contracts/src/admin-participants.ts"
       ]
     }
   },

@@ -996,6 +996,46 @@ tbody tr:hover {
   border-bottom-color: var(--accent);
 }
 
+/* Фильтры списка участников: поиск, два выбора и два флажка в одну строку. */
+.participants-filter-bar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.participants-filter-bar .search-field {
+  flex: 1 1 260px;
+}
+
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.checkbox-field:hover {
+  border-color: var(--line-strong);
+}
+
+.channel-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Список экранов правки на вкладке «Настройки». */
 .settings-list {
   display: grid;

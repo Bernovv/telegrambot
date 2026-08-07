@@ -294,6 +294,13 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(
     isAllowedAdminApiPath(
       "GET",
+      "events/00000000-0000-4000-8000-000000000101/participants"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
       "outreach/campaigns/00000000-0000-4000-8000-000000000101/custom-fields"
     ),
     true
@@ -379,10 +386,19 @@ test("allowlists the operational endpoints backing the administrator screens", (
     false
   );
   assert.equal(isAllowedAdminApiPath("PATCH", "broadcasts"), false);
+  // Сам список участников читать можно, но только его: выдуманные соседние пути прокси
+  // пропускать не должен, иначе allowlist перестаёт быть allowlist.
   assert.equal(
     isAllowedAdminApiPath(
       "GET",
-      "events/00000000-0000-4000-8000-000000000101/participants"
+      "events/00000000-0000-4000-8000-000000000101/participants/all"
+    ),
+    false
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/not-a-uuid/participants"
     ),
     false
   );

@@ -941,7 +941,7 @@ function orderTitle(order: OrderTotals): string {
   return name === undefined || name === "" ? "Без имени" : name;
 }
 
-function countRole(
+export function countRole(
   composition: readonly AccommodationBundleRole[],
   role: string
 ): number {

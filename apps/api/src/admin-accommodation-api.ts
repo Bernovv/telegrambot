@@ -12,7 +12,10 @@ import {
   Req,
   UnauthorizedException
 } from "@nestjs/common";
-import type { AdminAccommodationService } from "@ticket-platform/application";
+import type {
+  AdminAccommodationService,
+  AdminEventParticipantsService
+} from "@ticket-platform/application";
 import {
   EVENT_PARTICIPANT_FIELD_TYPES,
   EVENT_PARTICIPANT_SOURCES
@@ -24,6 +27,7 @@ import {
 } from "./admin-auth.js";
 
 const ADMIN_ACCOMMODATION = Symbol("ADMIN_ACCOMMODATION");
+const ADMIN_EVENT_PARTICIPANTS = Symbol("ADMIN_EVENT_PARTICIPANTS");
 
 type ParticipantChanges = {
   displayName?: string;
@@ -105,6 +109,11 @@ const deleteParticipantFieldBody = z.object({
 const excludeOrderBody = z.object({
   reason: z.string().trim().min(3).max(500)
 }).strict();
+
+export type AdminEventParticipantsHandler = Pick<
+  AdminEventParticipantsService,
+  "list"
+>;
 
 export type AdminAccommodationHandler = Pick<
   AdminAccommodationService,
@@ -202,8 +211,28 @@ export class AdminAccommodationController {
 export class AdminParticipantsController {
   constructor(
     @Inject(ADMIN_ACCOMMODATION)
-    private readonly handler: AdminAccommodationHandler
+    private readonly handler: AdminAccommodationHandler,
+    @Inject(ADMIN_EVENT_PARTICIPANTS)
+    private readonly participants: AdminEventParticipantsHandler
   ) {}
+
+  /**
+   * Единый список: покупатели бота и заведённые руками. Право то же, что у сводки
+   * «что везём», — это те же люди и те же телефоны, показанные иначе.
+   */
+  @Get("events/:eventId/participants")
+  @RequireAdminPermission("accommodation.read")
+  async list(
+    @Param("eventId") eventId: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    return execute(() =>
+      this.participants.list({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId)
+      })
+    );
+  }
 
   @Post("events/:eventId/participants")
   @RequireAdminPermission("participants.manage")
@@ -401,11 +430,17 @@ export class AdminParticipantsController {
 
 @Module({})
 export class AdminAccommodationApiModule {
-  static register(handler: AdminAccommodationHandler): DynamicModule {
+  static register(
+    handler: AdminAccommodationHandler,
+    participants: AdminEventParticipantsHandler
+  ): DynamicModule {
     return {
       module: AdminAccommodationApiModule,
       controllers: [AdminAccommodationController, AdminParticipantsController],
-      providers: [{ provide: ADMIN_ACCOMMODATION, useValue: handler }]
+      providers: [
+        { provide: ADMIN_ACCOMMODATION, useValue: handler },
+        { provide: ADMIN_EVENT_PARTICIPANTS, useValue: participants }
+      ]
     };
   }
 }
