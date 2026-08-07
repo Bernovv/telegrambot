@@ -19,7 +19,6 @@ import type {
   EventParticipantSource
 } from "@ticket-platform/contracts/admin-accommodation";
 import {
-  ArrowLeft,
   CircleAlert,
   Link2,
   Link2Off,
@@ -32,7 +31,6 @@ import {
   UtensilsCrossed,
   X
 } from "lucide-react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
@@ -142,20 +140,11 @@ export default function EventAccommodationPage() {
 
   return (
     <>
-      <Link className="back-link" href={`/events/${id}`}>
-        <ArrowLeft size={16} />
-        Мероприятие
-      </Link>
-
       <div className="page-heading accommodation-heading">
         <div>
           <p className="eyebrow">Логистика</p>
           <h1>Что везём</h1>
-          <p>
-            {summary.eventTitle}
-            {" · посчитано "}
-            {formatDateTime(summary.calculatedAt)}
-          </p>
+          <p>Посчитано {formatDateTime(summary.calculatedAt)}</p>
         </div>
         <div className="heading-actions">
           <button

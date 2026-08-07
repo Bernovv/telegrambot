@@ -1,57 +1,14 @@
 "use client";
 
 import { EventScenarioEditor } from "@/components/event-scenario-editor";
-import { PageError, PageLoading } from "@/components/page-state";
-import { AdminApiError, getEvent } from "@/lib/admin-api";
-import type { AdminEventDetail } from "@ticket-platform/contracts/admin-events";
-import { ArrowLeft } from "lucide-react";
+import { useEventWorkspace } from "@/components/event-workspace";
+import { PageError } from "@/components/page-state";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 
 export default function EventScenarioPage() {
-  const { id } = useParams<{ id: string }>();
-  const [event, setEvent] = useState<AdminEventDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { event, reload } = useEventWorkspace();
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setEvent(await getEvent(id, signal));
-    } catch (caught) {
-      if (!signal?.aborted) {
-        setError(
-          caught instanceof AdminApiError
-            ? caught.message
-            : "Сервис временно недоступен."
-        );
-      }
-    } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-      }
-    }
-  }, [id]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  if (loading && !event) {
-    return <PageLoading />;
-  }
-  if (error || !event) {
-    return (
-      <PageError
-        message={error ?? "Мероприятие не найдено."}
-        retry={() => void load()}
-      />
-    );
-  }
   if (event.status !== "draft") {
     return (
       <PageError
@@ -63,18 +20,17 @@ export default function EventScenarioPage() {
 
   return (
     <>
-      <Link className="back-link" href={`/events/${event.id}`}>
+      <Link className="back-link" href={`/events/${event.id}/settings`}>
         <ArrowLeft size={17} />
-        Карточка мероприятия
+        Настройки
       </Link>
       <div className="page-heading">
         <div>
           <p className="eyebrow">Черновик · версия {event.lockVersion}</p>
           <h1>Сценарий мероприятия</h1>
-          <p>{event.title}</p>
         </div>
       </div>
-      <EventScenarioEditor event={event} reload={() => load()} />
+      <EventScenarioEditor event={event} reload={() => reload()} />
     </>
   );
 }

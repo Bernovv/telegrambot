@@ -1,75 +1,18 @@
 "use client";
 
-import { PageError, PageLoading } from "@/components/page-state";
 import { EventPublicationPanel } from "@/components/event-publication-panel";
+import { useEventWorkspace } from "@/components/event-workspace";
 import { ParticipantsExportButton } from "@/components/participants-export-button";
 import { StatusPill } from "@/components/status-pill";
-import { AdminApiError, getEvent } from "@/lib/admin-api";
 import {
-  eventStatusLabel,
-  eventStatusTone,
   formatEventDateTime,
   formatKopecks,
   productTypeLabel
 } from "@/lib/format";
-import type { AdminEventDetail } from "@ticket-platform/contracts/admin-events";
-import {
-  ArrowLeft,
-  ExternalLink,
-  FileCheck2,
-  FileText,
-  PackageOpen,
-  Pencil,
-  Tent,
-  Workflow
-} from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 
-export default function EventDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const [event, setEvent] = useState<AdminEventDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setEvent(await getEvent(id, signal));
-    } catch (caught) {
-      if (!signal?.aborted) {
-        setError(
-          caught instanceof AdminApiError
-            ? caught.message
-            : "Сервис временно недоступен."
-        );
-      }
-    } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-      }
-    }
-  }, [id]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  if (loading && !event) {
-    return <PageLoading />;
-  }
-  if (error || !event) {
-    return (
-      <PageError
-        message={error ?? "Мероприятие не найдено."}
-        retry={() => void load()}
-      />
-    );
-  }
+export default function EventOverviewPage() {
+  const { event, reload } = useEventWorkspace();
 
   const occupied = event.reservedInventoryUnits + event.consumedInventoryUnits;
   const utilization = event.capacity > 0
@@ -78,62 +21,16 @@ export default function EventDetailPage() {
 
   return (
     <>
-      <Link className="back-link" href="/events">
-        <ArrowLeft size={17} />
-        Все мероприятия
-      </Link>
-
-      <div className="detail-heading order-heading">
+      <div className="page-heading">
         <div>
-          <div className="title-with-status">
-            <h1>{event.title}</h1>
-            <StatusPill tone={eventStatusTone(event.status)}>
-              {eventStatusLabel(event.status)}
-            </StatusPill>
-          </div>
-          <p>
-            {formatEventDateTime(event.startsAt, event.timezone)}
-            {" · "}
-            {event.locationName ?? "Площадка не указана"}
-          </p>
+          <p className="eyebrow">Обзор</p>
+          <h1>Как идут продажи</h1>
         </div>
-        {/* Выгрузка участников и «Что везём» нужны и после публикации: это отчёты
-            по продажам. Редактирование остаётся у черновика. */}
         <div className="heading-actions">
           <ParticipantsExportButton
             eventId={event.id}
             eventSlug={event.slug}
           />
-          <Link className="secondary-button" href={`/events/${event.id}/accommodation`}>
-            <Tent size={16} />
-            Что везём
-          </Link>
-          {event.status === "draft" ? (
-            <>
-              <Link className="secondary-button" href={`/events/${event.id}/scenario`}>
-                <Workflow size={16} />
-                Сценарий
-              </Link>
-              <Link className="secondary-button" href={`/events/${event.id}/offer`}>
-                <FileCheck2 size={16} />
-                Оферта
-              </Link>
-              <Link className="secondary-button" href={`/events/${event.id}/content`}>
-                <FileText size={16} />
-                Контент
-              </Link>
-              <Link className="secondary-button" href={`/events/${event.id}/catalog`}>
-                <PackageOpen size={16} />
-                Продукты и тарифы
-              </Link>
-              <Link className="primary-button" href={`/events/${event.id}/edit`}>
-                <Pencil size={16} />
-                Редактировать
-              </Link>
-            </>
-          ) : (
-            <span className="readonly-badge">Только просмотр</span>
-          )}
         </div>
       </div>
 
@@ -239,7 +136,7 @@ export default function EventDetailPage() {
           {event.status === "draft" ? (
             <EventPublicationPanel
               event={event}
-              onPublished={() => load()}
+              onPublished={() => reload()}
             />
           ) : null}
         </section>

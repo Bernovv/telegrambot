@@ -956,6 +956,99 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
+/* Рабочее место мероприятия: общая шапка и вкладки над содержимым раздела. */
+.event-workspace-heading p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.event-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 22px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.event-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 15px;
+  margin-bottom: -1px;
+  color: var(--muted);
+  font-weight: 650;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.event-tab:hover {
+  color: var(--ink);
+}
+
+.event-tab-active,
+.event-tab-active:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Список экранов правки на вкладке «Настройки». */
+.settings-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  color: inherit;
+  background: var(--surface);
+}
+
+.settings-item:hover {
+  background: var(--surface-muted);
+}
+
+.settings-item-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 7px;
+}
+
+.settings-item-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-item-copy small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-item-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .metrics-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
