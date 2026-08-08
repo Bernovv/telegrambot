@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { AdminRequestActor, EventParticipant } from "@ticket-platform/contracts";
 import {
   AdminEventParticipantsService,
+  ParticipantAnswerTargetNotFoundError,
   ParticipantsEventNotFoundError,
   buildParticipantsView,
   type AdminEventParticipantsRepository,
@@ -16,6 +17,20 @@ const EVENT_ID = "019c0123-4567-789a-bcde-f0123456789a";
 const ADMIN_ID = "019c0123-4567-789a-bcde-f0123456789b";
 const ORDER_ID = "019c0123-4567-789a-bcde-f0123456789c";
 const OTHER_ORDER_ID = "019c0123-4567-789a-bcde-f0123456789d";
+const FIELD_ID = "019c0123-4567-789a-bcde-f0123456789f";
+const PARTICIPANT_ID = "019c0123-4567-789a-bcde-f01234567810";
+
+const field = {
+  id: FIELD_ID,
+  label: "Город",
+  type: "text" as const,
+  options: null,
+  global: false
+};
+
+function answer(value: string | null) {
+  return { fieldId: FIELD_ID, label: "Город", type: "text" as const, options: null, value };
+}
 
 describe("buildParticipantsView", () => {
   it("collapses the items of one order into a single row", () => {
@@ -34,6 +49,8 @@ describe("buildParticipantsView", () => {
         item({ productTitle: "Детский", quantity: 1, bundleComposition: CHILD })
       ],
       participants: [],
+      fields: [],
+      orderAnswers: [],
       excludedOrders: 0,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -54,6 +71,8 @@ describe("buildParticipantsView", () => {
       event: { id: EVENT_ID, title: "Бизнес-Пикник" },
       items: [item({ buyerName: null, orderNumber: "BP-0042" })],
       participants: [],
+      fields: [],
+      orderAnswers: [],
       excludedOrders: 0,
       canManageParticipants: false,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -70,6 +89,8 @@ describe("buildParticipantsView", () => {
         item({ orderId: OTHER_ORDER_ID, totalKopecks: "1" })
       ],
       participants: [],
+      fields: [],
+      orderAnswers: [],
       excludedOrders: 0,
       canManageParticipants: false,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -88,6 +109,8 @@ describe("buildParticipantsView", () => {
         totalKopecks: "498000"
       })],
       participants: [participant({ adults: 1, children: 2, sleepingPlaces: 3 })],
+      fields: [],
+      orderAnswers: [],
       excludedOrders: 2,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -106,6 +129,39 @@ describe("buildParticipantsView", () => {
     assert.equal(view.rows[1]?.channel, "max");
     assert.equal(view.rows[1]?.origin, "manual");
     assert.equal(view.excludedOrders, 2);
+  });
+
+  it("hands the buyer their paper answers, matched by order", () => {
+    const view = buildParticipantsView({
+      event: { id: EVENT_ID, title: "Бизнес-Пикник" },
+      items: [item({}), item({ orderId: OTHER_ORDER_ID })],
+      participants: [],
+      fields: [field],
+      orderAnswers: [{ orderId: ORDER_ID, value: answer("Москва") }],
+      excludedOrders: 0,
+      canManageParticipants: true,
+      calculatedAt: new Date("2026-08-10T09:00:00.000Z")
+    });
+
+    assert.deepEqual(view.rows[0]?.customFields, [answer("Москва")]);
+    assert.deepEqual(view.rows[1]?.customFields, []);
+    assert.deepEqual(view.fields, [field]);
+  });
+
+  it("counts an anketa as entered only when some answer is actually filled in", () => {
+    const view = buildParticipantsView({
+      event: { id: EVENT_ID, title: "Бизнес-Пикник" },
+      items: [item({}), item({ orderId: OTHER_ORDER_ID })],
+      // Пустой ответ остаётся в базе, если его стёрли: анкету он внесённой не делает.
+      participants: [participant({ customFields: [answer(null)] })],
+      fields: [field],
+      orderAnswers: [{ orderId: ORDER_ID, value: answer("Москва") }],
+      excludedOrders: 0,
+      canManageParticipants: true,
+      calculatedAt: new Date("2026-08-10T09:00:00.000Z")
+    });
+
+    assert.deepEqual(view.questionnaire, { people: 3, answered: 1 });
   });
 });
 
@@ -147,6 +203,127 @@ describe("AdminEventParticipantsService", () => {
   });
 });
 
+describe("AdminEventParticipantsService.saveAnswer", () => {
+  it("routes a buyer answer to the order table and a manual one to the participant table", async () => {
+    const orders: unknown[] = [];
+    const participants: unknown[] = [];
+    const service = new AdminEventParticipantsService(
+      repository({
+        async saveOrderFieldValue(input) {
+          orders.push(input);
+          return true;
+        },
+        async saveParticipantFieldValue(input) {
+          participants.push(input);
+          return true;
+        }
+      }),
+      clock
+    );
+
+    await service.saveAnswer({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      orderId: ORDER_ID,
+      fieldId: FIELD_ID,
+      value: "  Москва  "
+    });
+    await service.saveAnswer({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      participantId: PARTICIPANT_ID,
+      fieldId: FIELD_ID,
+      value: "Казань"
+    });
+
+    assert.deepEqual(orders, [{
+      eventId: EVENT_ID,
+      orderId: ORDER_ID,
+      fieldId: FIELD_ID,
+      value: "Москва",
+      adminId: ADMIN_ID
+    }]);
+    assert.deepEqual(participants, [{
+      eventId: EVENT_ID,
+      participantId: PARTICIPANT_ID,
+      fieldId: FIELD_ID,
+      value: "Казань"
+    }]);
+  });
+
+  it("stores a cleared answer as empty rather than as a blank string", async () => {
+    const saved: unknown[] = [];
+    const service = new AdminEventParticipantsService(
+      repository({
+        async saveOrderFieldValue(input) {
+          saved.push(input.value);
+          return true;
+        }
+      }),
+      clock
+    );
+
+    await service.saveAnswer({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      orderId: ORDER_ID,
+      fieldId: FIELD_ID,
+      value: "   "
+    });
+
+    assert.deepEqual(saved, [null]);
+  });
+
+  it("refuses an answer aimed at nobody or at both at once", async () => {
+    const service = new AdminEventParticipantsService(repository(), clock);
+    const base = {
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      fieldId: FIELD_ID,
+      value: "Москва"
+    };
+
+    await assert.rejects(() => service.saveAnswer(base), /request is invalid/);
+    await assert.rejects(
+      () => service.saveAnswer({ ...base, orderId: ORDER_ID, participantId: PARTICIPANT_ID }),
+      /request is invalid/
+    );
+  });
+
+  it("requires participants.manage, not merely the read permission", async () => {
+    const service = new AdminEventParticipantsService(repository(), clock);
+
+    await assert.rejects(
+      () => service.saveAnswer({
+        actor: actorWith("accommodation.read"),
+        eventId: EVENT_ID,
+        orderId: ORDER_ID,
+        fieldId: FIELD_ID,
+        value: "Москва"
+      }),
+      /permission is invalid/
+    );
+  });
+
+  it("reports a vanished order or participant instead of silently doing nothing", async () => {
+    const service = new AdminEventParticipantsService(
+      repository({ async saveOrderFieldValue() { return false; } }),
+      clock
+    );
+
+    await assert.rejects(
+      () => service.saveAnswer({
+        actor: actorWith("participants.manage"),
+        eventId: EVENT_ID,
+        orderId: ORDER_ID,
+        fieldId: FIELD_ID,
+        value: "Москва"
+      }),
+      ParticipantAnswerTargetNotFoundError
+    );
+  });
+});
+
 const clock = { now: () => new Date("2026-08-10T09:00:00.000Z") };
 
 function actorWith(permission: string): AdminRequestActor {
@@ -166,10 +343,22 @@ function repository(
     async listParticipants() {
       return [];
     },
+    async listParticipantFields() {
+      return [];
+    },
+    async listOrderFieldValues() {
+      return [];
+    },
     async countExcludedOrders() {
       return 0;
     },
     async hasPermission() {
+      return true;
+    },
+    async saveOrderFieldValue() {
+      return true;
+    },
+    async saveParticipantFieldValue() {
       return true;
     },
     ...overrides

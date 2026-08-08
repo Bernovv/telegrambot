@@ -90,6 +90,79 @@ describe("PostgreSQL event participants persistence", () => {
     await assert.rejects(() => repository.listPaidOrderItems(EVENT_ID));
     assert.equal(connection.queries.at(-1)?.text, "rollback");
   });
+  it("reads the paper answers of this event only, never another year's", async () => {
+    const connection = new FakeConnection((text) =>
+      text.includes("from public.event_order_field_values v")
+        ? rows([answerRow])
+        : affected()
+    );
+    const repository = new PostgresAdminEventParticipantsRepository(
+      new FakePool(connection)
+    );
+
+    const answers = await repository.listOrderFieldValues(EVENT_ID);
+
+    assert.deepEqual(answers, [{
+      orderId: "019c0123-4567-789a-bcde-f0123456789c",
+      value: {
+        fieldId: "019c0123-4567-789a-bcde-f0123456789f",
+        label: "Город",
+        type: "text",
+        options: null,
+        value: "Москва"
+      }
+    }]);
+    const query = findQuery(connection, "from public.event_order_field_values v");
+    assert.match(query.text, /join public\.orders o on o\.id = v\.order_id/);
+    assert.match(query.text, /o\.event_id = \$1::uuid/);
+  });
+
+  it("refuses to attach an answer to an order from a different event", async () => {
+    const connection = new FakeConnection((text) =>
+      text.includes("from public.orders\n") || text.includes("select id from public.orders")
+        ? rows([])
+        : affected()
+    );
+    const repository = new PostgresAdminEventParticipantsRepository(
+      new FakePool(connection)
+    );
+
+    const saved = await repository.saveOrderFieldValue({
+      eventId: EVENT_ID,
+      orderId: "019c0123-4567-789a-bcde-f0123456789c",
+      fieldId: "019c0123-4567-789a-bcde-f0123456789f",
+      value: "Москва",
+      adminId: "019c0123-4567-789a-bcde-f0123456789b"
+    });
+
+    assert.equal(saved, false);
+    assert.equal(connection.queries.at(-1)?.text, "rollback");
+  });
+
+  it("deletes the row when the answer is cleared instead of writing an empty string", async () => {
+    const connection = new FakeConnection((text) =>
+      text.includes("select id from public.orders")
+        ? rows([{ id: "019c0123-4567-789a-bcde-f0123456789c" }])
+        : affected()
+    );
+    const repository = new PostgresAdminEventParticipantsRepository(
+      new FakePool(connection)
+    );
+
+    await repository.saveOrderFieldValue({
+      eventId: EVENT_ID,
+      orderId: "019c0123-4567-789a-bcde-f0123456789c",
+      fieldId: "019c0123-4567-789a-bcde-f0123456789f",
+      value: null,
+      adminId: "019c0123-4567-789a-bcde-f0123456789b"
+    });
+
+    assert.match(
+      findQuery(connection, "delete from public.event_order_field_values").text,
+      /field_definition_id = \$2::uuid/
+    );
+    assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
 });
 
 class FakePool implements SqlConnectionPool {
@@ -134,6 +207,15 @@ function findQuery(connection: FakeConnection, fragment: string): RecordedQuery 
   assert.ok(query, `Expected query containing: ${fragment}`);
   return query;
 }
+
+const answerRow = {
+  order_id: "019c0123-4567-789a-bcde-f0123456789c",
+  field_definition_id: "019c0123-4567-789a-bcde-f0123456789f",
+  label: "Город",
+  field_type: "text",
+  options: null,
+  value_text: "Москва"
+};
 
 const orderItemRow = {
   order_id: "019c0123-4567-789a-bcde-f0123456789c",

@@ -164,5 +164,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260804140000_broadcast_audience_button_image",
     description: "Add audience selection, a link button and an image to broadcast campaigns",
     destructive: false
+  },
+  {
+    id: "20260808120000_event_order_field_values",
+    description: "Store paper questionnaire answers for bot buyers, keyed by their order",
+    destructive: false
   }
 ];

@@ -2,6 +2,7 @@
 
 import { useEventWorkspace } from "@/components/event-workspace";
 import { PageError, PageLoading } from "@/components/page-state";
+import { ParticipantRowDrawer } from "@/components/participant-row-drawer";
 import { ParticipantsExportButton } from "@/components/participants-export-button";
 import { AdminApiError, getEventParticipants } from "@/lib/admin-api";
 import { formatDateTime, formatKopecks } from "@/lib/format";
@@ -16,7 +17,7 @@ import type {
   EventParticipantsView,
   ParticipantChannel
 } from "@ticket-platform/contracts/admin-participants";
-import { CircleAlert, RefreshCw, Search, Send, Tent } from "lucide-react";
+import { CircleAlert, ClipboardCheck, RefreshCw, Search, Send, Tent } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -26,6 +27,7 @@ export default function EventParticipantsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ParticipantsFilter>(EMPTY_PARTICIPANTS_FILTER);
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -68,6 +70,9 @@ export default function EventParticipantsPage() {
   }
 
   const filtered = rows.length !== view.rows.length;
+  const openRow = openKey === null
+    ? null
+    : view.rows.find((row) => row.key === openKey) ?? null;
 
   return (
     <>
@@ -121,6 +126,8 @@ export default function EventParticipantsPage() {
           <strong>{formatKopecks(view.totals.amountKopecks)}</strong>
           <small className="muted">
             спальных мест {view.totals.sleepingPlaces}
+            {" · анкет "}
+            {view.questionnaire.answered} из {view.questionnaire.people}
           </small>
         </div>
       </div>
@@ -239,33 +246,56 @@ export default function EventParticipantsPage() {
                   <th>Мест</th>
                   <th>Сумма</th>
                   <th>Оплачено</th>
+                  <th>Анкета</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <ParticipantRow key={row.key} row={row} />
+                  <ParticipantRow
+                    key={row.key}
+                    row={row}
+                    onOpen={() => setOpenKey(row.key)}
+                  />
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </section>
+
+      {openRow ? (
+        <ParticipantRowDrawer
+          eventId={event.id}
+          row={openRow}
+          fields={view.fields}
+          canManage={view.canManageParticipants}
+          onClose={() => setOpenKey(null)}
+          onSaved={() => load()}
+        />
+      ) : null}
     </>
   );
 }
 
-function ParticipantRow({ row }: Readonly<{ row: EventParticipantRow }>) {
+function ParticipantRow({
+  row,
+  onOpen
+}: Readonly<{ row: EventParticipantRow; onOpen: () => void }>) {
+  const answered = row.customFields.some(
+    (field) => field.value !== null && field.value !== ""
+  );
+
   return (
     <tr>
       <td>
-        <div className="stacked-cell">
+        <button className="outreach-contact-link" type="button" onClick={onOpen}>
           <strong>{row.displayName}</strong>
-          <span className="muted">
+          <span>
             {row.phone ?? "телефон не указан"}
             {row.telegramUsername ? ` · @${row.telegramUsername}` : ""}
           </span>
-          {row.note ? <span className="muted">{row.note}</span> : null}
-        </div>
+        </button>
+        {row.note ? <span className="muted">{row.note}</span> : null}
       </td>
       <td>
         <span className="channel-cell">
@@ -292,6 +322,15 @@ function ParticipantRow({ row }: Readonly<{ row: EventParticipantRow }>) {
         {row.paymentMethod ? (
           <span className="muted"> · {row.paymentMethod}</span>
         ) : null}
+      </td>
+      <td>
+        {answered ? (
+          <span className="questionnaire-saved">
+            <ClipboardCheck size={14} /> внесена
+          </span>
+        ) : (
+          <span className="muted">—</span>
+        )}
       </td>
     </tr>
   );

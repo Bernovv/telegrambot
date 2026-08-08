@@ -89,6 +89,17 @@ const updateParticipantBody = z.object({
   paymentMethod: z.string().trim().min(1).max(80).nullable().optional()
 }).strict();
 
+// Ответ адресуется либо заказу, либо ручному участнику — ровно одному из двух.
+const answerBody = z.object({
+  orderId: uuid.optional(),
+  participantId: uuid.optional(),
+  fieldId: uuid,
+  value: z.string().max(500).nullable()
+}).strict().refine(
+  (body) => (body.orderId === undefined) !== (body.participantId === undefined),
+  { message: "exactly one target" }
+);
+
 const participantFieldBody = z.object({
   label: z.string().trim().min(1).max(80),
   type: z.enum(EVENT_PARTICIPANT_FIELD_TYPES),
@@ -112,7 +123,7 @@ const excludeOrderBody = z.object({
 
 export type AdminEventParticipantsHandler = Pick<
   AdminEventParticipantsService,
-  "list"
+  "list" | "saveAnswer"
 >;
 
 export type AdminAccommodationHandler = Pick<
@@ -232,6 +243,33 @@ export class AdminParticipantsController {
         eventId: parse(uuid, eventId)
       })
     );
+  }
+
+  /**
+   * Один ответ бумажной анкеты. По одному полю, а не формой целиком: анкеты вносят
+   * стопкой, и обрыв связи не должен стоить получаса работы.
+   */
+  @Post("events/:eventId/participants/answers")
+  @RequireAdminPermission("participants.manage")
+  async saveAnswer(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(answerBody, body);
+    await execute(() =>
+      this.participants.saveAnswer({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        ...(parsed.orderId !== undefined ? { orderId: parsed.orderId } : {}),
+        ...(parsed.participantId !== undefined
+          ? { participantId: parsed.participantId }
+          : {}),
+        fieldId: parsed.fieldId,
+        value: parsed.value
+      })
+    );
+    return { saved: true };
   }
 
   @Post("events/:eventId/participants")
@@ -487,6 +525,15 @@ async function execute<T>(work: () => Promise<T>): Promise<T> {
     }
     if (
       error instanceof Error
+      && error.message === "Questionnaire answer target was not found"
+    ) {
+      throw new NotFoundException({
+        code: "ANSWER_TARGET_NOT_FOUND",
+        title: "Заказ или участник не найден"
+      });
+    }
+    if (
+      error instanceof Error
       && error.message === "Event participant was not found"
     ) {
       throw new NotFoundException({
@@ -498,6 +545,7 @@ async function execute<T>(work: () => Promise<T>): Promise<T> {
       error instanceof Error
       && (
         error.message.startsWith("Administrator accommodation ")
+        || error.message.startsWith("Administrator participants ")
         || error.message.startsWith("Accommodation ")
         || error.message.startsWith("Event participant ")
       )

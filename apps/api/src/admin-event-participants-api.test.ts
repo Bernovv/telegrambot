@@ -10,6 +10,9 @@ import { createApiApplication } from "./app.js";
 
 const EVENT_ID = "019c0123-4567-789a-bcde-f0123456789a";
 const ADMIN_ID = "019c0123-4567-789a-bcde-f0123456789b";
+const ORDER_ID = "019c0123-4567-789a-bcde-f0123456789c";
+const PARTICIPANT_ID = "019c0123-4567-789a-bcde-f0123456789d";
+const FIELD_ID = "019c0123-4567-789a-bcde-f0123456789f";
 
 describe("event participants HTTP contract", () => {
   it("serves the list behind the accommodation.read permission", async () => {
@@ -84,6 +87,76 @@ describe("event participants HTTP contract", () => {
     }
   });
 
+  it("saves one paper answer behind participants.manage", async () => {
+    const permissions: string[] = [];
+    const requests: unknown[] = [];
+    const app = await application(permissions, requests);
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "POST",
+        url: `/api/v1/events/${EVENT_ID}/participants/answers`,
+        headers: { authorization: "Bearer valid-token" },
+        payload: { orderId: ORDER_ID, fieldId: FIELD_ID, value: "Москва" }
+      });
+
+      assert.equal(response.statusCode, 201);
+      assert.deepEqual(permissions, ["participants.manage"]);
+      assert.deepEqual(requests, [{
+        actor: {
+          adminId: ADMIN_ID,
+          authSubject: "auth-1",
+          roleCodes: ["sales_manager"],
+          permission: "participants.manage"
+        },
+        eventId: EVENT_ID,
+        orderId: ORDER_ID,
+        fieldId: FIELD_ID,
+        value: "Москва"
+      }]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects an answer addressed to nobody or to both at once", async () => {
+    const requests: unknown[] = [];
+    const app = await application([], requests);
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const url = `/api/v1/events/${EVENT_ID}/participants/answers`;
+      const headers = { authorization: "Bearer valid-token" };
+
+      const neither = await fastify.inject({
+        method: "POST",
+        url,
+        headers,
+        payload: { fieldId: FIELD_ID, value: "Москва" }
+      });
+      const both = await fastify.inject({
+        method: "POST",
+        url,
+        headers,
+        payload: {
+          orderId: ORDER_ID,
+          participantId: PARTICIPANT_ID,
+          fieldId: FIELD_ID,
+          value: "Москва"
+        }
+      });
+
+      assert.equal(neither.statusCode, 400);
+      assert.equal(both.statusCode, 400);
+      assert.equal(requests.length, 0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns 401 without a bearer token", async () => {
     const app = await application([], []);
     await app.init();
@@ -105,7 +178,8 @@ describe("event participants HTTP contract", () => {
 function application(
   permissions: string[],
   requests: unknown[],
-  onList?: () => never
+  onList?: () => never,
+  onSave?: () => never
 ) {
   return createApiApplication({
     appVersion: "test",
@@ -113,13 +187,14 @@ function application(
     readiness,
     adminAuth: adminAuth(permissions),
     adminAccommodation: {} as AdminAccommodationHandler,
-    adminEventParticipants: participantsHandler(requests, onList)
+    adminEventParticipants: participantsHandler(requests, onList, onSave)
   });
 }
 
 function participantsHandler(
   requests: unknown[],
-  onList?: () => never
+  onList?: () => never,
+  onSave?: () => never
 ): AdminEventParticipantsHandler {
   return {
     async list(input) {
@@ -128,6 +203,12 @@ function participantsHandler(
       }
       requests.push(input);
       return view;
+    },
+    async saveAnswer(input) {
+      if (onSave) {
+        onSave();
+      }
+      requests.push(input);
     }
   };
 }
@@ -148,6 +229,8 @@ const view: EventParticipantsView = {
   },
   rows: [],
   excludedOrders: 0,
+  fields: [],
+  questionnaire: { people: 2, answered: 1 },
   canManageParticipants: true
 };
 

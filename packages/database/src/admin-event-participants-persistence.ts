@@ -1,12 +1,27 @@
 import type {
   AdminEventParticipantsRepository,
+  OrderFieldValueRow,
   ParticipantOrderItemRow,
-  ParticipantsEventRow
+  ParticipantsEventRow,
+  SaveOrderFieldValueInput
 } from "@ticket-platform/application";
-import type { EventParticipant } from "@ticket-platform/contracts";
+import type {
+  EventParticipant,
+  EventParticipantFieldDefinition,
+  EventParticipantFieldType
+} from "@ticket-platform/contracts";
 import { PostgresAdminAccommodationRepository } from "./admin-accommodation-persistence.js";
 import { toBundleComposition } from "./bundle-composition.js";
 import type { SqlConnectionPool } from "./postgres.js";
+
+interface OrderFieldValueResult {
+  readonly order_id: string;
+  readonly field_definition_id: string;
+  readonly label: string;
+  readonly field_type: string;
+  readonly options: unknown;
+  readonly value_text: string | null;
+}
 
 interface ParticipantOrderItemResult {
   readonly order_id: string;
@@ -46,12 +61,123 @@ export class PostgresAdminEventParticipantsRepository
     return this.accommodation.listParticipants(eventId);
   }
 
+  listParticipantFields(
+    eventId: string
+  ): Promise<readonly EventParticipantFieldDefinition[]> {
+    return this.accommodation.listParticipantFields(eventId);
+  }
+
+  saveParticipantFieldValue(input: {
+    readonly eventId: string;
+    readonly participantId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+  }): Promise<boolean> {
+    return this.accommodation.setParticipantFieldValue(input);
+  }
+
   countExcludedOrders(eventId: string): Promise<number> {
     return this.accommodation.countExcludedOrders(eventId);
   }
 
   hasPermission(adminId: string, permission: string): Promise<boolean> {
     return this.accommodation.hasPermission(adminId, permission);
+  }
+
+  /**
+   * Ответы бумажных анкет покупателей. Заказ фильтруется по мероприятию: определения полей
+   * бывают общими для всех мероприятий, и без этого условия в список приехали бы ответы с
+   * прошлогоднего пикника.
+   */
+  async listOrderFieldValues(
+    eventId: string
+  ): Promise<readonly OrderFieldValueRow[]> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query(
+        "begin transaction isolation level repeatable read read only"
+      );
+      const result = await connection.query<OrderFieldValueResult>(
+        `select
+           v.order_id,
+           v.field_definition_id,
+           d.label,
+           d.field_type,
+           d.options,
+           v.value_text
+         from public.event_order_field_values v
+         join public.event_participant_field_definitions d
+           on d.id = v.field_definition_id
+         join public.orders o on o.id = v.order_id
+         where o.event_id = $1::uuid
+         order by d.position, d.created_at`,
+        [eventId]
+      );
+      await connection.query("commit");
+
+      return result.rows.map((row) => ({
+        orderId: row.order_id,
+        value: {
+          fieldId: row.field_definition_id,
+          label: row.label,
+          type: toFieldType(row.field_type),
+          options: toOptions(row.options),
+          value: row.value_text
+        }
+      }));
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * Стёртый ответ удаляется строкой, а не пишется пустым: пустая строка и «не отвечали» —
+   * разные вещи только на словах, а счётчик «внесено N из M» их различать не должен.
+   */
+  async saveOrderFieldValue(input: SaveOrderFieldValueInput): Promise<boolean> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query("begin");
+      const order = await connection.query<{ readonly id: string }>(
+        `select id from public.orders
+          where id = $1::uuid and event_id = $2::uuid and status = 'paid'`,
+        [input.orderId, input.eventId]
+      );
+      if (order.rows.length === 0) {
+        await connection.query("rollback");
+        return false;
+      }
+
+      if (input.value === null) {
+        await connection.query(
+          `delete from public.event_order_field_values
+            where order_id = $1::uuid and field_definition_id = $2::uuid`,
+          [input.orderId, input.fieldId]
+        );
+      } else {
+        await connection.query(
+          `insert into public.event_order_field_values (
+             order_id, field_definition_id, value_text, updated_by_admin_id
+           ) values ($1::uuid, $2::uuid, $3::text, $4::uuid)
+           on conflict (order_id, field_definition_id) do update
+             set value_text = excluded.value_text,
+                 updated_by_admin_id = excluded.updated_by_admin_id,
+                 updated_at = now()`,
+          [input.orderId, input.fieldId, input.value, input.adminId]
+        );
+      }
+
+      await connection.query("commit");
+      return true;
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async listPaidOrderItems(
@@ -128,6 +254,28 @@ export class PostgresAdminEventParticipantsRepository
     } finally {
       connection.release();
     }
+  }
+}
+
+function toFieldType(value: string): EventParticipantFieldType {
+  return value === "number" || value === "date" || value === "select"
+    ? value
+    : "text";
+}
+
+function toOptions(value: unknown): readonly string[] | null {
+  const parsed = typeof value === "string" ? safeParse(value) : value;
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed.filter((entry): entry is string => typeof entry === "string");
+}
+
+function safeParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
   }
 }
 

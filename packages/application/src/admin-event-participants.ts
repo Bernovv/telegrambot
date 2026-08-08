@@ -1,9 +1,12 @@
 import type {
   AdminRequestActor,
   EventParticipant,
+  EventParticipantFieldDefinition,
+  EventParticipantFieldValue,
   EventParticipantRow,
   EventParticipantTotals,
-  EventParticipantsView
+  EventParticipantsView,
+  EventQuestionnaireProgress
 } from "@ticket-platform/contracts";
 import { countRole, type AccommodationBundleRole } from "./admin-accommodation.js";
 
@@ -40,12 +43,44 @@ export interface ParticipantsEventRow {
   readonly title: string;
 }
 
+/** Ответ бумажной анкеты, привязанный к заказу покупателя бота. */
+export interface OrderFieldValueRow {
+  readonly orderId: string;
+  readonly value: EventParticipantFieldValue;
+}
+
+export interface SaveOrderFieldValueInput {
+  readonly eventId: string;
+  readonly orderId: string;
+  readonly fieldId: string;
+  readonly value: string | null;
+  readonly adminId: string;
+}
+
 export interface AdminEventParticipantsRepository {
   findEvent(eventId: string): Promise<ParticipantsEventRow | null>;
   listPaidOrderItems(eventId: string): Promise<readonly ParticipantOrderItemRow[]>;
   listParticipants(eventId: string): Promise<readonly EventParticipant[]>;
+  listParticipantFields(
+    eventId: string
+  ): Promise<readonly EventParticipantFieldDefinition[]>;
+  listOrderFieldValues(eventId: string): Promise<readonly OrderFieldValueRow[]>;
   countExcludedOrders(eventId: string): Promise<number>;
   hasPermission(adminId: string, permission: string): Promise<boolean>;
+  saveOrderFieldValue(input: SaveOrderFieldValueInput): Promise<boolean>;
+  saveParticipantFieldValue(input: {
+    readonly eventId: string;
+    readonly participantId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+  }): Promise<boolean>;
+}
+
+export class ParticipantAnswerTargetNotFoundError extends Error {
+  constructor() {
+    super("Questionnaire answer target was not found");
+    this.name = "ParticipantAnswerTargetNotFoundError";
+  }
 }
 
 export interface ParticipantsClock {
@@ -79,9 +114,18 @@ export class AdminEventParticipantsService {
       throw new ParticipantsEventNotFoundError();
     }
 
-    const [items, participants, excludedOrders, canManageParticipants] = await Promise.all([
+    const [
+      items,
+      participants,
+      fields,
+      orderAnswers,
+      excludedOrders,
+      canManageParticipants
+    ] = await Promise.all([
       this.repository.listPaidOrderItems(input.eventId),
       this.repository.listParticipants(input.eventId),
+      this.repository.listParticipantFields(input.eventId),
+      this.repository.listOrderFieldValues(input.eventId),
       this.repository.countExcludedOrders(input.eventId),
       this.repository.hasPermission(input.actor.adminId, "participants.manage")
     ]);
@@ -90,10 +134,74 @@ export class AdminEventParticipantsService {
       event,
       items,
       participants,
+      fields,
+      orderAnswers,
       excludedOrders,
       canManageParticipants,
       calculatedAt: this.clock.now()
     });
+  }
+
+  /**
+   * Один ответ бумажной анкеты. Сохраняется по одному полю, а не формой целиком: анкеты
+   * вносят стопкой, и потерять полчаса работы из-за оборвавшегося запроса нельзя.
+   */
+  async saveAnswer(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly orderId?: string;
+    readonly participantId?: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+  }): Promise<void> {
+    if (
+      input.actor.permission !== "participants.manage"
+      || !UUID_PATTERN.test(input.actor.adminId)
+    ) {
+      throw new Error("Administrator participants permission is invalid");
+    }
+    if (!UUID_PATTERN.test(input.eventId) || !UUID_PATTERN.test(input.fieldId)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+    if ((input.orderId === undefined) === (input.participantId === undefined)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+    if (input.value !== null && input.value.length > 500) {
+      throw new Error("Administrator participants request is invalid");
+    }
+
+    const value = input.value === null || input.value.trim() === ""
+      ? null
+      : input.value.trim();
+
+    let saved: boolean;
+    if (input.orderId !== undefined) {
+      if (!UUID_PATTERN.test(input.orderId)) {
+        throw new Error("Administrator participants request is invalid");
+      }
+      saved = await this.repository.saveOrderFieldValue({
+        eventId: input.eventId,
+        orderId: input.orderId,
+        fieldId: input.fieldId,
+        value,
+        adminId: input.actor.adminId
+      });
+    } else {
+      const participantId = input.participantId as string;
+      if (!UUID_PATTERN.test(participantId)) {
+        throw new Error("Administrator participants request is invalid");
+      }
+      saved = await this.repository.saveParticipantFieldValue({
+        eventId: input.eventId,
+        participantId,
+        fieldId: input.fieldId,
+        value
+      });
+    }
+
+    if (!saved) {
+      throw new ParticipantAnswerTargetNotFoundError();
+    }
   }
 }
 
@@ -101,6 +209,8 @@ export interface ParticipantsViewInput {
   readonly event: ParticipantsEventRow;
   readonly items: readonly ParticipantOrderItemRow[];
   readonly participants: readonly EventParticipant[];
+  readonly fields: readonly EventParticipantFieldDefinition[];
+  readonly orderAnswers: readonly OrderFieldValueRow[];
   readonly excludedOrders: number;
   readonly canManageParticipants: boolean;
   readonly calculatedAt: Date;
@@ -110,7 +220,7 @@ export function buildParticipantsView(
   input: ParticipantsViewInput
 ): EventParticipantsView {
   const rows = [
-    ...buildOrderRows(input.items),
+    ...buildOrderRows(input.items, input.orderAnswers),
     ...input.participants.map(toManualRow)
   ];
 
@@ -121,8 +231,27 @@ export function buildParticipantsView(
     totals: totalsOf(rows),
     rows,
     excludedOrders: input.excludedOrders,
+    fields: input.fields,
+    questionnaire: progressOf(rows),
     canManageParticipants: input.canManageParticipants
   };
+}
+
+/**
+ * Анкета считается внесённой, если у человека есть хотя бы один непустой ответ. Отдельного
+ * признака «сдал бумагу, но ещё не внесли» нет намеренно: он потребовал бы ещё одного
+ * действия руками на каждого, а на вопрос «кто заполнил» отвечают сами ответы.
+ */
+function progressOf(
+  rows: readonly EventParticipantRow[]
+): EventQuestionnaireProgress {
+  let answered = 0;
+  for (const row of rows) {
+    if (row.customFields.some((field) => field.value !== null && field.value !== "")) {
+      answered += 1;
+    }
+  }
+  return { people: rows.length, answered };
 }
 
 interface OrderDraft {
@@ -140,9 +269,16 @@ interface OrderDraft {
 }
 
 function buildOrderRows(
-  items: readonly ParticipantOrderItemRow[]
+  items: readonly ParticipantOrderItemRow[],
+  answers: readonly OrderFieldValueRow[]
 ): readonly EventParticipantRow[] {
   const orders = new Map<string, OrderDraft>();
+  const answersByOrder = new Map<string, EventParticipantFieldValue[]>();
+  for (const answer of answers) {
+    const list = answersByOrder.get(answer.orderId) ?? [];
+    list.push(answer.value);
+    answersByOrder.set(answer.orderId, list);
+  }
 
   for (const item of items) {
     const draft = orders.get(item.orderId) ?? {
@@ -189,7 +325,7 @@ function buildOrderRows(
     paidAt: order.paidAt ? order.paidAt.toISOString() : null,
     paymentMethod: null,
     note: "",
-    customFields: []
+    customFields: answersByOrder.get(order.orderId) ?? []
   }));
 }
 

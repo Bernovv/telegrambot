@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, Settings2, Tent, Users } from "lucide-react";
+import { ClipboardList, LayoutDashboard, Settings2, Tent, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -16,6 +16,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { segment: "", label: "Обзор", icon: LayoutDashboard },
   { segment: "participants", label: "Участники", icon: Users },
+  { segment: "questionnaire", label: "Анкеты", icon: ClipboardList },
   { segment: "accommodation", label: "Логистика", icon: Tent },
   { segment: "settings", label: "Настройки", icon: Settings2 }
 ] as const;

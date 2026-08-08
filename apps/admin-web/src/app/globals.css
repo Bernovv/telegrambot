@@ -1036,6 +1036,66 @@ tbody tr:hover {
   gap: 6px;
 }
 
+/* Ввод бумажных анкет: один человек на экране, ответы сохраняются по полю. */
+.questionnaire-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.questionnaire-entry-head > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.questionnaire-entry-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.questionnaire-counter {
+  min-width: 62px;
+  color: var(--muted);
+  font-weight: 650;
+  text-align: center;
+}
+
+.questionnaire-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.questionnaire-entry-foot {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.questionnaire-missing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.questionnaire-missing span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  background: var(--surface-muted);
+  border-radius: 999px;
+  font-size: 13px;
+}
+
 /* Список экранов правки на вкладке «Настройки». */
 .settings-list {
   display: grid;

@@ -75,7 +75,10 @@ import type {
   CreateEventParticipantRequest,
   UpdateEventParticipantRequest
 } from "@ticket-platform/contracts/admin-accommodation";
-import type { EventParticipantsView } from "@ticket-platform/contracts/admin-participants";
+import type {
+  EventParticipantsView,
+  SaveParticipantAnswerRequest
+} from "@ticket-platform/contracts/admin-participants";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -142,6 +145,21 @@ export function getEventParticipants(
   return requestAdminApi(
     `events/${encodeURIComponent(eventId)}/participants`,
     signal
+  );
+}
+
+/**
+ * Один ответ бумажной анкеты. Сохраняется по полю, а не формой целиком: анкеты вносят
+ * стопкой, и обрыв связи не должен стоить получаса работы.
+ */
+export function saveParticipantAnswer(
+  eventId: string,
+  input: SaveParticipantAnswerRequest
+): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participants/answers`,
+    "POST",
+    input
   );
 }
 

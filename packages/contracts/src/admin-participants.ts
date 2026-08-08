@@ -6,7 +6,10 @@
  * материализуется: заказ остаётся единственным источником правды о том, кто и что купил.
  */
 
-import type { EventParticipantFieldValue } from "./admin-accommodation.js";
+import type {
+  EventParticipantFieldDefinition,
+  EventParticipantFieldValue
+} from "./admin-accommodation.js";
 
 /** Откуда человек пришёл. Telegram — из бота, остальное заведено руками. */
 export const PARTICIPANT_CHANNELS = [
@@ -56,6 +59,13 @@ export interface EventParticipantTotals {
   readonly fromManual: number;
 }
 
+export interface EventQuestionnaireProgress {
+  /** Сколько человек в списке всего — знаменатель счётчика «внесено N из M». */
+  readonly people: number;
+  /** У скольких из них внесён хотя бы один ответ. */
+  readonly answered: number;
+}
+
 export interface EventParticipantsView {
   readonly eventId: string;
   readonly eventTitle: string;
@@ -64,5 +74,16 @@ export interface EventParticipantsView {
   readonly rows: readonly EventParticipantRow[];
   /** Заказы, помеченные тестовыми: в список не идут, из истории не удалены. */
   readonly excludedOrders: number;
+  /** Вопросы анкеты этого мероприятия: общий набор для покупателей и ручных участников. */
+  readonly fields: readonly EventParticipantFieldDefinition[];
+  readonly questionnaire: EventQuestionnaireProgress;
   readonly canManageParticipants: boolean;
+}
+
+export interface SaveParticipantAnswerRequest {
+  /** Заполнено ровно одно из двух — смотря кого мы заполняем. */
+  readonly orderId?: string;
+  readonly participantId?: string;
+  readonly fieldId: string;
+  readonly value: string | null;
 }
