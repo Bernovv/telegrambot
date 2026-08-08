@@ -169,5 +169,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260808120000_event_order_field_values",
     description: "Store paper questionnaire answers for bot buyers, keyed by their order",
     destructive: false
+  },
+  {
+    id: "20260808140000_event_expenses",
+    description: "Add vendors, expense categories and event expenses with estimate and actuals",
+    destructive: false
   }
 ];

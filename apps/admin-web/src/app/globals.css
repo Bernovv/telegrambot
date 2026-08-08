@@ -1096,6 +1096,67 @@ tbody tr:hover {
   font-size: 13px;
 }
 
+/* Строки сметы: свёрнутая показывает деньги, развёрнутая — форму правки. */
+.expense-list {
+  display: grid;
+  gap: 10px;
+}
+
+.expense-row {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.expense-row-cancelled {
+  background: var(--surface-muted);
+}
+
+.expense-row-cancelled .expense-row-money {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.expense-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.expense-row-title {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.expense-row-money {
+  display: flex;
+  gap: 26px;
+  margin: 0;
+}
+
+.expense-row-money dt {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.expense-row-money dd {
+  margin: 2px 0 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.expense-row-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
 /* Список экранов правки на вкладке «Настройки». */
 .settings-list {
   display: grid;

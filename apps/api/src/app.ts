@@ -67,6 +67,10 @@ import {
   type AdminEventParticipantsHandler
 } from "./admin-accommodation-api.js";
 import {
+  AdminExpensesApiModule,
+  type AdminExpensesHandler
+} from "./admin-expenses-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -138,6 +142,7 @@ export interface ApiApplicationOptions {
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminAccommodation?: AdminAccommodationHandler;
   readonly adminEventParticipants?: AdminEventParticipantsHandler;
+  readonly adminExpenses?: AdminExpensesHandler;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -190,6 +195,9 @@ class ApiModule {
               options.adminEventParticipants
             )]
           : []),
+        ...(options.adminExpenses
+          ? [AdminExpensesApiModule.register(options.adminExpenses)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -225,6 +233,7 @@ export async function createApiApplication(
       || options.adminBroadcast
       || options.adminOutreach
       || options.adminAccommodation
+      || options.adminExpenses
     )
     && !options.adminAuth
   ) {

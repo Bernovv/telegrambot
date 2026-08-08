@@ -79,6 +79,13 @@ import type {
   EventParticipantsView,
   SaveParticipantAnswerRequest
 } from "@ticket-platform/contracts/admin-participants";
+import type {
+  CancelEventExpenseRequest,
+  CreateEventExpenseRequest,
+  CreateVendorRequest,
+  EventExpensesView,
+  UpdateEventExpenseRequest
+} from "@ticket-platform/contracts/admin-expenses";
 
 export interface UserListFilters {
   readonly search?: string;
@@ -158,6 +165,55 @@ export function saveParticipantAnswer(
 ): Promise<{ readonly saved: boolean }> {
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/participants/answers`,
+    "POST",
+    input
+  );
+}
+
+export function getEventExpenses(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventExpensesView> {
+  return requestAdminApi(
+    `events/${encodeURIComponent(eventId)}/expenses`,
+    signal
+  );
+}
+
+export function addVendor(
+  input: CreateVendorRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation("vendors", "POST", input);
+}
+
+export function addEventExpense(
+  eventId: string,
+  input: CreateEventExpenseRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/expenses`,
+    "POST",
+    input
+  );
+}
+
+export function updateEventExpense(
+  eventId: string,
+  input: UpdateEventExpenseRequest
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/expenses/update`,
+    "POST",
+    input
+  );
+}
+
+export function cancelEventExpense(
+  eventId: string,
+  input: CancelEventExpenseRequest
+): Promise<{ readonly cancelled: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/expenses/cancel`,
     "POST",
     input
   );

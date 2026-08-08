@@ -43,6 +43,9 @@
       ],
       "@ticket-platform/contracts/admin-participants": [
         "../../packages/contracts/src/admin-participants.ts"
+      ],
+      "@ticket-platform/contracts/admin-expenses": [
+        "../../packages/contracts/src/admin-expenses.ts"
       ]
     }
   },
