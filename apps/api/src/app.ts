@@ -79,6 +79,10 @@ import {
   type AdminTeamHandler
 } from "./admin-team-api.js";
 import {
+  AdminOverviewApiModule,
+  type AdminOverviewHandler
+} from "./admin-overview-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -153,6 +157,7 @@ export interface ApiApplicationOptions {
   readonly adminExpenses?: AdminExpensesHandler;
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
+  readonly adminOverview?: AdminOverviewHandler;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -214,6 +219,9 @@ class ApiModule {
         ...(options.adminTeam
           ? [AdminTeamApiModule.register(options.adminTeam)]
           : []),
+        ...(options.adminOverview
+          ? [AdminOverviewApiModule.register(options.adminOverview)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -252,6 +260,7 @@ export async function createApiApplication(
       || options.adminExpenses
       || options.adminInventory
       || options.adminTeam
+      || options.adminOverview
     )
     && !options.adminAuth
   ) {

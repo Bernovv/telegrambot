@@ -323,6 +323,13 @@ test("allowlists only implemented administrator API methods and paths", () => {
   );
   assert.equal(
     isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/overview"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
       "POST",
       "events/00000000-0000-4000-8000-000000000101/team/remove"
     ),

@@ -52,6 +52,9 @@
       ],
       "@ticket-platform/contracts/admin-organizers": [
         "../../packages/contracts/src/admin-organizers.ts"
+      ],
+      "@ticket-platform/contracts/admin-overview": [
+        "../../packages/contracts/src/admin-overview.ts"
       ]
     }
   },

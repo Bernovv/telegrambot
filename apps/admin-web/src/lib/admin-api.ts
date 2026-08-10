@@ -80,6 +80,7 @@ import type {
   EventParticipantsView,
   SaveParticipantAnswerRequest
 } from "@ticket-platform/contracts/admin-participants";
+import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
 import type {
   CreateEventOrganizerRequest,
   EventTeamView,
@@ -298,6 +299,13 @@ export function recordInventoryMovement(
     "POST",
     input
   );
+}
+
+export function getEventOverview(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventOverview> {
+  return requestAdminApi(`events/${encodeURIComponent(eventId)}/overview`, signal);
 }
 
 export function getEventTeam(

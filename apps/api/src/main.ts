@@ -7,6 +7,7 @@ import {
   AdminEventExpensesService,
   AdminEventInventoryService,
   AdminEventTeamService,
+  AdminEventOverviewService,
   AdminCancelOrderService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
@@ -72,6 +73,7 @@ import {
   createAdminEventExpensesPersistence,
   createAdminEventInventoryPersistence,
   createAdminEventTeamPersistence,
+  createAdminEventOverviewPersistence,
   PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
@@ -315,6 +317,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           idGenerator
         )
       : undefined;
+    const adminOverview = adminAuth
+      ? new AdminEventOverviewService(
+          createAdminEventOverviewPersistence(pool).repository,
+          { now: () => new Date() }
+        )
+      : undefined;
     const orders = adminAuth
       ? (() => {
           const persistence = createOrderSalesPersistence(pool, idGenerator);
@@ -552,6 +560,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminExpenses ? { adminExpenses } : {}),
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),
+      ...(adminOverview ? { adminOverview } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

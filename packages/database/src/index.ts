@@ -37,4 +37,5 @@ export * from "./admin-event-participants-persistence.js";
 export * from "./admin-event-expenses-persistence.js";
 export * from "./admin-event-inventory-persistence.js";
 export * from "./admin-event-team-persistence.js";
+export * from "./admin-event-overview-persistence.js";
 export * from "./telegram-access-persistence.js";

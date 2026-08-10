@@ -1157,6 +1157,55 @@ tbody tr:hover {
   gap: 8px;
 }
 
+/* Чек-лист готовности на обзоре: каждый пункт ведёт туда, где его доделывают. */
+.readiness-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.readiness-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 14px;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.readiness-item:hover {
+  border-color: var(--line-strong);
+}
+
+.readiness-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: 50%;
+}
+
+.readiness-done .readiness-mark {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.readiness-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.readiness-copy small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .money-negative {
   color: var(--danger);
 }

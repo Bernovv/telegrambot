@@ -41,4 +41,5 @@ export * from "./admin-participants.js";
 export * from "./admin-expenses.js";
 export * from "./admin-inventory.js";
 export * from "./admin-organizers.js";
+export * from "./admin-overview.js";
 export * from "./orders.js";
