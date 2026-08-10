@@ -1157,6 +1157,11 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.accommodation-short {
+  color: var(--warning);
+  font-weight: 650;
+}
+
 /* Список экранов правки на вкладке «Настройки». */
 .settings-list {
   display: grid;

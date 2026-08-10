@@ -5,6 +5,9 @@
  * спать в одной палатке. Незнакомых между собой не подселяем автоматически, поэтому
  * одиночная компания получает свою палатку и попадает в список «спросить о подселении» —
  * решение остаётся за человеком. Ребёнок занимает полноценное место.
+ *
+ * Если про компанию уже известно, что она живёт отдельно (`privateTent`), спрашивать не о
+ * чем: из списка одиночек и из подсказки про объединение она уходит.
  */
 
 export interface AccommodationParty {
@@ -16,6 +19,12 @@ export interface AccommodationParty {
   readonly orderNumbers: readonly string[];
   /** Компания собрана вручную из нескольких заказов пометкой «селить вместе». */
   readonly merged: boolean;
+  /**
+   * Человек хочет палатку на себя, и это уже решено. Такая компания не попадает ни в
+   * список «спросить о подселении», ни в подсказку про объединение: пустое место у неё
+   * оплачено осознанно, а не забыто.
+   */
+  readonly privateTent: boolean;
 }
 
 export interface TentAllocation {
@@ -89,7 +98,8 @@ export function planTents(
     .sort((left, right) => right.capacity - left.capacity);
 
   const singles = allocations
-    .filter((allocation) => allocation.party.berths === 1)
+    .filter((allocation) =>
+      allocation.party.berths === 1 && !allocation.party.privateTent)
     .map((allocation) => allocation.party);
 
   return {

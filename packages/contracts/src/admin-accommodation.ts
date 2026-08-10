@@ -131,6 +131,8 @@ export interface AccommodationPartyView {
   readonly note: string;
   readonly tents: readonly number[];
   readonly emptyBerths: number;
+  /** Человек попросил палатку на себя: о подселении его больше не спрашивают. */
+  readonly privateTent: boolean;
 }
 
 export interface AccommodationTentCount {
@@ -197,6 +199,12 @@ export interface AccommodationSummary {
 
 export interface MergeAccommodationPartiesRequest {
   readonly orderIds: readonly string[];
+  readonly note?: string;
+}
+
+export interface SetPrivateTentRequest {
+  readonly orderId: string;
+  readonly wanted: boolean;
   readonly note?: string;
 }
 

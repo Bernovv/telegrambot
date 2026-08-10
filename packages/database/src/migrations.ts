@@ -174,5 +174,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260808140000_event_expenses",
     description: "Add vendors, expense categories and event expenses with estimate and actuals",
     destructive: false
+  },
+  {
+    id: "20260808160000_inventory_and_private_tents",
+    description: "Add the company stock with kits, per-event needs and the sleep-alone mark",
+    destructive: false
   }
 ];

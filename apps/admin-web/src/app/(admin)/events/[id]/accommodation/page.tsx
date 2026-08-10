@@ -9,6 +9,7 @@ import {
   getAccommodationSummary,
   mergeAccommodationParties,
   removeEventParticipant,
+  setPrivateTent,
   splitAccommodationGroup
 } from "@/lib/admin-api";
 import { formatDateTime, formatKopecks } from "@/lib/format";
@@ -18,7 +19,10 @@ import type {
   EventParticipant,
   EventParticipantSource
 } from "@ticket-platform/contracts/admin-accommodation";
+import Link from "next/link";
 import {
+  BedSingle,
+  Boxes,
   CircleAlert,
   Link2,
   Link2Off,
@@ -271,7 +275,8 @@ export default function EventAccommodationPage() {
             Одиночек: <strong>{summary.mergeSuggestion.singleParties}</strong>. Сейчас это{" "}
             {summary.mergeSuggestion.tentsNow} палаток, при подселении хватило бы{" "}
             {summary.mergeSuggestion.tentsIfMerged}. Незнакомых сама система не селит —
-            договоритесь и объедините вручную.
+            договоритесь и объедините вручную. Кто хочет жить один, отмечается в таблице
+            ниже и из этой подсказки уходит.
           </span>
         </div>
       ) : null}
@@ -483,6 +488,17 @@ export default function EventAccommodationPage() {
                     mutating={mutating}
                     checked={selected.includes(party.key)}
                     onToggle={() => toggle(party.key)}
+                    onPrivateTent={(wanted) => {
+                      const orderId = party.orderIds[0];
+                      if (orderId) {
+                        void run(
+                          () => setPrivateTent(id, { orderId, wanted }),
+                          wanted
+                            ? "Отмечено: живёт один."
+                            : "Пометка снята — можно подселять."
+                        );
+                      }
+                    }}
                     onSplit={() => {
                       if (party.groupId) {
                         void run(
@@ -558,6 +574,13 @@ export default function EventAccommodationPage() {
           <Tent size={15} aria-hidden="true" />
           Палатки подбираются так, чтобы пустых мест было меньше, а при равном результате —
           чтобы палаток было меньше. Размеры: {summary.tentCapacities.join(" и ")} мест.
+          Кто отмечен «живёт один», о подселении больше не спрашивается.
+        </p>
+        <p>
+          <Boxes size={15} aria-hidden="true" />
+          Что грузим руками — на вкладке{" "}
+          <Link href={`/events/${id}/inventory`}>Инвентарь</Link>: там склад, комплекты и
+          отметки о погрузке.
         </p>
         <p>
           <UtensilsCrossed size={15} aria-hidden="true" />
@@ -588,7 +611,8 @@ function PartyRow({
   mutating,
   checked,
   onToggle,
-  onSplit
+  onSplit,
+  onPrivateTent
 }: {
   readonly party: AccommodationPartyView;
   readonly canManage: boolean;
@@ -596,6 +620,7 @@ function PartyRow({
   readonly checked: boolean;
   readonly onToggle: () => void;
   readonly onSplit: () => void;
+  readonly onPrivateTent: (wanted: boolean) => void;
 }) {
   return (
     <tr>
@@ -617,6 +642,11 @@ function PartyRow({
               <Link2 size={13} /> селим вместе
             </span>
           ) : null}
+          {party.privateTent ? (
+            <span className="accommodation-merged">
+              <BedSingle size={13} /> живёт один
+            </span>
+          ) : null}
           {party.note ? <span className="muted">{party.note}</span> : null}
         </div>
       </td>
@@ -629,17 +659,32 @@ function PartyRow({
       </td>
       <td className="muted accommodation-orders">{party.orderNumbers.join(", ")}</td>
       <td>
-        {canManage && party.groupId ? (
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={onSplit}
-          >
-            <Link2Off size={15} />
-            Разъединить
-          </button>
-        ) : null}
+        <div className="outreach-toolbar-actions">
+          {canManage && party.groupId ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={mutating}
+              onClick={onSplit}
+            >
+              <Link2Off size={15} />
+              Разъединить
+            </button>
+          ) : null}
+          {/* Пометка живёт на заказе, поэтому у объединённой вручную компании её нет:
+              там уже решено, что люди спят вместе. */}
+          {canManage && !party.merged && party.orderIds.length === 1 ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={mutating}
+              onClick={() => onPrivateTent(!party.privateTent)}
+            >
+              <BedSingle size={15} />
+              {party.privateTent ? "Можно подселять" : "Живёт один"}
+            </button>
+          ) : null}
+        </div>
       </td>
     </tr>
   );

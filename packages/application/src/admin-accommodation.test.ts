@@ -116,7 +116,8 @@ function participant(
 function summaryOf(
   items: readonly AccommodationOrderItemRow[],
   groups: readonly AccommodationGroupRow[] = [],
-  participants: readonly EventParticipant[] = []
+  participants: readonly EventParticipant[] = [],
+  privateTentOrderIds: readonly string[] = []
 ) {
   return buildSummary({
     event: EVENT,
@@ -125,6 +126,7 @@ function summaryOf(
     participantFields: [],
     excludedOrders: 0,
     groups,
+    privateTentOrderIds,
     lastPlan: null,
     canManage: true,
     canManageParticipants: true,
@@ -178,6 +180,30 @@ describe("buildSummary", () => {
     assert.deepEqual(summary.mergeSuggestion, {
       singleParties: 3,
       tentsNow: 3,
+      tentsIfMerged: 1
+    });
+  });
+
+  // Человек попросил палатку на себя. Подсказка про подселение больше не должна его
+  // считать: она предлагала бы то, о чём уже договорились.
+  it("stops asking about sharing once a guest is marked as sleeping alone", () => {
+    const summary = summaryOf(
+      [
+        vipAdult("order-1", "A-1", 1),
+        vipAdult("order-2", "A-2", 1),
+        vipAdult("order-3", "A-3", 1)
+      ],
+      [],
+      [],
+      ["order-3"]
+    );
+
+    // Палаток по-прежнему три: место в его палатке никуда не делось, оно оплачено осознанно.
+    assert.equal(summary.totalTents, 3);
+    assert.equal(summary.singles.length, 2);
+    assert.deepEqual(summary.mergeSuggestion, {
+      singleParties: 2,
+      tentsNow: 2,
       tentsIfMerged: 1
     });
   });
@@ -345,6 +371,7 @@ describe("buildSummary", () => {
       participantFields: [],
       excludedOrders: 0,
       groups: [],
+      privateTentOrderIds: [],
       lastPlan: {
         id: "plan-1",
         fixedAt: "2026-08-05T09:00:00.000Z",
@@ -373,6 +400,7 @@ class FakeRepository implements AdminAccommodationRepository {
   readonly updatedParticipants: unknown[] = [];
   readonly createdFields: unknown[] = [];
   readonly savedFieldValues: unknown[] = [];
+  readonly privateTents: unknown[] = [];
 
   constructor(
     private readonly items: readonly AccommodationOrderItemRow[] = [],
@@ -392,6 +420,15 @@ class FakeRepository implements AdminAccommodationRepository {
 
   listGroups(): Promise<readonly AccommodationGroupRow[]> {
     return Promise.resolve([]);
+  }
+
+  listPrivateTentOrderIds(): Promise<readonly string[]> {
+    return Promise.resolve([]);
+  }
+
+  setPrivateTent(input: unknown): Promise<boolean> {
+    this.privateTents.push(input);
+    return Promise.resolve(this.mutationFound);
   }
 
   listParticipants(): Promise<readonly EventParticipant[]> {

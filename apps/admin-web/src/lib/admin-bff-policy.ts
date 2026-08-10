@@ -33,6 +33,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/expenses$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/inventory$/i.test(path)
       || path === "broadcasts"
       || path === "broadcasts/audience";
   }
@@ -60,12 +61,17 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/scenario-versions\/[0-9a-f-]{36}\/publish$/i
         .test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation\/groups$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/accommodation\/private-tent$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation\/groups\/split$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation\/plans$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers)$/i.test(path)
       || path === "vendors"
       || /^events\/[0-9a-f-]{36}\/expenses(?:\/(?:update|cancel))?$/i.test(path)
+      || path === "inventory/items"
+      || path === "inventory/components"
+      || /^events\/[0-9a-f-]{36}\/inventory\/(?:needs|needs\/update|movements)$/i
+        .test(path)
       || /^events\/[0-9a-f-]{36}\/participant-fields$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participant-fields\/(?:delete|value)$/i.test(path)
       || /^orders\/[0-9a-f-]{36}\/(?:exclude|include|cancel)$/i.test(path)

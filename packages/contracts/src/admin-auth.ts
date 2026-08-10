@@ -13,6 +13,8 @@ export const ADMIN_PERMISSIONS = [
   "participants.manage",
   "expenses.read",
   "expenses.manage",
+  "inventory.read",
+  "inventory.manage",
   "orders.exclude",
   "orders.cancel",
   "orders.read",

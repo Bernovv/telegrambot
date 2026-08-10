@@ -6,6 +6,7 @@ import type {
   CreateAccommodationGroupInput,
   CreateEventParticipantInput,
   CreateParticipantFieldInput,
+  SetPrivateTentInput,
   DeleteEventParticipantInput,
   SetParticipantFieldValueInput,
   UpdateEventParticipantInput,
@@ -247,6 +248,57 @@ export class PostgresAdminAccommodationRepository
         customFields: valuesByParticipant.get(row.id) ?? [],
         createdAt: new Date(row.created_at).toISOString()
       }));
+    });
+  }
+
+  /** Заказы, про которые уже решено: живут отдельно, о подселении не спрашиваем. */
+  async listPrivateTentOrderIds(eventId: string): Promise<readonly string[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<{ readonly order_id: string }>(
+        `select order_id
+           from public.accommodation_private_tents
+          where event_id = $1::uuid`,
+        [eventId]
+      );
+      return result.rows.map((row) => row.order_id);
+    });
+  }
+
+  /**
+   * Пометка ставится и снимается одним методом: человек может передумать и согласиться на
+   * подселение, и тогда строка просто уходит.
+   */
+  async setPrivateTent(input: SetPrivateTentInput): Promise<boolean> {
+    return this.write(async (connection) => {
+      const order = await connection.query<{ readonly id: string }>(
+        `select id from public.orders
+          where id = $1::uuid and event_id = $2::uuid and status = 'paid'`,
+        [input.orderId, input.eventId]
+      );
+      if (order.rows.length === 0) {
+        return false;
+      }
+
+      if (!input.wanted) {
+        await connection.query(
+          `delete from public.accommodation_private_tents
+            where event_id = $1::uuid and order_id = $2::uuid`,
+          [input.eventId, input.orderId]
+        );
+        return true;
+      }
+
+      await connection.query(
+        `insert into public.accommodation_private_tents (
+           event_id, order_id, note, set_by_admin_id
+         ) values ($1::uuid, $2::uuid, $3::text, $4::uuid)
+         on conflict (event_id, order_id) do update
+           set note = excluded.note,
+               set_by_admin_id = excluded.set_by_admin_id,
+               set_at = now()`,
+        [input.eventId, input.orderId, input.note, input.adminId]
+      );
+      return true;
     });
   }
 

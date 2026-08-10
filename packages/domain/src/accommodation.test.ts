@@ -4,13 +4,19 @@ import { planTents, type AccommodationParty } from "./accommodation.js";
 
 const CAPACITIES = [2, 3];
 
-function party(key: string, berths: number, merged = false): AccommodationParty {
+function party(
+  key: string,
+  berths: number,
+  merged = false,
+  privateTent = false
+): AccommodationParty {
   return {
     key,
     berths,
     title: `Компания ${key}`,
     orderNumbers: [key],
-    merged
+    merged,
+    privateTent
   };
 }
 
@@ -69,6 +75,34 @@ describe("planTents", () => {
       tentsNow: 3,
       tentsIfMerged: 1
     });
+  });
+
+  // Человек попросил палатку на себя — спрашивать его о подселении больше не о чем, и в
+  // подсказку он входить не должен, иначе она предлагает то, что уже решено.
+  it("leaves out the guests who asked to sleep alone", () => {
+    const plan = planTents(
+      [party("one", 1), party("two", 1), party("alone", 1, false, true)],
+      CAPACITIES
+    );
+
+    assert.equal(plan.totalTents, 3);
+    assert.deepEqual(plan.singles.map((single) => single.key), ["one", "two"]);
+    assert.deepEqual(plan.mergeSuggestion, {
+      singleParties: 2,
+      tentsNow: 2,
+      tentsIfMerged: 1
+    });
+  });
+
+  it("stops suggesting anything once everyone left is sleeping alone by choice", () => {
+    const plan = planTents(
+      [party("a", 1, false, true), party("b", 1, false, true)],
+      CAPACITIES
+    );
+
+    assert.equal(plan.totalTents, 2);
+    assert.equal(plan.singles.length, 0);
+    assert.equal(plan.mergeSuggestion, null);
   });
 
   it("keeps quiet about merging when there is nothing to gain", () => {

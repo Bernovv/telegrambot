@@ -46,6 +46,9 @@
       ],
       "@ticket-platform/contracts/admin-expenses": [
         "../../packages/contracts/src/admin-expenses.ts"
+      ],
+      "@ticket-platform/contracts/admin-inventory": [
+        "../../packages/contracts/src/admin-inventory.ts"
       ]
     }
   },

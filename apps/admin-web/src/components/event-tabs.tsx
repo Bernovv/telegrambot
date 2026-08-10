@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Boxes,
   ClipboardList,
   LayoutDashboard,
   Settings2,
@@ -26,6 +27,7 @@ const TABS = [
   { segment: "questionnaire", label: "Анкеты", icon: ClipboardList },
   { segment: "accommodation", label: "Логистика", icon: Tent },
   { segment: "expenses", label: "Расходы", icon: Wallet },
+  { segment: "inventory", label: "Инвентарь", icon: Boxes },
   { segment: "settings", label: "Настройки", icon: Settings2 }
 ] as const;
 

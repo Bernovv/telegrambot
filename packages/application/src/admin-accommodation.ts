@@ -130,6 +130,15 @@ export interface DeleteEventParticipantInput {
   readonly deletedAt: Date;
 }
 
+export interface SetPrivateTentInput {
+  readonly eventId: string;
+  readonly orderId: string;
+  /** `false` снимает пометку: человек передумал и готов к подселению. */
+  readonly wanted: boolean;
+  readonly note: string;
+  readonly adminId: string;
+}
+
 export interface ExcludeOrderInput {
   readonly orderId: string;
   readonly reason: string;
@@ -143,6 +152,8 @@ export interface AdminAccommodationRepository {
   listParticipants(eventId: string): Promise<readonly EventParticipant[]>;
   countExcludedOrders(eventId: string): Promise<number>;
   listGroups(eventId: string): Promise<readonly AccommodationGroupRow[]>;
+  listPrivateTentOrderIds(eventId: string): Promise<readonly string[]>;
+  setPrivateTent(input: SetPrivateTentInput): Promise<boolean>;
   findLastPlan(eventId: string): Promise<AccommodationFixedPlan | null>;
   hasPermission(adminId: string, permission: string): Promise<boolean>;
   createGroup(input: CreateAccommodationGroupInput): Promise<void>;
@@ -466,15 +477,23 @@ export class AdminAccommodationService {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, participants, participantFields, excludedOrders, groups, lastPlan] =
-      await Promise.all([
-        this.repository.listPaidOrderItems(eventId),
-        this.repository.listParticipants(eventId),
-        this.repository.listParticipantFields(eventId),
-        this.repository.countExcludedOrders(eventId),
-        this.repository.listGroups(eventId),
-        this.repository.findLastPlan(eventId)
-      ]);
+    const [
+      items,
+      participants,
+      participantFields,
+      excludedOrders,
+      groups,
+      privateTentOrderIds,
+      lastPlan
+    ] = await Promise.all([
+      this.repository.listPaidOrderItems(eventId),
+      this.repository.listParticipants(eventId),
+      this.repository.listParticipantFields(eventId),
+      this.repository.countExcludedOrders(eventId),
+      this.repository.listGroups(eventId),
+      this.repository.listPrivateTentOrderIds(eventId),
+      this.repository.findLastPlan(eventId)
+    ]);
 
     return buildSummary({
       event,
@@ -483,11 +502,40 @@ export class AdminAccommodationService {
       participantFields,
       excludedOrders,
       groups,
+      privateTentOrderIds,
       lastPlan,
       canManage,
       canManageParticipants,
       calculatedAt: this.clock.now()
     });
+  }
+
+  /**
+   * «Живут одни». Пометка на заказ: компания собирается заново при каждом расчёте, а
+   * заказ живёт. Помеченные уходят из списка одиночек и из подсказки про объединение —
+   * предлагать подселение тому, кто уже попросил отдельную палатку, незачем.
+   */
+  async setPrivateTent(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly orderId: string;
+    readonly wanted: boolean;
+    readonly note?: string;
+  }): Promise<void> {
+    requirePermission(input.actor, "accommodation.manage");
+    requireUuid(input.eventId);
+    requireUuid(input.orderId);
+
+    const saved = await this.repository.setPrivateTent({
+      eventId: input.eventId,
+      orderId: input.orderId,
+      wanted: input.wanted,
+      note: (input.note ?? "").trim().slice(0, 500),
+      adminId: input.actor.adminId
+    });
+    if (!saved) {
+      throw new OrderNotFoundError();
+    }
   }
 
   async mergeParties(input: {
@@ -549,14 +597,21 @@ export class AdminAccommodationService {
       throw new AccommodationEventNotFoundError();
     }
 
-    const [items, participants, participantFields, excludedOrders, groups] =
-      await Promise.all([
-        this.repository.listPaidOrderItems(input.eventId),
-        this.repository.listParticipants(input.eventId),
-        this.repository.listParticipantFields(input.eventId),
-        this.repository.countExcludedOrders(input.eventId),
-        this.repository.listGroups(input.eventId)
-      ]);
+    const [
+      items,
+      participants,
+      participantFields,
+      excludedOrders,
+      groups,
+      privateTentOrderIds
+    ] = await Promise.all([
+      this.repository.listPaidOrderItems(input.eventId),
+      this.repository.listParticipants(input.eventId),
+      this.repository.listParticipantFields(input.eventId),
+      this.repository.countExcludedOrders(input.eventId),
+      this.repository.listGroups(input.eventId),
+      this.repository.listPrivateTentOrderIds(input.eventId)
+    ]);
     const summary = buildSummary({
       event,
       items,
@@ -564,6 +619,7 @@ export class AdminAccommodationService {
       participantFields,
       excludedOrders,
       groups,
+      privateTentOrderIds,
       lastPlan: null,
       canManage: true,
       canManageParticipants: true,
@@ -607,6 +663,8 @@ interface SummaryInput {
   readonly participantFields: readonly EventParticipantFieldDefinition[];
   readonly excludedOrders: number;
   readonly groups: readonly AccommodationGroupRow[];
+  /** Заказы, для которых уже решено: живут отдельно, о подселении не спрашиваем. */
+  readonly privateTentOrderIds: readonly string[];
   readonly lastPlan: AccommodationFixedPlan | null;
   readonly canManage: boolean;
   readonly canManageParticipants: boolean;
@@ -710,7 +768,8 @@ export function buildSummary(input: SummaryInput): AccommodationSummary {
   const { parties, partyMeta } = buildParties(
     [...orders.values()],
     input.groups,
-    input.participants
+    input.participants,
+    new Set(input.privateTentOrderIds)
   );
   const plan = planTents(parties, [...DEFAULT_TENT_CAPACITIES]);
 
@@ -791,7 +850,8 @@ interface PartyMeta {
 function buildParties(
   orders: readonly OrderTotals[],
   groups: readonly AccommodationGroupRow[],
-  participants: readonly EventParticipant[]
+  participants: readonly EventParticipant[],
+  privateTentOrderIds: ReadonlySet<string>
 ): {
   readonly parties: readonly AccommodationParty[];
   readonly partyMeta: ReadonlyMap<string, PartyMeta>;
@@ -826,7 +886,9 @@ function buildParties(
       berths,
       title: members.map(orderTitle).join(", "),
       orderNumbers: members.map((member) => member.orderNumber),
-      merged: true
+      merged: true,
+      // Объединённая вручную компания уже не одиночка, спрашивать о подселении нечего.
+      privateTent: false
     });
     partyMeta.set(`group:${group.groupId}`, {
       orderIds: members.map((member) => member.orderId),
@@ -845,7 +907,8 @@ function buildParties(
       berths: order.berths,
       title: orderTitle(order),
       orderNumbers: [order.orderNumber],
-      merged: false
+      merged: false,
+      privateTent: privateTentOrderIds.has(order.orderId)
     });
     partyMeta.set(key, { orderIds: [order.orderId], groupId: null, note: "" });
   }
@@ -857,7 +920,10 @@ function buildParties(
       berths: participant.sleepingPlaces,
       title: participant.displayName,
       orderNumbers: [sourceLabel(participant.source)],
-      merged: false
+      merged: false,
+      // У заведённого руками заказа нет, помечать нечего: спальные места ему проставляют
+      // руками и там же решают, сколько их.
+      privateTent: false
     });
     partyMeta.set(key, { orderIds: [], groupId: null, note: participant.note });
   }
@@ -887,7 +953,8 @@ function toPartyView(
     groupId: meta?.groupId ?? null,
     note: meta?.note ?? "",
     tents,
-    emptyBerths
+    emptyBerths,
+    privateTent: party.privateTent
   };
 }
 

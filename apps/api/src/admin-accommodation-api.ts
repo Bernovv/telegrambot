@@ -53,6 +53,12 @@ const splitBody = z.object({
   groupId: uuid
 }).strict();
 
+const privateTentBody = z.object({
+  orderId: uuid,
+  wanted: z.boolean(),
+  note: z.string().trim().max(500).optional()
+}).strict();
+
 const fixPlanBody = z.object({
   note: z.string().trim().max(500).optional()
 }).strict();
@@ -132,6 +138,7 @@ export type AdminAccommodationHandler = Pick<
   | "mergeParties"
   | "splitGroup"
   | "fixPlan"
+  | "setPrivateTent"
   | "addParticipant"
   | "updateParticipant"
   | "removeParticipant"
@@ -198,6 +205,27 @@ export class AdminAccommodationController {
       })
     );
     return { split: true };
+  }
+
+  /** «Живут одни»: человек попросил палатку на себя, о подселении его больше не спрашиваем. */
+  @Post(":eventId/accommodation/private-tent")
+  @RequireAdminPermission("accommodation.manage")
+  async setPrivateTent(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(privateTentBody, body);
+    await execute(() =>
+      this.handler.setPrivateTent({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        orderId: parsed.orderId,
+        wanted: parsed.wanted,
+        ...(parsed.note !== undefined ? { note: parsed.note } : {})
+      })
+    );
+    return { saved: true };
   }
 
   @Post(":eventId/accommodation/plans")

@@ -73,12 +73,21 @@ import type {
   AccommodationSummary,
   CreateEventParticipantFieldRequest,
   CreateEventParticipantRequest,
+  SetPrivateTentRequest,
   UpdateEventParticipantRequest
 } from "@ticket-platform/contracts/admin-accommodation";
 import type {
   EventParticipantsView,
   SaveParticipantAnswerRequest
 } from "@ticket-platform/contracts/admin-participants";
+import type {
+  CreateEventInventoryNeedRequest,
+  CreateInventoryItemRequest,
+  EventInventoryView,
+  RecordInventoryMovementRequest,
+  SetInventoryComponentRequest,
+  UpdateEventInventoryNeedRequest
+} from "@ticket-platform/contracts/admin-inventory";
 import type {
   CancelEventExpenseRequest,
   CreateEventExpenseRequest,
@@ -214,6 +223,72 @@ export function cancelEventExpense(
 ): Promise<{ readonly cancelled: boolean }> {
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/expenses/cancel`,
+    "POST",
+    input
+  );
+}
+
+export function setPrivateTent(
+  eventId: string,
+  input: SetPrivateTentRequest
+): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/accommodation/private-tent`,
+    "POST",
+    input
+  );
+}
+
+export function getEventInventory(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventInventoryView> {
+  return requestAdminApi(
+    `events/${encodeURIComponent(eventId)}/inventory`,
+    signal
+  );
+}
+
+export function addInventoryItem(
+  input: CreateInventoryItemRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation("inventory/items", "POST", input);
+}
+
+export function setInventoryComponent(
+  input: SetInventoryComponentRequest
+): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation("inventory/components", "POST", input);
+}
+
+export function addEventInventoryNeed(
+  eventId: string,
+  input: CreateEventInventoryNeedRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/inventory/needs`,
+    "POST",
+    input
+  );
+}
+
+export function updateEventInventoryNeed(
+  eventId: string,
+  input: UpdateEventInventoryNeedRequest
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/inventory/needs/update`,
+    "POST",
+    input
+  );
+}
+
+export function recordInventoryMovement(
+  eventId: string,
+  input: RecordInventoryMovementRequest
+): Promise<{ readonly recorded: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/inventory/movements`,
     "POST",
     input
   );

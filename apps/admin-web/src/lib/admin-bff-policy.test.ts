@@ -308,6 +308,28 @@ test("allowlists only implemented administrator API methods and paths", () => {
   assert.equal(isAllowedAdminApiPath("POST", "vendors"), true);
   assert.equal(
     isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/inventory"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("POST", "inventory/items"), true);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/inventory/movements"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/accommodation/private-tent"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
       "POST",
       "events/00000000-0000-4000-8000-000000000101/expenses/cancel"
     ),
@@ -426,6 +448,13 @@ test("allowlists the operational endpoints backing the administrator screens", (
     false
   );
   assert.equal(isAllowedAdminApiPath("GET", "vendors"), false);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/inventory/movements"
+    ),
+    false
+  );
 });
 
 test("demands a forwardable idempotency key for money-moving requests only", () => {
