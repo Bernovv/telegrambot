@@ -75,6 +75,10 @@ import {
   type AdminInventoryHandler
 } from "./admin-inventory-api.js";
 import {
+  AdminTeamApiModule,
+  type AdminTeamHandler
+} from "./admin-team-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -148,6 +152,7 @@ export interface ApiApplicationOptions {
   readonly adminEventParticipants?: AdminEventParticipantsHandler;
   readonly adminExpenses?: AdminExpensesHandler;
   readonly adminInventory?: AdminInventoryHandler;
+  readonly adminTeam?: AdminTeamHandler;
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -206,6 +211,9 @@ class ApiModule {
         ...(options.adminInventory
           ? [AdminInventoryApiModule.register(options.adminInventory)]
           : []),
+        ...(options.adminTeam
+          ? [AdminTeamApiModule.register(options.adminTeam)]
+          : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
               options.tbankWebhook.config,
@@ -243,6 +251,7 @@ export async function createApiApplication(
       || options.adminAccommodation
       || options.adminExpenses
       || options.adminInventory
+      || options.adminTeam
     )
     && !options.adminAuth
   ) {

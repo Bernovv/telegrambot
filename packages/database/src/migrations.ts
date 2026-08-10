@@ -179,5 +179,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260808160000_inventory_and_private_tents",
     description: "Add the company stock with kits, per-event needs and the sleep-alone mark",
     destructive: false
+  },
+  {
+    id: "20260808180000_event_organizers",
+    description: "Add the organizer roster and their profit shares, visible to the owner only",
+    destructive: false
   }
 ];

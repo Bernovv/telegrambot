@@ -3,6 +3,7 @@
 import {
   Boxes,
   ClipboardList,
+  HandCoins,
   LayoutDashboard,
   Settings2,
   Tent,
@@ -28,6 +29,7 @@ const TABS = [
   { segment: "accommodation", label: "Логистика", icon: Tent },
   { segment: "expenses", label: "Расходы", icon: Wallet },
   { segment: "inventory", label: "Инвентарь", icon: Boxes },
+  { segment: "team", label: "Команда", icon: HandCoins },
   { segment: "settings", label: "Настройки", icon: Settings2 }
 ] as const;
 

@@ -34,6 +34,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/accommodation$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/expenses$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/inventory$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/team$/i.test(path)
       || path === "broadcasts"
       || path === "broadcasts/audience";
   }
@@ -68,6 +69,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers)$/i.test(path)
       || path === "vendors"
       || /^events\/[0-9a-f-]{36}\/expenses(?:\/(?:update|cancel))?$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/team(?:\/(?:update|remove))?$/i.test(path)
       || path === "inventory/items"
       || path === "inventory/components"
       || /^events\/[0-9a-f-]{36}\/inventory\/(?:needs|needs\/update|movements)$/i

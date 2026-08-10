@@ -6,6 +6,7 @@ import {
   AdminEventParticipantsService,
   AdminEventExpensesService,
   AdminEventInventoryService,
+  AdminEventTeamService,
   AdminCancelOrderService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
@@ -70,6 +71,7 @@ import {
   createAdminEventParticipantsPersistence,
   createAdminEventExpensesPersistence,
   createAdminEventInventoryPersistence,
+  createAdminEventTeamPersistence,
   PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
@@ -302,6 +304,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
     const adminInventory = adminAuth
       ? new AdminEventInventoryService(
           createAdminEventInventoryPersistence(pool).repository,
+          { now: () => new Date() },
+          idGenerator
+        )
+      : undefined;
+    const adminTeam = adminAuth
+      ? new AdminEventTeamService(
+          createAdminEventTeamPersistence(pool).repository,
           { now: () => new Date() },
           idGenerator
         )
@@ -542,6 +551,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminEventParticipants ? { adminEventParticipants } : {}),
       ...(adminExpenses ? { adminExpenses } : {}),
       ...(adminInventory ? { adminInventory } : {}),
+      ...(adminTeam ? { adminTeam } : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

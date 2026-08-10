@@ -15,6 +15,8 @@ export const ADMIN_PERMISSIONS = [
   "expenses.manage",
   "inventory.read",
   "inventory.manage",
+  "event_finance.read",
+  "event_finance.manage",
   "orders.exclude",
   "orders.cancel",
   "orders.read",

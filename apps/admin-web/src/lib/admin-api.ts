@@ -81,6 +81,12 @@ import type {
   SaveParticipantAnswerRequest
 } from "@ticket-platform/contracts/admin-participants";
 import type {
+  CreateEventOrganizerRequest,
+  EventTeamView,
+  RemoveEventOrganizerRequest,
+  UpdateEventOrganizerRequest
+} from "@ticket-platform/contracts/admin-organizers";
+import type {
   CreateEventInventoryNeedRequest,
   CreateInventoryItemRequest,
   EventInventoryView,
@@ -289,6 +295,46 @@ export function recordInventoryMovement(
 ): Promise<{ readonly recorded: boolean }> {
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/inventory/movements`,
+    "POST",
+    input
+  );
+}
+
+export function getEventTeam(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventTeamView> {
+  return requestAdminApi(`events/${encodeURIComponent(eventId)}/team`, signal);
+}
+
+export function addEventOrganizer(
+  eventId: string,
+  input: CreateEventOrganizerRequest
+): Promise<{ readonly added: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/team`,
+    "POST",
+    input
+  );
+}
+
+export function updateEventOrganizer(
+  eventId: string,
+  input: UpdateEventOrganizerRequest
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/team/update`,
+    "POST",
+    input
+  );
+}
+
+export function removeEventOrganizer(
+  eventId: string,
+  input: RemoveEventOrganizerRequest
+): Promise<{ readonly removed: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/team/remove`,
     "POST",
     input
   );

@@ -1157,6 +1157,19 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.money-negative {
+  color: var(--danger);
+}
+
+.share-input {
+  width: 74px;
+  padding: 5px 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 .accommodation-short {
   color: var(--warning);
   font-weight: 650;
