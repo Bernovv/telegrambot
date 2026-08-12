@@ -22,6 +22,7 @@
     "price:show": "pnpm --filter @ticket-platform/worker price",
     "price:set": "pnpm --filter @ticket-platform/worker price --",
     "participants:import": "pnpm --filter @ticket-platform/worker participants-import --",
+    "expenses:import": "pnpm --filter @ticket-platform/worker expenses-import --",
     "broadcast:status": "pnpm --filter @ticket-platform/worker broadcast-status --",
     "db:pgboss:generate": "node scripts/generate-pgboss-migration.mjs",
     "db:pgboss:check": "node scripts/generate-pgboss-migration.mjs --check",

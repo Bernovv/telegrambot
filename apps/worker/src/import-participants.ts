@@ -152,7 +152,7 @@ try {
         `  ${row.row.padStart(3)}  ${row.name.padEnd(32).slice(0, 32)}`
         + `${(row.phone || "—").padEnd(14)}`
         + `взр ${row.adults}  дет ${row.children}  мест ${row.sleeping}`
-        + `  ${row.amountRubles} ₽`
+        + `  ${Number(row.amountKopecks) / 100} ₽`
       );
     }
 
@@ -162,11 +162,12 @@ try {
     );
     const berths = toInsert.reduce((sum, plan) => sum + Number(plan.row.sleeping), 0);
     const money = toInsert.reduce(
-      (sum, plan) => sum + Math.round(Number(plan.row.amountRubles) * 100),
-      0
+      (sum, plan) => sum + BigInt(plan.row.amountKopecks),
+      0n
     );
     console.log(
-      `\nИтого к заведению: ${guests} гостей, ${berths} спальных мест, ${money / 100} ₽`
+      `\nИтого к заведению: ${guests} гостей, ${berths} спальных мест,`
+      + ` ${Number(money) / 100} ₽`
     );
 
     if (!options.apply) {
@@ -202,7 +203,7 @@ try {
             Number(row.children),
             Number(row.sleeping),
             [row.note, row.telegram].filter((part) => part !== "").join("; ").slice(0, 500),
-            String(Math.round(Number(row.amountRubles) * 100)),
+            row.amountKopecks,
             adminRow.id
           ]
         );

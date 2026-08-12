@@ -1,9 +1,9 @@
 /**
- * Разбор CSV со списком участников — без внешней библиотеки, потому что формат простой,
- * а лишняя зависимость в боевом воркере не окупается.
+ * Разбор CSV для переноса мероприятия из таблицы — участники и расходы.
  *
- * Поддерживает поля в кавычках: в заметках встречаются запятые («Должна 3к, стул»), и
- * наивное разрезание по запятой сдвинуло бы половину колонок.
+ * Без внешней библиотеки: формат простой, а лишняя зависимость в боевом воркере не
+ * окупается. Поля в кавычках поддерживаются — в заметках встречаются запятые («Должна 3к,
+ * стул»), и наивное разрезание по запятой сдвинуло бы половину колонок.
  */
 
 export interface ParticipantCsvRow {
@@ -14,7 +14,7 @@ export interface ParticipantCsvRow {
   readonly adults: string;
   readonly children: string;
   readonly sleeping: string;
-  readonly amountRubles: string;
+  readonly amountKopecks: string;
   readonly source: string;
   readonly note: string;
 }
@@ -68,12 +68,101 @@ export function parseParticipantsCsv(text: string): readonly ParticipantCsvRow[]
       adults: wholeNumber(value("adults"), index + 2, "adults"),
       children: wholeNumber(value("children"), index + 2, "children"),
       sleeping: wholeNumber(value("sleeping"), index + 2, "sleeping"),
-      amountRubles: amount.replace(",", "."),
+      amountKopecks: toKopecks(amount),
       source: value("source") || "direct",
       note: value("note")
     });
   }
   return rows;
+}
+
+export interface ExpenseCsvRow {
+  readonly category: string;
+  readonly title: string;
+  readonly amountKopecks: string;
+  readonly quantity: string;
+  readonly unit: string;
+  /** Пусто — значит «договорились», но ещё не отмечено оплаченным. */
+  readonly paidAt: string;
+  readonly note: string;
+}
+
+const EXPENSE_REQUIRED = ["category", "title", "amount_rub"] as const;
+
+export function parseExpensesCsv(text: string): readonly ExpenseCsvRow[] {
+  const records = splitRecords(text.replace(/^\uFEFF/, ""));
+  const header = records[0];
+  if (!header) {
+    throw new Error("Файл пуст");
+  }
+
+  const columns = header.map((name) => name.trim());
+  for (const name of EXPENSE_REQUIRED) {
+    if (!columns.includes(name)) {
+      throw new Error(`В файле нет колонки ${name}`);
+    }
+  }
+
+  const rows: ExpenseCsvRow[] = [];
+  for (const [index, cells] of records.slice(1).entries()) {
+    if (cells.every((cell) => cell.trim() === "")) {
+      continue;
+    }
+    const line = index + 2;
+    const value = (name: string): string => {
+      const at = columns.indexOf(name);
+      return at === -1 ? "" : (cells[at] ?? "").trim();
+    };
+
+    const title = value("title");
+    if (title === "") {
+      throw new Error(`Строка ${line}: пустое название расхода`);
+    }
+    const category = value("category");
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(category)) {
+      throw new Error(`Строка ${line}: статья «${category}» не похожа на код статьи`);
+    }
+    const amount = value("amount_rub");
+    if (!/^\d+([.,]\d{1,2})?$/.test(amount)) {
+      throw new Error(`Строка ${line}: сумма «${amount}» не похожа на рубли`);
+    }
+    const paidAt = value("paid_at");
+    // Дата нужна вместе с суммой: «оплачено» без даты тихо выпадает из фактических
+    // расходов и завышает прибыль, поэтому кривую дату отвергаем здесь, а не в базе.
+    if (paidAt !== "" && Number.isNaN(Date.parse(paidAt))) {
+      throw new Error(`Строка ${line}: дату «${paidAt}» не разобрать`);
+    }
+
+    rows.push({
+      category,
+      title,
+      amountKopecks: toKopecks(amount),
+      quantity: quantityOrOne(value("quantity"), line),
+      unit: value("unit"),
+      paidAt,
+      note: value("note")
+    });
+  }
+  return rows;
+}
+
+/**
+ * Рубли в копейки строками, без чисел с плавающей точкой: `7317.60 * 100` даёт
+ * 731759.9999999999, и на округлении копейка то теряется, то появляется. За мероприятие
+ * таких строк набирается достаточно, чтобы итог перестал сходиться с бумажкой.
+ */
+function toKopecks(rubles: string): string {
+  const [whole = "0", fraction = ""] = rubles.replace(",", ".").split(".");
+  const kopecks = `${whole}${fraction.padEnd(2, "0").slice(0, 2)}`;
+  return kopecks.replace(/^0+(?=\d)/, "");
+}
+
+function quantityOrOne(value: string, line: number): string {
+  const text = value === "" ? "1" : value.replace(",", ".");
+  if (!/^\d{1,6}(\.\d{1,3})?$/.test(text) || Number(text) <= 0) {
+    throw new Error(`Строка ${line}: количество «${value}» должно быть больше нуля`);
+  }
+  return text;
 }
 
 function wholeNumber(value: string, line: number, column: string): string {
