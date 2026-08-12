@@ -14,7 +14,8 @@ import {
 } from "@nestjs/common";
 import type {
   AdminAccommodationService,
-  AdminEventParticipantsService
+  AdminEventParticipantsService,
+  ImportParticipantsService
 } from "@ticket-platform/application";
 import {
   EVENT_PARTICIPANT_FIELD_TYPES,
@@ -28,6 +29,7 @@ import {
 
 const ADMIN_ACCOMMODATION = Symbol("ADMIN_ACCOMMODATION");
 const ADMIN_EVENT_PARTICIPANTS = Symbol("ADMIN_EVENT_PARTICIPANTS");
+const IMPORT_PARTICIPANTS = Symbol("IMPORT_PARTICIPANTS");
 
 type ParticipantChanges = {
   displayName?: string;
@@ -131,6 +133,23 @@ export type AdminEventParticipantsHandler = Pick<
   AdminEventParticipantsService,
   "list" | "saveAnswer"
 >;
+
+export type ImportParticipantsHandler = Pick<ImportParticipantsService, "execute">;
+
+// Пачка ограничена пятьюстами: столько влезает в тело запроса и столько же принимает
+// сервис. Список больше приходит частями — так же, как импорт контактов в «Работе с базой».
+const importBody = z.object({
+  rows: z.array(z.object({
+    name: z.string().trim().min(1).max(200),
+    phone: z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/).optional(),
+    telegram: z.string().trim().max(64).optional(),
+    adults: z.number().int().min(0).max(100),
+    children: z.number().int().min(0).max(100),
+    sleeping: z.number().int().min(0).max(100),
+    amountKopecks: z.string().regex(/^\d{1,15}$/),
+    note: z.string().trim().max(500).optional()
+  }).strict()).min(1).max(500)
+}).strict();
 
 export type AdminAccommodationHandler = Pick<
   AdminAccommodationService,
@@ -252,8 +271,39 @@ export class AdminParticipantsController {
     @Inject(ADMIN_ACCOMMODATION)
     private readonly handler: AdminAccommodationHandler,
     @Inject(ADMIN_EVENT_PARTICIPANTS)
-    private readonly participants: AdminEventParticipantsHandler
+    private readonly participants: AdminEventParticipantsHandler,
+    @Inject(IMPORT_PARTICIPANTS)
+    private readonly importer: ImportParticipantsHandler
   ) {}
+
+  /** Перенос списка из таблицы: файл разбирает панель, сюда приходят готовые строки. */
+  @Post("events/:eventId/participants/import")
+  @RequireAdminPermission("participants.manage")
+  async import(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(importBody, body);
+    return execute(() =>
+      this.importer.execute({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        // Строгий режим различает «не передали» и «передали пусто»: ключ с undefined
+        // в необязательное поле не годится, поэтому раскладываем явно.
+        rows: parsed.rows.map((row) => ({
+          name: row.name,
+          adults: row.adults,
+          children: row.children,
+          sleeping: row.sleeping,
+          amountKopecks: row.amountKopecks,
+          ...(row.phone === undefined ? {} : { phone: row.phone }),
+          ...(row.telegram === undefined ? {} : { telegram: row.telegram }),
+          ...(row.note === undefined ? {} : { note: row.note })
+        }))
+      })
+    );
+  }
 
   /**
    * Единый список: покупатели бота и заведённые руками. Право то же, что у сводки
@@ -498,14 +548,16 @@ export class AdminParticipantsController {
 export class AdminAccommodationApiModule {
   static register(
     handler: AdminAccommodationHandler,
-    participants: AdminEventParticipantsHandler
+    participants: AdminEventParticipantsHandler,
+    importer: ImportParticipantsHandler
   ): DynamicModule {
     return {
       module: AdminAccommodationApiModule,
       controllers: [AdminAccommodationController, AdminParticipantsController],
       providers: [
         { provide: ADMIN_ACCOMMODATION, useValue: handler },
-        { provide: ADMIN_EVENT_PARTICIPANTS, useValue: participants }
+        { provide: ADMIN_EVENT_PARTICIPANTS, useValue: participants },
+        { provide: IMPORT_PARTICIPANTS, useValue: importer }
       ]
     };
   }

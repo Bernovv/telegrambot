@@ -78,6 +78,8 @@ import type {
 } from "@ticket-platform/contracts/admin-accommodation";
 import type {
   EventParticipantsView,
+  ImportParticipantsRequest,
+  ImportParticipantsResult,
   SaveParticipantAnswerRequest
 } from "@ticket-platform/contracts/admin-participants";
 import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
@@ -343,6 +345,17 @@ export function removeEventOrganizer(
 ): Promise<{ readonly removed: boolean }> {
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/team/remove`,
+    "POST",
+    input
+  );
+}
+
+export function importEventParticipants(
+  eventId: string,
+  input: ImportParticipantsRequest
+): Promise<ImportParticipantsResult> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participants/import`,
     "POST",
     input
   );

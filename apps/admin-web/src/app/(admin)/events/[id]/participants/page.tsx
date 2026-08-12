@@ -3,6 +3,7 @@
 import { useEventWorkspace } from "@/components/event-workspace";
 import { PageError, PageLoading } from "@/components/page-state";
 import { ParticipantRowDrawer } from "@/components/participant-row-drawer";
+import { ParticipantsImport } from "@/components/participants-import";
 import { ParticipantsExportButton } from "@/components/participants-export-button";
 import { AdminApiError, getEventParticipants } from "@/lib/admin-api";
 import { formatDateTime, formatKopecks } from "@/lib/format";
@@ -17,7 +18,16 @@ import type {
   EventParticipantsView,
   ParticipantChannel
 } from "@ticket-platform/contracts/admin-participants";
-import { CircleAlert, ClipboardCheck, RefreshCw, Search, Send, Tent } from "lucide-react";
+import {
+  CircleAlert,
+  ClipboardCheck,
+  FileSpreadsheet,
+  RefreshCw,
+  Search,
+  Send,
+  Tent,
+  X
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -28,6 +38,7 @@ export default function EventParticipantsPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ParticipantsFilter>(EMPTY_PARTICIPANTS_FILTER);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -96,9 +107,27 @@ export default function EventParticipantsPage() {
           >
             <RefreshCw size={18} />
           </button>
+          {view.canManageParticipants ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setImportOpen((current) => !current)}
+            >
+              {importOpen ? <X size={16} /> : <FileSpreadsheet size={16} />}
+              {importOpen ? "Свернуть" : "Загрузить таблицу"}
+            </button>
+          ) : null}
           <ParticipantsExportButton eventId={event.id} eventSlug={event.slug} />
         </div>
       </div>
+
+      {importOpen ? (
+        <ParticipantsImport
+          eventId={event.id}
+          onImported={() => load()}
+          onClose={() => setImportOpen(false)}
+        />
+      ) : null}
 
       {error ? <PageError message={error} retry={() => void load()} /> : null}
 

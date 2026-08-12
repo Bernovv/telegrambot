@@ -4,6 +4,7 @@ import {
   AcceptTelegramOfferService,
   AdminAccommodationService,
   AdminEventParticipantsService,
+  ImportParticipantsService,
   AdminEventExpensesService,
   AdminEventInventoryService,
   AdminEventTeamService,
@@ -296,6 +297,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           { now: () => new Date() }
         )
       : undefined;
+    const importParticipants = adminAuth
+      ? new ImportParticipantsService(
+          createAdminEventParticipantsPersistence(pool).repository,
+          idGenerator
+        )
+      : undefined;
     const adminExpenses = adminAuth
       ? new AdminEventExpensesService(
           createAdminEventExpensesPersistence(pool).repository,
@@ -557,6 +564,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminOutreach ? { adminOutreach } : {}),
       ...(adminAccommodation ? { adminAccommodation } : {}),
       ...(adminEventParticipants ? { adminEventParticipants } : {}),
+      ...(importParticipants ? { importParticipants } : {}),
       ...(adminExpenses ? { adminExpenses } : {}),
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),

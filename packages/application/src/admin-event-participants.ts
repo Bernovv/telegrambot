@@ -1,5 +1,7 @@
 import type {
   AdminRequestActor,
+  ImportParticipantRow,
+  ImportParticipantsResult,
   EventParticipant,
   EventParticipantFieldDefinition,
   EventParticipantFieldValue,
@@ -57,6 +59,28 @@ export interface SaveOrderFieldValueInput {
   readonly adminId: string;
 }
 
+export interface CreateImportedParticipantInput {
+  readonly participantId: string;
+  readonly eventId: string;
+  readonly name: string;
+  readonly phone: string | null;
+  readonly telegram: string | null;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleeping: number;
+  readonly amountKopecks: string;
+  readonly note: string;
+  readonly adminId: string;
+}
+
+/** Кто уже есть у мероприятия — чтобы не завести человека вторым. */
+export interface ExistingPeople {
+  readonly buyerPhones: readonly string[];
+  readonly buyerHandles: readonly string[];
+  readonly manualPhones: readonly string[];
+  readonly manualNames: readonly string[];
+}
+
 export interface AdminEventParticipantsRepository {
   findEvent(eventId: string): Promise<ParticipantsEventRow | null>;
   listPaidOrderItems(eventId: string): Promise<readonly ParticipantOrderItemRow[]>;
@@ -74,6 +98,11 @@ export interface AdminEventParticipantsRepository {
     readonly fieldId: string;
     readonly value: string | null;
   }): Promise<boolean>;
+  loadExistingPeople(eventId: string): Promise<ExistingPeople>;
+  /** Пишет весь список одной транзакцией: половина занесённого хуже, чем ничего. */
+  createImportedParticipants(
+    inputs: readonly CreateImportedParticipantInput[]
+  ): Promise<void>;
 }
 
 export class ParticipantAnswerTargetNotFoundError extends Error {
@@ -202,6 +231,128 @@ export class AdminEventParticipantsService {
     if (!saved) {
       throw new ParticipantAnswerTargetNotFoundError();
     }
+  }
+}
+
+/**
+ * Переносит список из таблицы.
+ *
+ * Задвоение здесь — главная опасность: часть людей купила через бота и уже лежит
+ * оплаченными заказами, и завести их ещё и руками значит удвоить гостей, выручку, палатки
+ * и порции. Поэтому сверяемся по телефону и нику, а заодно по тем, кого заводили руками
+ * раньше — из этого же следует, что повторный запуск ничего не испортит.
+ */
+export class ImportParticipantsService {
+  constructor(
+    private readonly repository: AdminEventParticipantsRepository,
+    private readonly idGenerator: ImportIdGenerator
+  ) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly rows: readonly ImportParticipantRow[];
+  }): Promise<ImportParticipantsResult> {
+    if (
+      input.actor.permission !== "participants.manage"
+      || !UUID_PATTERN.test(input.actor.adminId)
+    ) {
+      throw new Error("Administrator participants permission is invalid");
+    }
+    if (!UUID_PATTERN.test(input.eventId)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+    if (input.rows.length === 0 || input.rows.length > 500) {
+      throw new Error("Administrator participants request is invalid");
+    }
+
+    const event = await this.repository.findEvent(input.eventId);
+    if (!event) {
+      throw new ParticipantsEventNotFoundError();
+    }
+
+    for (const row of input.rows) {
+      requireImportRow(row);
+    }
+
+    const existing = await this.repository.loadExistingPeople(input.eventId);
+    const buyerPhones = new Set(existing.buyerPhones);
+    const buyerHandles = new Set(existing.buyerHandles.map(lower));
+    const manualPhones = new Set(existing.manualPhones);
+    const manualNames = new Set(existing.manualNames.map(lower));
+
+    const skipped: { name: string; reason: "bot_buyer" | "already_added" }[] = [];
+    const toCreate: CreateImportedParticipantInput[] = [];
+
+    for (const row of input.rows) {
+      const phone = (row.phone ?? "").trim();
+      const handle = lower((row.telegram ?? "").replace(/^@/, ""));
+      const name = row.name.trim();
+
+      if ((phone !== "" && buyerPhones.has(phone)) || (handle !== "" && buyerHandles.has(handle))) {
+        skipped.push({ name, reason: "bot_buyer" });
+        continue;
+      }
+      if ((phone !== "" && manualPhones.has(phone)) || manualNames.has(lower(name))) {
+        skipped.push({ name, reason: "already_added" });
+        continue;
+      }
+      // Дубль внутри самого файла: два одинаковых имени в одной загрузке.
+      manualNames.add(lower(name));
+      if (phone !== "") {
+        manualPhones.add(phone);
+      }
+
+      toCreate.push({
+        participantId: this.idGenerator.newId(),
+        eventId: input.eventId,
+        name,
+        phone: phone === "" ? null : phone,
+        telegram: (row.telegram ?? "").trim() === "" ? null : (row.telegram ?? "").trim(),
+        adults: row.adults,
+        children: row.children,
+        sleeping: row.sleeping,
+        amountKopecks: row.amountKopecks,
+        note: (row.note ?? "").trim().slice(0, 500),
+        adminId: input.actor.adminId
+      });
+    }
+
+    if (toCreate.length > 0) {
+      await this.repository.createImportedParticipants(toCreate);
+    }
+    return { added: toCreate.length, skipped };
+  }
+}
+
+export interface ImportIdGenerator {
+  newId(): string;
+}
+
+function lower(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function requireImportRow(row: ImportParticipantRow): void {
+  const name = row.name.trim();
+  if (name === "" || name.length > 200) {
+    throw new Error("Administrator participants request is invalid");
+  }
+  for (const value of [row.adults, row.children, row.sleeping]) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 100) {
+      throw new Error("Administrator participants request is invalid");
+    }
+  }
+  // То же правило, что в базе: мест не может быть больше, чем людей. Ловим здесь, чтобы
+  // ответить понятной ошибкой, а не отказом ограничения посреди вставки.
+  if (row.sleeping > row.adults + row.children) {
+    throw new Error("Administrator participants request is invalid");
+  }
+  if (!/^\d{1,15}$/.test(row.amountKopecks)) {
+    throw new Error("Administrator participants request is invalid");
+  }
+  if ((row.phone ?? "") !== "" && !/^\+[1-9][0-9]{7,14}$/.test(row.phone ?? "")) {
+    throw new Error("Administrator participants request is invalid");
   }
 }
 

@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type {
   AdminEventParticipantsRepository,
+  CreateImportedParticipantInput,
+  ExistingPeople,
   OrderFieldValueRow,
   ParticipantOrderItemRow,
   ParticipantsEventRow,
@@ -172,6 +175,109 @@ export class PostgresAdminEventParticipantsRepository
 
       await connection.query("commit");
       return true;
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /** Кто уже есть у мероприятия: покупатели бота и заведённые руками. */
+  async loadExistingPeople(eventId: string): Promise<ExistingPeople> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query(
+        "begin transaction isolation level repeatable read read only"
+      );
+      const buyers = await connection.query<{
+        readonly phone: string | null;
+        readonly username: string | null;
+      }>(
+        `select
+           contact.value_normalized as phone,
+           identity.username as username
+         from public.orders o
+         left join lateral (
+           select value_normalized from public.user_contacts
+            where user_id = o.user_id and contact_type = 'phone'
+            order by is_primary desc, created_at limit 1
+         ) contact on true
+         left join lateral (
+           select username from public.messenger_identities
+            where user_id = o.user_id and username is not null
+            order by last_seen_at desc, id limit 1
+         ) identity on true
+         where o.event_id = $1::uuid
+           and o.status = 'paid'
+           and o.excluded_at is null`,
+        [eventId]
+      );
+      const manual = await connection.query<{
+        readonly display_name: string;
+        readonly phone_e164: string | null;
+      }>(
+        `select display_name, phone_e164
+           from public.event_participants
+          where event_id = $1::uuid and deleted_at is null`,
+        [eventId]
+      );
+      await connection.query("commit");
+
+      const text = (value: string | null): value is string => value !== null;
+      return {
+        buyerPhones: buyers.rows.map((row) => row.phone).filter(text),
+        buyerHandles: buyers.rows.map((row) => row.username).filter(text),
+        manualPhones: manual.rows.map((row) => row.phone_e164).filter(text),
+        manualNames: manual.rows.map((row) => row.display_name)
+      };
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * Весь список одной транзакцией: наполовину занесённый список хуже, чем не занесённый
+   * вовсе — по нему уже нельзя понять, где остановились.
+   */
+  async createImportedParticipants(
+    inputs: readonly CreateImportedParticipantInput[]
+  ): Promise<void> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query("begin");
+      for (const input of inputs) {
+        await connection.query(
+          `insert into public.event_participants (
+             id, event_id, display_name, phone_e164, source, ticket_title,
+             adults, children, sleeping_places, note, amount_kopecks,
+             created_by_admin_id
+           ) values (
+             $1::uuid, $2::uuid, $3::text, $4::text, 'direct', '',
+             $5::integer, $6::integer, $7::integer, $8::text, $9::bigint,
+             $10::uuid
+           )`,
+          [
+            input.participantId === "" ? randomUUID() : input.participantId,
+            input.eventId,
+            input.name,
+            input.phone,
+            input.adults,
+            input.children,
+            input.sleeping,
+            [input.note, input.telegram ?? ""]
+              .filter((part) => part !== "")
+              .join("; ")
+              .slice(0, 500),
+            input.amountKopecks,
+            input.adminId
+          ]
+        );
+      }
+      await connection.query("commit");
     } catch (error) {
       await connection.query("rollback");
       throw error;

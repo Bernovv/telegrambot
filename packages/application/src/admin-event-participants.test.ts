@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { AdminRequestActor, EventParticipant } from "@ticket-platform/contracts";
 import {
   AdminEventParticipantsService,
+  ImportParticipantsService,
   ParticipantAnswerTargetNotFoundError,
   ParticipantsEventNotFoundError,
   buildParticipantsView,
@@ -361,6 +362,17 @@ function repository(
     async saveParticipantFieldValue() {
       return true;
     },
+    async loadExistingPeople() {
+      return {
+        buyerPhones: [],
+        buyerHandles: [],
+        manualPhones: [],
+        manualNames: []
+      };
+    },
+    async createImportedParticipants() {
+      // ничего
+    },
     ...overrides
   };
 }
@@ -404,4 +416,178 @@ function participant(overrides: Partial<EventParticipant>): EventParticipant {
     createdAt: "2026-08-02T10:00:00.000Z",
     ...overrides
   };
+}
+
+describe("ImportParticipantsService", () => {
+  const row = {
+    name: "Надежда",
+    phone: "+79001234567",
+    telegram: "@Nadinka88",
+    adults: 2,
+    children: 1,
+    sleeping: 3,
+    amountKopecks: "649000",
+    note: "с ним: Муж, Ребенок"
+  };
+
+  it("writes the whole list and reports how many landed", async () => {
+    const written: unknown[] = [];
+    const service = importService(repository({
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [row]
+    });
+
+    assert.deepEqual(result, { added: 1, skipped: [] });
+    assert.equal(written.length, 1);
+  });
+
+  // Задвоение — главная опасность переноса: человек уже лежит оплаченным заказом.
+  it("skips someone who already bought through the bot", async () => {
+    const written: unknown[] = [];
+    const service = importService(repository({
+      async loadExistingPeople() {
+        return {
+          buyerPhones: ["+79001234567"],
+          buyerHandles: [],
+          manualPhones: [],
+          manualNames: []
+        };
+      },
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [row]
+    });
+
+    assert.deepEqual(result, { added: 0, skipped: [{ name: "Надежда", reason: "bot_buyer" }] });
+    assert.equal(written.length, 0);
+  });
+
+  it("recognises a bot buyer by their Telegram handle, ignoring the @ and case", async () => {
+    const service = importService(repository({
+      async loadExistingPeople() {
+        return {
+          buyerPhones: [],
+          buyerHandles: ["nadinka88"],
+          manualPhones: [],
+          manualNames: []
+        };
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [{ ...row, phone: "" }]
+    });
+
+    assert.equal(result.skipped[0]?.reason, "bot_buyer");
+  });
+
+  // Повторная загрузка того же файла не должна заводить всех второй раз.
+  it("skips someone already added by hand", async () => {
+    const service = importService(repository({
+      async loadExistingPeople() {
+        return {
+          buyerPhones: [],
+          buyerHandles: [],
+          manualPhones: [],
+          manualNames: ["надежда"]
+        };
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [{ ...row, phone: "" }]
+    });
+
+    assert.equal(result.skipped[0]?.reason, "already_added");
+  });
+
+  it("catches a duplicate inside the very same file", async () => {
+    const service = importService(repository());
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [row, row]
+    });
+
+    assert.equal(result.added, 1);
+    assert.deepEqual(result.skipped, [{ name: "Надежда", reason: "already_added" }]);
+  });
+
+  it("refuses a party with more sleeping places than people", async () => {
+    const service = importService(repository());
+
+    await assert.rejects(
+      () => service.execute({
+        actor: actorWith("participants.manage"),
+        eventId: EVENT_ID,
+        rows: [{ ...row, adults: 1, children: 0, sleeping: 2 }]
+      }),
+      /request is invalid/
+    );
+  });
+
+  it("refuses a batch that is empty or absurdly large", async () => {
+    const service = importService(repository());
+    const many = Array.from({ length: 501 }, (_, index) => ({ ...row, name: `Гость ${index}` }));
+
+    for (const rows of [[], many]) {
+      await assert.rejects(
+        () => service.execute({
+          actor: actorWith("participants.manage"),
+          eventId: EVENT_ID,
+          rows
+        }),
+        /request is invalid/
+      );
+    }
+  });
+
+  it("requires participants.manage, not merely the read permission", async () => {
+    const service = importService(repository());
+
+    await assert.rejects(
+      () => service.execute({
+        actor: actorWith("accommodation.read"),
+        eventId: EVENT_ID,
+        rows: [row]
+      }),
+      /permission is invalid/
+    );
+  });
+
+  it("reports a missing event instead of creating orphan cards", async () => {
+    const service = importService(repository({ async findEvent() { return null; } }));
+
+    await assert.rejects(
+      () => service.execute({
+        actor: actorWith("participants.manage"),
+        eventId: EVENT_ID,
+        rows: [row]
+      }),
+      ParticipantsEventNotFoundError
+    );
+  });
+});
+
+function importService(repo: AdminEventParticipantsRepository): ImportParticipantsService {
+  let id = 0;
+  return new ImportParticipantsService(repo, { newId: () => `generated-${(id += 1)}` });
 }

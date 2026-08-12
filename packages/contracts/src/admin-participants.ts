@@ -87,3 +87,28 @@ export interface SaveParticipantAnswerRequest {
   readonly fieldId: string;
   readonly value: string | null;
 }
+
+/** Одна строка списка, который переносят из таблицы. Деньги — копейки строкой. */
+export interface ImportParticipantRow {
+  readonly name: string;
+  readonly phone?: string;
+  readonly telegram?: string;
+  readonly adults: number;
+  readonly children: number;
+  readonly sleeping: number;
+  readonly amountKopecks: string;
+  readonly note?: string;
+}
+
+export interface ImportParticipantsRequest {
+  readonly rows: readonly ImportParticipantRow[];
+}
+
+export interface ImportParticipantsResult {
+  readonly added: number;
+  /** Кого не завели и почему: уже купил через бота либо уже заведён руками. */
+  readonly skipped: readonly {
+    readonly name: string;
+    readonly reason: "bot_buyer" | "already_added";
+  }[];
+}

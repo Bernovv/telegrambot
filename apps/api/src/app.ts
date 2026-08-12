@@ -64,7 +64,8 @@ import {
 import {
   AdminAccommodationApiModule,
   type AdminAccommodationHandler,
-  type AdminEventParticipantsHandler
+  type AdminEventParticipantsHandler,
+  type ImportParticipantsHandler
 } from "./admin-accommodation-api.js";
 import {
   AdminExpensesApiModule,
@@ -154,6 +155,7 @@ export interface ApiApplicationOptions {
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminAccommodation?: AdminAccommodationHandler;
   readonly adminEventParticipants?: AdminEventParticipantsHandler;
+  readonly importParticipants?: ImportParticipantsHandler;
   readonly adminExpenses?: AdminExpensesHandler;
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
@@ -204,10 +206,13 @@ class ApiModule {
         ...(options.adminOutreach
           ? [AdminOutreachApiModule.register(options.adminOutreach)]
           : []),
-        ...(options.adminAccommodation && options.adminEventParticipants
+        ...(options.adminAccommodation
+          && options.adminEventParticipants
+          && options.importParticipants
           ? [AdminAccommodationApiModule.register(
               options.adminAccommodation,
-              options.adminEventParticipants
+              options.adminEventParticipants,
+              options.importParticipants
             )]
           : []),
         ...(options.adminExpenses

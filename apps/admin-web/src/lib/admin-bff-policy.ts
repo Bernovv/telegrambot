@@ -9,6 +9,9 @@ export function getAdminMutationBodyLimit(path: string): number {
   if (/^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)) {
     return 524_288;
   }
+  if (/^events\/[0-9a-f-]{36}\/participants\/import$/i.test(path)) {
+    return 524_288;
+  }
   return (
     /^events\/[0-9a-f-]{36}\/offer-versions$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/scenario-drafts$/i.test(path)
@@ -67,7 +70,8 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/accommodation\/groups\/split$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation\/plans$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
-      || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers)$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers|import)$/i
+        .test(path)
       || path === "vendors"
       || /^events\/[0-9a-f-]{36}\/expenses(?:\/(?:update|cancel))?$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/team(?:\/(?:update|remove))?$/i.test(path)

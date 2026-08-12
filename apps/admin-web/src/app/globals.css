@@ -1206,6 +1206,45 @@ tbody tr:hover {
   font-size: 12px;
 }
 
+/* Перенос списка из таблицы: выбор файла и предпросмотр. */
+.import-drop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.import-drop:hover {
+  border-color: var(--accent);
+}
+
+.import-drop > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.import-drop small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.import-toggle {
+  height: auto;
+  margin-top: 12px;
+  padding: 10px 12px;
+  white-space: normal;
+}
+
+.import-preview {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
 .money-negative {
   color: var(--danger);
 }

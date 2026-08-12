@@ -4,7 +4,8 @@ import type { AdminPermission, EventParticipantsView } from "@ticket-platform/co
 import type { FastifyInstance } from "fastify";
 import type {
   AdminAccommodationHandler,
-  AdminEventParticipantsHandler
+  AdminEventParticipantsHandler,
+  ImportParticipantsHandler
 } from "./admin-accommodation-api.js";
 import { createApiApplication } from "./app.js";
 
@@ -157,6 +158,77 @@ describe("event participants HTTP contract", () => {
     }
   });
 
+  // Перенос списка из таблицы: панель разбирает файл, сюда приходят готовые строки.
+  it("imports a batch of rows behind participants.manage", async () => {
+    const permissions: string[] = [];
+    const requests: unknown[] = [];
+    const app = await application(permissions, requests);
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "POST",
+        url: `/api/v1/events/${EVENT_ID}/participants/import`,
+        headers: { authorization: "Bearer valid-token" },
+        payload: {
+          rows: [{
+            name: "Надежда",
+            phone: "+79001234567",
+            adults: 2,
+            children: 1,
+            sleeping: 3,
+            amountKopecks: "649000"
+          }]
+        }
+      });
+
+      assert.equal(response.statusCode, 201);
+      assert.equal(response.json().added, 1);
+      assert.deepEqual(permissions, ["participants.manage"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refuses a batch with a broken row before it reaches the handler", async () => {
+    const requests: unknown[] = [];
+    const app = await application([], requests);
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const url = `/api/v1/events/${EVENT_ID}/participants/import`;
+      const headers = { authorization: "Bearer valid-token" };
+      const good = {
+        name: "Надежда",
+        adults: 1,
+        children: 0,
+        sleeping: 1,
+        amountKopecks: "0"
+      };
+
+      const empty = await fastify.inject({
+        method: "POST", url, headers, payload: { rows: [] }
+      });
+      const badPhone = await fastify.inject({
+        method: "POST", url, headers,
+        payload: { rows: [{ ...good, phone: "89001234567" }] }
+      });
+      const badMoney = await fastify.inject({
+        method: "POST", url, headers,
+        payload: { rows: [{ ...good, amountKopecks: "2490.50" }] }
+      });
+
+      assert.equal(empty.statusCode, 400);
+      assert.equal(badPhone.statusCode, 400);
+      assert.equal(badMoney.statusCode, 400);
+      assert.equal(requests.length, 0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns 401 without a bearer token", async () => {
     const app = await application([], []);
     await app.init();
@@ -187,8 +259,18 @@ function application(
     readiness,
     adminAuth: adminAuth(permissions),
     adminAccommodation: {} as AdminAccommodationHandler,
-    adminEventParticipants: participantsHandler(requests, onList, onSave)
+    adminEventParticipants: participantsHandler(requests, onList, onSave),
+    importParticipants: importHandler(requests)
   });
+}
+
+function importHandler(requests: unknown[]): ImportParticipantsHandler {
+  return {
+    async execute(input) {
+      requests.push(input);
+      return { added: input.rows.length, skipped: [] };
+    }
+  };
 }
 
 function participantsHandler(
