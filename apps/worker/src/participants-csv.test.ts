@@ -7,7 +7,7 @@ const HEADER = "row,name,phone,telegram,adults,children,sleeping,amount_rub,sour
 describe("parseParticipantsCsv", () => {
   it("reads a row the way the august sheet exported it", () => {
     const rows = parseParticipantsCsv(
-      `${HEADER}\n14,Надежда,+79001234567,@Nadinka88,1,0,3,6490,direct,`
+      `${HEADER}\n14,Надежда,+79001234567,@Nadinka88,1,0,1,6490,direct,`
     );
 
     assert.deepEqual(rows, [{
@@ -17,7 +17,7 @@ describe("parseParticipantsCsv", () => {
       telegram: "@Nadinka88",
       adults: "1",
       children: "0",
-      sleeping: "3",
+      sleeping: "1",
       amountKopecks: "649000",
       source: "direct",
       note: ""
@@ -28,7 +28,7 @@ describe("parseParticipantsCsv", () => {
   // сдвинуло бы все колонки правее и записало бы чужие числа не тому человеку.
   it("keeps a quoted note with commas in one field", () => {
     const rows = parseParticipantsCsv(
-      `${HEADER}\n61,Наталья,,,1,0,2,2000,direct,"Должна 3к на месте, стул"`
+      `${HEADER}\n61,Наталья,,,1,0,1,2000,direct,"Должна 3к на месте, стул"`
     );
 
     assert.equal(rows[0]?.note, "Должна 3к на месте, стул");
@@ -63,6 +63,19 @@ describe("parseParticipantsCsv", () => {
     assert.throws(
       () => parseParticipantsCsv(`${HEADER}\n2,Маша,муж Алены,,1,0,0,0,direct,`),
       /не в формате/
+    );
+  });
+
+  // В таблицах спальные места пишут на того, кто бронировал палатку, за всю компанию —
+  // и тогда у него одного оказывается два места при одном человеке. База такую строку
+  // отвергает; ловим раньше, чтобы не падать на середине вставки.
+  it("refuses more sleeping places than there are people in the row", () => {
+    assert.throws(
+      () => parseParticipantsCsv(`${HEADER}\n38,Наталия,,,1,0,2,4800,direct,`),
+      /мест не может быть больше/
+    );
+    assert.doesNotThrow(
+      () => parseParticipantsCsv(`${HEADER}\n14,Надежда,,,1,2,3,6490,direct,`)
     );
   });
 

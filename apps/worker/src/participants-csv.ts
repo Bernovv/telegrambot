@@ -60,14 +60,29 @@ export function parseParticipantsCsv(text: string): readonly ParticipantCsvRow[]
       throw new Error(`Строка ${index + 2}: сумма «${amount}» не похожа на рубли`);
     }
 
+    const adults = wholeNumber(value("adults"), index + 2, "adults");
+    const children = wholeNumber(value("children"), index + 2, "children");
+    const sleeping = wholeNumber(value("sleeping"), index + 2, "sleeping");
+    // То же правило, что и в базе: мест не может быть больше, чем людей в строке. Ловим
+    // здесь, потому что в таблицах спальные места пишут на того, кто бронировал палатку,
+    // за всю компанию — и тогда у него одного оказывается два места.
+    if (Number(sleeping) > Number(adults) + Number(children)) {
+      throw new Error(
+        `Строка ${index + 2}: спальных мест ${sleeping}, а людей `
+        + `${Number(adults) + Number(children)} — мест не может быть больше. `
+        + "Похоже, места записаны на бронировавшего за всю компанию: "
+        + "разложите их по людям."
+      );
+    }
+
     rows.push({
       row: value("row") || String(index + 2),
       name,
       phone,
       telegram: value("telegram"),
-      adults: wholeNumber(value("adults"), index + 2, "adults"),
-      children: wholeNumber(value("children"), index + 2, "children"),
-      sleeping: wholeNumber(value("sleeping"), index + 2, "sleeping"),
+      adults,
+      children,
+      sleeping,
       amountKopecks: toKopecks(amount),
       source: value("source") || "direct",
       note: value("note")
