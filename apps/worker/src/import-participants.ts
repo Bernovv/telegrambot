@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadWorkerConfig } from "@ticket-platform/config";
 import { createNodePostgresPool } from "@ticket-platform/database";
+import { resolveAdminId } from "./admin-lookup.js";
 import {
   parseParticipantsCsv,
   type ParticipantCsvRow
@@ -53,15 +54,7 @@ try {
       throw new Error(`Мероприятие со slug ${eventSlug} не найдено`);
     }
 
-    const admin = await connection.query<{ readonly id: string }>(
-      `select id from public.admin_accounts
-        where email_normalized = $1 and status = 'active'`,
-      [options.admin.toLowerCase()]
-    );
-    const adminRow = admin.rows[0];
-    if (!adminRow) {
-      throw new Error(`Администратор ${options.admin} не найден или отключён`);
-    }
+    const adminId = await resolveAdminId(connection, options.admin);
 
     const buyers = await connection.query<{
       readonly phone: string | null;
@@ -204,7 +197,7 @@ try {
             Number(row.sleeping),
             [row.note, row.telegram].filter((part) => part !== "").join("; ").slice(0, 500),
             row.amountKopecks,
-            adminRow.id
+            adminId
           ]
         );
       }

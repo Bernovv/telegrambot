@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadWorkerConfig } from "@ticket-platform/config";
 import { createNodePostgresPool } from "@ticket-platform/database";
+import { resolveAdminId } from "./admin-lookup.js";
 import { parseExpensesCsv, type ExpenseCsvRow } from "./participants-csv.js";
 
 interface Plan {
@@ -48,15 +49,7 @@ try {
       throw new Error(`Мероприятие со slug ${eventSlug} не найдено`);
     }
 
-    const admin = await connection.query<{ readonly id: string }>(
-      `select id from public.admin_accounts
-        where email_normalized = $1 and status = 'active'`,
-      [options.admin.toLowerCase()]
-    );
-    const adminRow = admin.rows[0];
-    if (!adminRow) {
-      throw new Error(`Администратор ${options.admin} не найден или отключён`);
-    }
+    const adminId = await resolveAdminId(connection, options.admin);
 
     const categories = await connection.query<{ readonly code: string }>(
       `select code from public.expense_categories`,
@@ -156,7 +149,7 @@ try {
             row.amountKopecks,
             row.paidAt === "" ? null : row.paidAt,
             row.note,
-            adminRow.id
+            adminId
           ]
         );
       }
