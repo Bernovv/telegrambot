@@ -95,7 +95,8 @@ export default tseslint.config(
     files: [
       "apps/worker/src/dead-letter.ts",
       "apps/worker/src/set-price.ts",
-      "apps/worker/src/broadcast-status.ts"
+      "apps/worker/src/broadcast-status.ts",
+      "apps/worker/src/import-participants.ts"
     ],
     rules: {
       "no-console": "off"
