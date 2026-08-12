@@ -97,7 +97,8 @@ export default tseslint.config(
       "apps/worker/src/set-price.ts",
       "apps/worker/src/broadcast-status.ts",
       "apps/worker/src/import-participants.ts",
-      "apps/worker/src/import-expenses.ts"
+      "apps/worker/src/import-expenses.ts",
+      "apps/worker/src/clear-participants.ts"
     ],
     rules: {
       "no-console": "off"

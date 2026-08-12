@@ -10,6 +10,7 @@
     "price": "node --env-file=../../.env --import tsx src/set-price.ts",
     "participants-import": "node --env-file=../../.env --import tsx src/import-participants.ts",
     "expenses-import": "node --env-file=../../.env --import tsx src/import-expenses.ts",
+    "participants-clear": "node --env-file=../../.env --import tsx src/clear-participants.ts",
     "broadcast-status": "node --env-file=../../.env --import tsx src/broadcast-status.ts",
     "lint": "node ../../scripts/noop.mjs lint @ticket-platform/worker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
