@@ -29,6 +29,10 @@ import type {
   OutreachTaskType,
   OutreachTaskUrgency
 } from "@ticket-platform/contracts";
+import {
+  normalizeContactInput,
+  type ContactRejectionReason
+} from "@ticket-platform/domain";
 import type { IdGenerator } from "./identity.js";
 import type { PhoneNormalizer } from "./phone.js";
 
@@ -782,7 +786,7 @@ export class AdminOutreachService {
     input.rows.forEach((row, index) => {
       try {
         rows.push({
-          ...this.normalizeImportRow(row),
+          ...this.normalizeImportRow(row, input.skipInvalid !== true),
           contactId: this.idGenerator.newId(),
           campaignContactId: this.idGenerator.newId()
         });
@@ -1058,41 +1062,71 @@ export class AdminOutreachService {
     };
   }
 
-  private normalizeImportRow(row: OutreachImportRow): NormalizedOutreachImportRow {
-    const displayName = optionalText(row.name, 200);
-    const telegramUsername = normalizeHandle(row.telegram);
-    const maxIdentifier = normalizeHandle(row.max);
-    let phoneE164: string | null = null;
-    if (row.phone?.trim()) {
-      phoneE164 = this.phoneNormalizer.normalize(row.phone.trim());
+  /**
+   * @param strict Ручной ввод: про непонятый телефон надо сказать сразу, а не молча завести
+   * человека без него. При загрузке файла наоборот — строка с битым телефоном, но верным
+   * ником должна сохраниться, иначе из-за пары ячеек теряются живые контакты.
+   */
+  private normalizeImportRow(
+    row: OutreachImportRow,
+    strict: boolean
+  ): NormalizedOutreachImportRow {
+    const { identity, rejections, hasIdentifier } = normalizeContactInput(row, {
+      parsePhone: (candidate) => {
+        try {
+          return this.phoneNormalizer.normalize(candidate);
+        } catch {
+          return null;
+        }
+      }
+    });
+
+    // Сначала про конкретное поле, потом про строку целиком: человеку, который ввёл кривой
+    // телефон, «нет признаков» ничего не объясняет, а «телефон неверный» объясняет всё.
+    if (strict) {
+      const blocking = rejections.find((rejection) => rejection.field !== "name");
+      if (blocking) {
+        throw new Error(REJECTION_MESSAGES[blocking.reason]);
+      }
     }
-    const email = normalizeEmail(row.email);
-    // Почта — такой же признак, как телефон и ник: в выгрузках она бывает единственным.
-    if (!phoneE164 && !telegramUsername && !maxIdentifier && !email) {
+    if (!hasIdentifier) {
       throw new Error("Outreach contact identity is invalid");
     }
+
     return {
-      displayName,
-      phoneE164,
-      telegramUsername,
-      telegramUsernameNormalized: telegramUsername?.toLowerCase() ?? null,
-      maxIdentifier,
-      maxIdentifierNormalized: maxIdentifier?.toLowerCase() ?? null,
-      email,
-      emailNormalized: email?.toLowerCase() ?? null,
+      displayName: identity.name,
+      phoneE164: identity.phoneE164,
+      telegramUsername: identity.telegramUsername,
+      telegramUsernameNormalized: identity.telegramUsernameNormalized,
+      maxIdentifier: identity.maxIdentifier,
+      maxIdentifierNormalized: identity.maxIdentifierNormalized,
+      email: identity.email,
+      emailNormalized: identity.emailNormalized,
       source: optionalText(row.source, 200),
-      note: optionalText(row.note, 2000)
+      // Второго поля под телефон в базе нет, а терять рабочий номер нельзя — он уходит в
+      // примечание, где его видно человеку.
+      note: appendExtraPhones(optionalText(row.note, 2000), identity.extraPhones)
     };
   }
 }
 
-/** Почта без собаки или с пробелами — не почта: в базу такое пускать незачем. */
-function normalizeEmail(value: string | undefined): string | null {
-  const text = (value ?? "").trim();
-  if (text === "" || text.length > 320 || /\s/.test(text)) {
-    return null;
+const REJECTION_MESSAGES: Record<ContactRejectionReason, string> = {
+  not_a_phone_number: "Phone number is invalid",
+  not_a_telegram_username: "Outreach messenger identifier is invalid",
+  not_a_max_identifier: "Outreach messenger identifier is invalid",
+  not_an_email: "Outreach contact email is invalid",
+  not_a_name: "Outreach contact name is invalid"
+};
+
+function appendExtraPhones(
+  note: string | null,
+  extraPhones: readonly string[]
+): string | null {
+  if (extraPhones.length === 0) {
+    return note;
   }
-  return /^[^@]+@[^@.]+\.[^@]+$/.test(text) ? text : null;
+  const line = `Ещё телефоны: ${extraPhones.join(", ")}`;
+  return (note ? `${note}\n${line}` : line).slice(0, 2000);
 }
 
 function requirePermission(
@@ -1137,17 +1171,6 @@ function optionalText(
     throw new Error("Outreach text is invalid");
   }
   return result;
-}
-
-function normalizeHandle(value: string | undefined): string | null {
-  if (!value?.trim()) {
-    return null;
-  }
-  const normalized = value.trim().replace(/^@/, "");
-  if (!/^[A-Za-z0-9_.-]{2,100}$/.test(normalized)) {
-    throw new Error("Outreach messenger identifier is invalid");
-  }
-  return normalized;
 }
 
 function validateActivity(

@@ -18,6 +18,7 @@ export function kopecks(value: number): MoneyKopecks {
   return BigInt(value);
 }
 
+export * from "./contact-identity.js";
 export * from "./messenger.js";
 export * from "./wallet.js";
 export * from "./pricing.js";

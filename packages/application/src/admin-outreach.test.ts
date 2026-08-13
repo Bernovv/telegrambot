@@ -98,6 +98,96 @@ describe("AdminOutreachService", () => {
     });
   });
 
+  it("keeps a row whose phone is junk but whose handle is good", async () => {
+    // Раньше такая строка пропадала целиком: разбор телефона ронял её вместе с ником, и из
+    // выгрузки на восемь тысяч так терялись живые контакты.
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      }),
+      rejectingPhones(),
+      sequenceIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [{ name: "Анна", phone: "мобильный", telegram: "@anna_test" }],
+      skipInvalid: true,
+      now
+    });
+
+    assert.equal(result.invalidRows, 0);
+    assert.equal(received?.rows[0]?.telegramUsername, "anna_test");
+    assert.equal(received?.rows[0]?.phoneE164, null);
+  });
+
+  it("puts a second phone from one cell into the note instead of dropping it", async () => {
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      }),
+      { normalize: (value) => `+${value.replace(/\D/g, "")}` },
+      sequenceIds()
+    );
+
+    await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [{ phone: "+79991234567, +79997654321", note: "звонить после 18" }],
+      now
+    });
+
+    assert.equal(received?.rows[0]?.phoneE164, "+79991234567");
+    assert.equal(
+      received?.rows[0]?.note,
+      "звонить после 18\nЕщё телефоны: +79997654321"
+    );
+  });
+
+  it("names the field that failed when a contact is added by hand", async () => {
+    // «Нет признаков» человеку, который ввёл кривой ник, ничего не объясняет.
+    const service = new AdminOutreachService(
+      repository({}),
+      { normalize: () => "+79991234567" },
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.createContact({
+        actor: writeActor,
+        campaignId: CAMPAIGN_ID,
+        contact: { name: "Анна", telegram: "не ник" },
+        now
+      }),
+      /messenger identifier is invalid/
+    );
+  });
+
   // В выгрузке Timepad почта есть у всех, а телефона нет у части: без неё такой контакт
   // некуда положить — проверка требует хотя бы один признак.
   it("accepts a contact identified by email alone", async () => {
@@ -120,7 +210,7 @@ describe("AdminOutreachService", () => {
           };
         }
       }),
-      { normalize: () => null },
+      rejectingPhones(),
       sequenceIds()
     );
 
@@ -157,7 +247,7 @@ describe("AdminOutreachService", () => {
           };
         }
       }),
-      { normalize: () => null },
+      rejectingPhones(),
       sequenceIds()
     );
 
@@ -912,6 +1002,18 @@ function repository(
 }
 
 /** Неограниченный генератор: пакетный импорт съедает по два идентификатора на строку. */
+/**
+ * Разборщик, который не принимает ни одного номера. Отказ — это исключение, а не null:
+ * так устроен настоящий LibPhoneNumberNormalizer, и заглушка обязана вести себя как он.
+ */
+function rejectingPhones() {
+  return {
+    normalize(): string {
+      throw new Error("Phone number is invalid");
+    }
+  };
+}
+
 function countingIds() {
   let index = 0;
   return {
