@@ -22,6 +22,7 @@ import {
   OUTREACH_CUSTOM_FIELD_TYPES,
   OUTREACH_LOST_REASONS,
   OUTREACH_MAX_PIPELINE_COLUMNS,
+  OUTREACH_PERSON_FILTERS,
   OUTREACH_PIPELINE_COLUMN_OUTCOMES,
   OUTREACH_TASK_TYPES
 } from "@ticket-platform/contracts";
@@ -87,6 +88,13 @@ const importRow = z.object({
 const importBody = z.object({
   assignedAdminId: uuid.optional(),
   rows: z.array(importRow).min(1).max(500)
+}).strict();
+
+const peopleQuery = z.object({
+  search: z.string().trim().min(2).max(100).optional(),
+  filter: z.enum(OUTREACH_PERSON_FILTERS).optional(),
+  page: z.coerce.number().int().min(1).max(100_000).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional()
 }).strict();
 
 const baseContactsQuery = z.object({
@@ -202,6 +210,8 @@ export type AdminOutreachHandler = Pick<
   | "listTaskBoard"
   | "listContacts"
   | "getContact"
+  | "listPeople"
+  | "getPerson"
   | "importContacts"
   | "createContact"
   | "assignContacts"
@@ -297,6 +307,42 @@ export class AdminOutreachController {
         ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
       })
     );
+  }
+
+  // Общая база: люди без привязки к кампании. Соседний GET contacts отвечает на другой
+  // вопрос — «кого из базы можно доложить вот в эту кампанию» — и потому требует её id.
+  @Get("base")
+  @RequireAdminPermission("outreach.read")
+  listPeople(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(peopleQuery, query);
+    return executeOutreach(() =>
+      this.handler.listPeople({
+        actor: requireActor(request),
+        ...(parsed.search === undefined ? {} : { search: parsed.search }),
+        ...(parsed.filter === undefined ? {} : { filter: parsed.filter }),
+        ...(parsed.page === undefined ? {} : { page: parsed.page }),
+        ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
+  }
+
+  @Get("base/:id")
+  @RequireAdminPermission("outreach.read")
+  async getPerson(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const person = await executeOutreach(() =>
+      this.handler.getPerson({ actor: requireActor(request), contactId })
+    );
+    if (!person) {
+      throw outreachNotFound();
+    }
+    return person;
   }
 
   @Post("campaigns/:id/contacts/add")

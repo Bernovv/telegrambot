@@ -949,6 +949,8 @@ function repository(
     async listCampaigns() { return []; },
     async listEventParticipantRows() { return []; },
     async listBaseContacts() { return []; },
+    async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
+    async getPerson() { return null; },
     async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
     async archiveCampaign() { return true; },
     async restoreCampaign() { return true; },

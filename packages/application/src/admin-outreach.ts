@@ -22,6 +22,9 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
+  OutreachPersonCard,
+  OutreachPersonFilter,
+  OutreachPersonPage,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
@@ -182,6 +185,14 @@ export interface AdminOutreachRepository {
     readonly limit: number;
   }): Promise<OutreachCampaignContactPage>;
   getContact(campaignContactId: string): Promise<OutreachCampaignContactDetail | null>;
+  /** Общая база: люди, а не их участия в кампаниях. */
+  listPeople(input: {
+    readonly search: string | null;
+    readonly filter: OutreachPersonFilter;
+    readonly page: number;
+    readonly limit: number;
+  }): Promise<OutreachPersonPage>;
+  getPerson(contactId: string): Promise<OutreachPersonCard | null>;
   importContacts(input: {
     readonly campaignId: string;
     readonly assignedAdminId: string;
@@ -754,6 +765,36 @@ export class AdminOutreachService {
     requirePermission(input.actor, "outreach.read");
     requireUuid(input.campaignContactId);
     return this.repository.getContact(input.campaignContactId);
+  }
+
+  listPeople(input: {
+    readonly actor: AdminRequestActor;
+    readonly search?: string;
+    readonly filter?: OutreachPersonFilter;
+    readonly page?: number;
+    readonly limit?: number;
+  }): Promise<OutreachPersonPage> {
+    requirePermission(input.actor, "outreach.read");
+    const page = input.page ?? 1;
+    const limit = input.limit ?? 50;
+    if (page < 1 || limit < 1 || limit > 200) {
+      throw new Error("Outreach people page is invalid");
+    }
+    return this.repository.listPeople({
+      search: input.search?.trim() || null,
+      filter: input.filter ?? "all",
+      page,
+      limit
+    });
+  }
+
+  getPerson(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+  }): Promise<OutreachPersonCard | null> {
+    requirePermission(input.actor, "outreach.read");
+    requireUuid(input.contactId);
+    return this.repository.getPerson(input.contactId);
   }
 
   async importContacts(input: {

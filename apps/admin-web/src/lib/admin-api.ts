@@ -35,6 +35,9 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   OutreachManager,
+  OutreachPersonCard,
+  OutreachPersonFilter,
+  OutreachPersonPage,
   OutreachPipelineColumn,
   OutreachPipelineStage,
   OutreachTaskBoardItem,
@@ -741,6 +744,45 @@ export function getOutreachContact(
 ): Promise<OutreachCampaignContactDetail> {
   return requestAdminApi(
     `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}`,
+    signal
+  );
+}
+
+export function listOutreachPeople(
+  input: {
+    readonly search?: string;
+    readonly filter?: OutreachPersonFilter;
+    readonly page?: number;
+    readonly limit?: number;
+  },
+  signal?: AbortSignal
+): Promise<OutreachPersonPage> {
+  const query = new URLSearchParams();
+  if (input.search) {
+    query.set("search", input.search);
+  }
+  if (input.filter && input.filter !== "all") {
+    query.set("filter", input.filter);
+  }
+  if (input.page) {
+    query.set("page", String(input.page));
+  }
+  if (input.limit) {
+    query.set("limit", String(input.limit));
+  }
+  const suffix = query.toString();
+  return requestAdminApi(
+    suffix ? `outreach/base?${suffix}` : "outreach/base",
+    signal
+  );
+}
+
+export function getOutreachPerson(
+  contactId: string,
+  signal?: AbortSignal
+): Promise<OutreachPersonCard> {
+  return requestAdminApi(
+    `outreach/base/${encodeURIComponent(contactId)}`,
     signal
   );
 }

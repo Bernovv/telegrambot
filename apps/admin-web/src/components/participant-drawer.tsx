@@ -120,7 +120,7 @@ export function ParticipantDrawer({
           <div className="outreach-drawer-actions">
             <Link
               className="secondary-button"
-              href={`/outreach/campaign-contacts/${participant.outreachContactId}`}
+              href={`/base/${participant.outreachContactId}`}
             >
               Карточка в базе
               <ExternalLink size={15} />

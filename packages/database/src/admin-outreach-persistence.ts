@@ -17,6 +17,8 @@ import type {
   OutreachBaseContact,
   OutreachImportRow,
   OutreachManager,
+  OutreachPerson,
+  OutreachPersonCard,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachStageHistoryEntry,
@@ -138,6 +140,52 @@ interface ActivityRow {
   readonly result: OutreachActivity["result"];
   readonly note: string | null;
   readonly occurred_at: Date | string;
+}
+
+interface PersonRow {
+  readonly contact_id: string;
+  readonly display_name: string | null;
+  readonly phone_e164: string | null;
+  readonly telegram_username: string | null;
+  readonly max_identifier: string | null;
+  readonly email: string | null;
+  readonly source: string | null;
+  readonly linked_user_id: string | null;
+  readonly archived_at: Date | string | null;
+  readonly created_at: Date | string;
+  readonly campaign_count: string | null;
+  readonly last_activity_at: Date | string | null;
+  readonly total_count: string;
+}
+
+interface PersonCardRow {
+  readonly contact_id: string;
+  readonly display_name: string | null;
+  readonly phone_e164: string | null;
+  readonly telegram_username: string | null;
+  readonly max_identifier: string | null;
+  readonly email: string | null;
+  readonly source: string | null;
+  readonly note: string | null;
+  readonly linked_user_id: string | null;
+  readonly archived_at: Date | string | null;
+  readonly created_at: Date | string;
+  readonly updated_at: Date | string;
+}
+
+interface PersonCampaignRow {
+  readonly campaign_contact_id: string;
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+  readonly pipeline_stage: string;
+  readonly stage_label: string;
+  readonly assigned_admin_name: string | null;
+  readonly removed_at: Date | string | null;
+}
+
+interface PersonActivityRow extends ActivityRow {
+  readonly campaign_id: string;
+  readonly campaign_name: string;
 }
 
 interface ExistingContactRow {
@@ -957,6 +1005,194 @@ implements AdminOutreachRepository {
         total: Number(result.rows[0]?.total_count ?? 0),
         page: input.page,
         limit: input.limit
+      };
+    });
+  }
+
+  listPeople(
+    input: Parameters<AdminOutreachRepository["listPeople"]>[0]
+  ): Promise<Awaited<ReturnType<AdminOutreachRepository["listPeople"]>>> {
+    return this.read(async (connection) => {
+      const search = input.search
+        ? `%${escapeLike(input.search.toLowerCase())}%`
+        : null;
+      const result = await connection.query<PersonRow>(
+        `select
+           contact.id as contact_id,
+           contact.display_name,
+           contact.phone_e164,
+           contact.telegram_username,
+           contact.max_identifier,
+           contact.email,
+           contact.source,
+           contact.linked_user_id,
+           contact.archived_at,
+           contact.created_at,
+           membership.campaign_count,
+           membership.last_activity_at,
+           count(*) over()::text as total_count
+         from public.outreach_contacts contact
+         left join lateral (
+           select
+             count(*) filter (where member.removed_at is null)::text as campaign_count,
+             max(member.last_activity_at) as last_activity_at
+           from public.outreach_campaign_contacts member
+           where member.contact_id = contact.id
+         ) membership on true
+         where
+           -- Архивные видно только в своём фильтре: иначе убранный контакт продолжает
+           -- мозолить глаза в общем списке и убирать его было незачем.
+           (case when $2::text = 'archived'
+                 then contact.archived_at is not null
+                 else contact.archived_at is null end)
+           and ($2::text <> 'without_phone' or contact.phone_e164 is null)
+           and ($2::text <> 'without_name' or contact.display_name is null)
+           and ($2::text <> 'without_campaign' or coalesce(membership.campaign_count::bigint, 0) = 0)
+           and ($2::text <> 'in_bot' or contact.linked_user_id is not null)
+           and ($1::text is null or (
+             coalesce(contact.display_name, '') ilike $1 escape '\\'
+             or coalesce(contact.phone_e164, '') ilike $1 escape '\\'
+             or coalesce(contact.telegram_username_normalized, '') ilike $1 escape '\\'
+             or coalesce(contact.max_identifier_normalized, '') ilike $1 escape '\\'
+             or coalesce(contact.email_normalized, '') ilike $1 escape '\\'
+           ))
+         order by
+           membership.last_activity_at desc nulls last,
+           contact.created_at desc,
+           contact.id desc
+         limit $3 offset $4`,
+        [
+          search,
+          input.filter,
+          input.limit,
+          (input.page - 1) * input.limit
+        ]
+      );
+      return {
+        items: result.rows.map(mapPerson),
+        total: Number(result.rows[0]?.total_count ?? 0),
+        page: input.page,
+        limit: input.limit
+      };
+    });
+  }
+
+  getPerson(contactId: string): Promise<OutreachPersonCard | null> {
+    return this.read(async (connection) => {
+      const contactResult = await connection.query<PersonCardRow>(
+        `select
+           contact.id as contact_id,
+           contact.display_name,
+           contact.phone_e164,
+           contact.telegram_username,
+           contact.max_identifier,
+           contact.email,
+           contact.source,
+           contact.note,
+           contact.linked_user_id,
+           contact.archived_at,
+           contact.created_at,
+           contact.updated_at
+         from public.outreach_contacts contact
+         where contact.id = $1::uuid`,
+        [contactId]
+      );
+      const contact = contactResult.rows[0];
+      if (!contact) {
+        return null;
+      }
+
+      // Убранные из кампании тоже показываем: вопрос «что человеку уже говорили» они
+      // закрывают не хуже действующих, а скрыть их — значит потерять половину истории.
+      const campaigns = await connection.query<PersonCampaignRow>(
+        `select
+           member.id as campaign_contact_id,
+           member.campaign_id,
+           campaign.name as campaign_name,
+           member.pipeline_stage,
+           coalesce(pipeline_column.label, member.pipeline_stage) as stage_label,
+           assignee.display_name as assigned_admin_name,
+           member.removed_at
+         from public.outreach_campaign_contacts member
+         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         left join public.outreach_pipeline_columns pipeline_column
+           on pipeline_column.campaign_id = member.campaign_id
+          and pipeline_column.stage = member.pipeline_stage
+         left join public.admin_accounts assignee
+           on assignee.id = member.assigned_admin_id
+         where member.contact_id = $1::uuid
+         order by member.removed_at nulls first, member.created_at desc
+         limit 50`,
+        [contactId]
+      );
+
+      const activities = await connection.query<PersonActivityRow>(
+        `select activity.id, activity.actor_admin_id,
+                coalesce(actor.display_name, actor.email_normalized, 'Менеджер') as actor_name,
+                activity.channel, activity.result, activity.note, activity.occurred_at,
+                member.campaign_id,
+                campaign.name as campaign_name
+         from public.outreach_activities activity
+         join public.admin_accounts actor on actor.id = activity.actor_admin_id
+         join public.outreach_campaign_contacts member
+           on member.id = activity.campaign_contact_id
+         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         where activity.contact_id = $1::uuid
+         order by activity.occurred_at desc, activity.id desc
+         limit 200`,
+        [contactId]
+      );
+
+      const participations = await connection.query<ParticipationRow>(
+        `select participant.id as participant_id,
+                participant.event_id,
+                event.title as event_title,
+                participant.adults,
+                participant.children,
+                participant.sleeping_places
+         from public.event_participants participant
+         join public.events event on event.id = participant.event_id
+         where participant.outreach_contact_id = $1::uuid
+           and participant.deleted_at is null
+         order by event.starts_at desc
+         limit 20`,
+        [contactId]
+      );
+
+      return {
+        contactId: contact.contact_id,
+        displayName: contact.display_name,
+        phone: contact.phone_e164,
+        telegramUsername: contact.telegram_username,
+        maxIdentifier: contact.max_identifier,
+        email: contact.email,
+        source: contact.source,
+        note: contact.note,
+        linkedUserId: contact.linked_user_id,
+        archivedAt: nullableIso(contact.archived_at),
+        createdAt: toIso(contact.created_at),
+        updatedAt: toIso(contact.updated_at),
+        campaigns: campaigns.rows.map((row) => ({
+          campaignContactId: row.campaign_contact_id,
+          campaignId: row.campaign_id,
+          campaignName: row.campaign_name,
+          stage: row.pipeline_stage,
+          stageLabel: row.stage_label,
+          assignedAdminName: row.assigned_admin_name,
+          removedAt: nullableIso(row.removed_at)
+        })),
+        activities: activities.rows.map((row) => ({
+          ...mapActivity(row),
+          campaignId: row.campaign_id,
+          campaignName: row.campaign_name
+        })),
+        participations: participations.rows.map((participation) => ({
+          participantId: participation.participant_id,
+          eventId: participation.event_id,
+          eventTitle: participation.event_title,
+          guests: participation.adults + participation.children,
+          sleepingPlaces: participation.sleeping_places
+        }))
       };
     });
   }
@@ -1787,6 +2023,23 @@ function isForeignKeyViolation(error: unknown): boolean {
     && error !== null
     && "code" in error
     && (error as { readonly code?: unknown }).code === "23503";
+}
+
+function mapPerson(row: PersonRow): OutreachPerson {
+  return {
+    contactId: row.contact_id,
+    displayName: row.display_name,
+    phone: row.phone_e164,
+    telegramUsername: row.telegram_username,
+    maxIdentifier: row.max_identifier,
+    email: row.email,
+    source: row.source,
+    linkedUserId: row.linked_user_id,
+    campaignCount: Number(row.campaign_count ?? 0),
+    lastActivityAt: nullableIso(row.last_activity_at),
+    archivedAt: nullableIso(row.archived_at),
+    createdAt: toIso(row.created_at)
+  };
 }
 
 function mapActivity(row: ActivityRow): OutreachActivity {

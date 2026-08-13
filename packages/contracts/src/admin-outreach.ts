@@ -248,6 +248,86 @@ extends OutreachCampaignContactSummary {
   readonly participations: readonly OutreachContactParticipation[];
 }
 
+/**
+ * Общая база: человек, а не его участие в кампании.
+ *
+ * Различие важное и держится намеренно. `OutreachCampaignContact*` — это работа по человеку в
+ * рамках одной кампании, со стадией воронки и ответственным. `OutreachPerson*` — сам человек:
+ * он живёт в базе постоянно, состоит сразу в нескольких кампаниях или ни в одной, и история у
+ * него одна на всех.
+ */
+export const OUTREACH_PERSON_FILTERS = [
+  "all",
+  "without_phone",
+  "without_name",
+  "without_campaign",
+  "in_bot",
+  "archived"
+] as const;
+
+export type OutreachPersonFilter = typeof OUTREACH_PERSON_FILTERS[number];
+
+export interface OutreachPerson {
+  readonly contactId: string;
+  readonly displayName: string | null;
+  readonly phone: string | null;
+  readonly telegramUsername: string | null;
+  readonly maxIdentifier: string | null;
+  readonly email: string | null;
+  readonly source: string | null;
+  /** Пользователь бота, если человека узнали по подтверждённому телефону. */
+  readonly linkedUserId: string | null;
+  /** В скольких кампаниях состоит сейчас — без тех, откуда его убрали. */
+  readonly campaignCount: number;
+  readonly lastActivityAt: string | null;
+  readonly archivedAt: string | null;
+  readonly createdAt: string;
+}
+
+export interface OutreachPersonPage {
+  readonly items: readonly OutreachPerson[];
+  readonly total: number;
+  readonly page: number;
+  readonly limit: number;
+}
+
+export interface OutreachPersonCampaign {
+  readonly campaignContactId: string;
+  readonly campaignId: string;
+  readonly campaignName: string;
+  readonly stage: OutreachPipelineStage;
+  /** Название стадии так, как его назвал менеджер в этой кампании. */
+  readonly stageLabel: string;
+  readonly assignedAdminName: string | null;
+  /** Человека убрали из кампании, но история осталась. */
+  readonly removedAt: string | null;
+}
+
+/** Звонок или сообщение из любой кампании — в общей ленте нужно знать, из какой. */
+export interface OutreachPersonActivity extends OutreachActivity {
+  readonly campaignId: string;
+  readonly campaignName: string;
+}
+
+export interface OutreachPersonCard {
+  readonly contactId: string;
+  readonly displayName: string | null;
+  readonly phone: string | null;
+  readonly telegramUsername: string | null;
+  readonly maxIdentifier: string | null;
+  readonly email: string | null;
+  readonly source: string | null;
+  readonly note: string | null;
+  readonly linkedUserId: string | null;
+  readonly archivedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly campaigns: readonly OutreachPersonCampaign[];
+  /** Вся история звонков и сообщений из всех кампаний одной лентой. */
+  readonly activities: readonly OutreachPersonActivity[];
+  readonly participations: readonly OutreachContactParticipation[];
+}
+
 export interface OutreachImportRow {
   readonly name?: string;
   readonly phone?: string;

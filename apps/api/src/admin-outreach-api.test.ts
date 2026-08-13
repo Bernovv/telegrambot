@@ -361,6 +361,8 @@ function handler(
     async listTaskBoard() { return []; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
+    async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
+    async getPerson() { return null; },
     async importContacts() {
       return {
         received: 0,

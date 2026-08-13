@@ -28,6 +28,8 @@ export function isAllowedAdminApiPath(
     return /^(?:users|orders|events)(?:\/[0-9a-f-]{36})?$/i.test(path)
       || /^outreach\/campaigns(?:\?includeArchived=(?:true|false))?$/i.test(path)
       || /^outreach\/contacts(?:\?.*)?$/i.test(path)
+      || /^outreach\/base(?:\?.*)?$/i.test(path)
+      || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
       || path === "outreach/managers"
       || path === "outreach/tasks/board"
       || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields)?$/i.test(path)

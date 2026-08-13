@@ -3930,3 +3930,173 @@ tbody tr:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* База контактов: общий список людей и карточка человека. */
+
+.base-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.base-search-field {
+  display: flex;
+  min-width: 260px;
+  flex: 1 1 320px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.base-search-field input {
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+
+.base-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 16px;
+}
+
+.base-chip {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.base-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.base-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.base-campaign-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.base-bot-badge {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.base-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.person-identifiers {
+  display: grid;
+  gap: 16px 24px;
+  padding: 16px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.person-identifiers dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.person-identifiers dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+.person-note {
+  margin: 0;
+  padding: 0 18px 12px;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.person-meta {
+  padding: 0 18px 16px;
+  font-size: 12px;
+}
+
+.person-events {
+  display: grid;
+  margin: 0;
+  padding: 14px 18px;
+  gap: 10px;
+  list-style: none;
+}
+
+.person-events li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.person-events a {
+  color: var(--ink);
+}
+
+.person-timeline {
+  display: grid;
+  margin: 0;
+  padding: 14px 18px;
+  gap: 14px;
+  list-style: none;
+}
+
+.person-timeline li {
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.person-timeline p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
+.person-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.person-timeline-meta {
+  margin-top: 3px;
+  font-size: 12px;
+}
