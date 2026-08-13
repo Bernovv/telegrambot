@@ -764,8 +764,9 @@ export default function OutreachCampaignPage() {
       !formText(data, "phone")
       && !formText(data, "telegram")
       && !formText(data, "max")
+      && !formText(data, "email")
     ) {
-      setError("Укажите телефон, Telegram или MAX.");
+      setError("Укажите телефон, Telegram, MAX или почту.");
       return;
     }
     setMutating(true);
@@ -778,6 +779,7 @@ export default function OutreachCampaignPage() {
           ? { telegram: formText(data, "telegram") }
           : {}),
         ...(formText(data, "max") ? { max: formText(data, "max") } : {}),
+        ...(formText(data, "email") ? { email: formText(data, "email") } : {}),
         ...(formText(data, "source") ? { source: formText(data, "source") } : {}),
         ...(formText(data, "note") ? { note: formText(data, "note") } : {}),
         ...(assignedAdminId ? { assignedAdminId } : {})
@@ -1442,6 +1444,10 @@ export default function OutreachCampaignPage() {
               <label>
                 <span>MAX</span>
                 <input name="max" maxLength={100} placeholder="Идентификатор" />
+              </label>
+              <label>
+                <span>Почта</span>
+                <input name="email" type="email" maxLength={320} placeholder="name@example.com" />
               </label>
               <label>
                 <span>Источник</span>

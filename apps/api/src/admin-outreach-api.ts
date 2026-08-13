@@ -76,6 +76,10 @@ const importRow = z.object({
   phone: z.string().max(100).optional(),
   telegram: z.string().max(100).optional(),
   max: z.string().max(100).optional(),
+  // Почта — такой же признак человека, как телефон и ник: в выгрузке Timepad она
+  // единственная, что есть у всех. Схема строгая, поэтому без этого поля файл с
+  // колонкой «Email» получал 400 на всю пачку, а не «загружено без почты».
+  email: z.string().max(320).optional(),
   source: z.string().max(200).optional(),
   note: z.string().max(2000).optional()
 }).strict();
@@ -143,10 +147,11 @@ const manualContactBody = z.object({
   phone: z.string().trim().max(100).optional(),
   telegram: z.string().trim().max(100).optional(),
   max: z.string().trim().max(100).optional(),
+  email: z.string().trim().max(320).optional(),
   source: z.string().trim().max(200).optional(),
   note: z.string().trim().max(2000).optional()
 }).strict().refine(
-  (value) => Boolean(value.phone || value.telegram || value.max),
+  (value) => Boolean(value.phone || value.telegram || value.max || value.email),
   { message: "At least one contact identifier is required" }
 );
 
@@ -642,6 +647,7 @@ export class AdminOutreachController {
           ...(parsed.phone ? { phone: parsed.phone } : {}),
           ...(parsed.telegram ? { telegram: parsed.telegram } : {}),
           ...(parsed.max ? { max: parsed.max } : {}),
+          ...(parsed.email ? { email: parsed.email } : {}),
           ...(parsed.source ? { source: parsed.source } : {}),
           ...(parsed.note ? { note: parsed.note } : {})
         },
@@ -672,6 +678,7 @@ export class AdminOutreachController {
           ...(row.phone === undefined ? {} : { phone: row.phone }),
           ...(row.telegram === undefined ? {} : { telegram: row.telegram }),
           ...(row.max === undefined ? {} : { max: row.max }),
+          ...(row.email === undefined ? {} : { email: row.email }),
           ...(row.source === undefined ? {} : { source: row.source }),
           ...(row.note === undefined ? {} : { note: row.note })
         })),

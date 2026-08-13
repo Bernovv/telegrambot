@@ -241,6 +241,77 @@ describe("administrator outreach HTTP contract", () => {
       await app.close();
     }
   });
+
+  it("passes the email through import and manual entry", async () => {
+    const imported: unknown[] = [];
+    const created: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async importContacts(input) {
+          imported.push(input);
+          return {
+            received: 1,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
+          };
+        },
+        async createContact(input) {
+          created.push(input);
+          return {
+            received: 1,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      })
+    });
+    await app.init();
+    try {
+      // Выгрузка Timepad: почта есть у всех, телефона нет ни у кого. Схема строгая,
+      // поэтому лишний ключ в строке — это 400 на всю пачку, а не пропущенная колонка.
+      const importResponse = await inject(app, {
+        method: "POST",
+        url: `/api/v1/outreach/campaigns/${CAMPAIGN_ID}/import`,
+        payload: { rows: [{ name: "Анна", email: "anna@example.com" }] }
+      });
+      // Почта — самостоятельный признак: контакт только с ней уже можно завести.
+      const manualResponse = await inject(app, {
+        method: "POST",
+        url: `/api/v1/outreach/campaigns/${CAMPAIGN_ID}/contacts`,
+        payload: { name: "Борис", email: "boris@example.com" }
+      });
+      assert.equal(importResponse.statusCode, 201);
+      assert.equal(manualResponse.statusCode, 201);
+      assert.equal(
+        (imported[0] as { readonly rows: readonly { readonly email: string }[] })
+          .rows[0]?.email,
+        "anna@example.com"
+      );
+      assert.equal(
+        (created[0] as { readonly contact: { readonly email: string } })
+          .contact.email,
+        "boris@example.com"
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 function handler(
