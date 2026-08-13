@@ -34,8 +34,11 @@ import type {
   OutreachImportResult,
   OutreachImportRow,
   OutreachLostReason,
+  DeleteOutreachPersonResult,
   OutreachManager,
   OutreachPersonCard,
+  OutreachPersonUpdateResult,
+  UpdateOutreachPersonRequest,
   OutreachPersonFilter,
   OutreachPersonPage,
   OutreachPipelineColumn,
@@ -784,6 +787,50 @@ export function getOutreachPerson(
   return requestAdminApi(
     `outreach/base/${encodeURIComponent(contactId)}`,
     signal
+  );
+}
+
+/** Занятый признак приходит обычным ответом, а не ошибкой: см. комментарий в API. */
+export function updateOutreachPerson(
+  contactId: string,
+  changes: UpdateOutreachPersonRequest
+): Promise<Exclude<OutreachPersonUpdateResult, { status: "not_found" }>> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}`,
+    "PATCH",
+    changes
+  );
+}
+
+export function archiveOutreachPerson(
+  contactId: string,
+  reason?: string
+): Promise<{ readonly archived: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/archive`,
+    "POST",
+    reason ? { reason } : {}
+  );
+}
+
+export function restoreOutreachPerson(
+  contactId: string
+): Promise<{ readonly restored: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/restore`,
+    "POST",
+    {}
+  );
+}
+
+export function deleteOutreachPerson(
+  contactId: string,
+  reason?: string
+): Promise<DeleteOutreachPersonResult> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/delete`,
+    "POST",
+    reason ? { reason } : {}
   );
 }
 

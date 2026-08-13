@@ -363,6 +363,10 @@ function handler(
     async getContact() { return null; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async updatePerson() { return { status: "updated" as const }; },
+    async archivePerson() { return true; },
+    async restorePerson() { return true; },
+    async deletePerson() { return { deleted: true, blockers: [] }; },
     async importContacts() {
       return {
         received: 0,

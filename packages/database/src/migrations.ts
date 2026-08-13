@@ -189,5 +189,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260813120000_outreach_contact_email",
     description: "Add email to outreach contacts as a fourth identity for import matching",
     destructive: false
+  },
+  {
+    id: "20260813180000_outreach_contact_management",
+    description: "Grant the delete permission and index the active contact base for editing, archiving and deleting",
+    destructive: false
   }
 ];

@@ -21,8 +21,12 @@ import type {
   OutreachImportResult,
   OutreachImportRow,
   OutreachLostReason,
+  DeleteOutreachPersonResult,
   OutreachManager,
   OutreachPersonCard,
+  OutreachPersonConflict,
+  OutreachPersonUpdateResult,
+  UpdateOutreachPersonRequest,
   OutreachPersonFilter,
   OutreachPersonPage,
   OutreachPipelineColumn,
@@ -193,6 +197,38 @@ export interface AdminOutreachRepository {
     readonly limit: number;
   }): Promise<OutreachPersonPage>;
   getPerson(contactId: string): Promise<OutreachPersonCard | null>;
+  updatePerson(input: {
+    readonly contactId: string;
+    readonly fields: NormalizedOutreachImportRow;
+    /** Признаки, которые правка меняет, — их проверяют на занятость другим человеком. */
+    readonly conflictCandidates: readonly {
+      readonly field: OutreachPersonConflict["field"];
+      readonly value: string;
+    }[];
+    readonly actorAdminId: string;
+    readonly auditId: string;
+    readonly now: Date;
+  }): Promise<OutreachPersonUpdateResult>;
+  archivePerson(input: {
+    readonly contactId: string;
+    readonly reason: string | null;
+    readonly actorAdminId: string;
+    readonly auditId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
+  restorePerson(input: {
+    readonly contactId: string;
+    readonly actorAdminId: string;
+    readonly auditId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
+  deletePerson(input: {
+    readonly contactId: string;
+    readonly reason: string | null;
+    readonly actorAdminId: string;
+    readonly auditId: string;
+    readonly now: Date;
+  }): Promise<DeleteOutreachPersonResult>;
   importContacts(input: {
     readonly campaignId: string;
     readonly assignedAdminId: string;
@@ -797,6 +833,157 @@ export class AdminOutreachService {
     return this.repository.getPerson(input.contactId);
   }
 
+  async updatePerson(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly changes: UpdateOutreachPersonRequest;
+    readonly now: Date;
+  }): Promise<OutreachPersonUpdateResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+
+    const current = await this.repository.getPerson(input.contactId);
+    if (!current) {
+      return { status: "not_found" };
+    }
+
+    // Правка идёт через тот же разбор, что и импорт: иначе исправленный руками телефон лёг бы
+    // в базу в том виде, в каком его набрали, и человек перестал бы находиться поиском.
+    const merged = {
+      name: pick(input.changes.name, current.displayName),
+      phone: pick(input.changes.phone, current.phone),
+      telegram: pick(input.changes.telegram, current.telegramUsername),
+      max: pick(input.changes.max, current.maxIdentifier),
+      email: pick(input.changes.email, current.email)
+    };
+    const { identity, rejections, hasIdentifier } = normalizeContactInput(merged, {
+      parsePhone: (candidate) => {
+        try {
+          return this.phoneNormalizer.normalize(candidate);
+        } catch {
+          return null;
+        }
+      }
+    });
+    // Правка — ручное действие, поэтому про непонятое поле говорим сразу, как в ручной форме.
+    const blocking = rejections.find((rejection) => rejection.field !== "name");
+    if (blocking) {
+      throw new Error(REJECTION_MESSAGES[blocking.reason]);
+    }
+    if (!hasIdentifier) {
+      throw new Error("Outreach contact identity is invalid");
+    }
+
+    const fields: NormalizedOutreachImportRow = {
+      displayName: identity.name,
+      phoneE164: identity.phoneE164,
+      telegramUsername: identity.telegramUsername,
+      telegramUsernameNormalized: identity.telegramUsernameNormalized,
+      maxIdentifier: identity.maxIdentifier,
+      maxIdentifierNormalized: identity.maxIdentifierNormalized,
+      email: identity.email,
+      emailNormalized: identity.emailNormalized,
+      source: optionalText(pick(input.changes.source, current.source) ?? "", 200),
+      note: optionalText(pick(input.changes.note, current.note) ?? "", 2000)
+    };
+
+    // На занятость проверяем только то, что действительно поменялось: иначе контакт
+    // конфликтовал бы сам с собой при любой правке имени.
+    const conflictCandidates: {
+      readonly field: OutreachPersonConflict["field"];
+      readonly value: string;
+    }[] = [];
+    if (fields.phoneE164 && fields.phoneE164 !== current.phone) {
+      conflictCandidates.push({ field: "phone", value: fields.phoneE164 });
+    }
+    if (
+      fields.telegramUsernameNormalized
+      && fields.telegramUsernameNormalized !== current.telegramUsername?.toLowerCase()
+    ) {
+      conflictCandidates.push({
+        field: "telegram",
+        value: fields.telegramUsernameNormalized
+      });
+    }
+    if (
+      fields.maxIdentifierNormalized
+      && fields.maxIdentifierNormalized !== current.maxIdentifier?.toLowerCase()
+    ) {
+      conflictCandidates.push({
+        field: "max",
+        value: fields.maxIdentifierNormalized
+      });
+    }
+    if (
+      fields.emailNormalized
+      && fields.emailNormalized !== current.email?.toLowerCase()
+    ) {
+      conflictCandidates.push({ field: "email", value: fields.emailNormalized });
+    }
+
+    return this.repository.updatePerson({
+      contactId: input.contactId,
+      fields,
+      conflictCandidates,
+      actorAdminId: input.actor.adminId,
+      auditId: this.idGenerator.newId(),
+      now: input.now
+    });
+  }
+
+  async archivePerson(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly reason?: string;
+    readonly now: Date;
+  }): Promise<boolean> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    return this.repository.archivePerson({
+      contactId: input.contactId,
+      reason: optionalText(input.reason ?? "", 500),
+      actorAdminId: input.actor.adminId,
+      auditId: this.idGenerator.newId(),
+      now: input.now
+    });
+  }
+
+  async restorePerson(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly now: Date;
+  }): Promise<boolean> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    return this.repository.restorePerson({
+      contactId: input.contactId,
+      actorAdminId: input.actor.adminId,
+      auditId: this.idGenerator.newId(),
+      now: input.now
+    });
+  }
+
+  /**
+   * Удаление насовсем — единственное необратимое действие с базой, поэтому и право у него
+   * своё. Что нельзя стирать, решает база: она же держит журналы, защищённые от удаления.
+   */
+  async deletePerson(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly reason?: string;
+    readonly now: Date;
+  }): Promise<DeleteOutreachPersonResult> {
+    requirePermission(input.actor, "outreach.delete");
+    requireUuid(input.contactId);
+    return this.repository.deletePerson({
+      contactId: input.contactId,
+      reason: optionalText(input.reason ?? "", 500),
+      actorAdminId: input.actor.adminId,
+      auditId: this.idGenerator.newId(),
+      now: input.now
+    });
+  }
+
   async importContacts(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
@@ -1170,9 +1357,20 @@ function appendExtraPhones(
   return (note ? `${note}\n${line}` : line).slice(0, 2000);
 }
 
+/** Поля нет в правке — оставить как было; поле есть, но пустое — стереть. */
+function pick(
+  change: string | null | undefined,
+  current: string | null
+): string | undefined {
+  if (change === undefined) {
+    return current ?? undefined;
+  }
+  return change?.trim() ? change : undefined;
+}
+
 function requirePermission(
   actor: AdminRequestActor,
-  permission: "outreach.read" | "outreach.write"
+  permission: "outreach.read" | "outreach.write" | "outreach.delete"
 ): void {
   if (actor.permission !== permission || !UUID_PATTERN.test(actor.adminId)) {
     throw new Error("Administrator outreach permission is invalid");

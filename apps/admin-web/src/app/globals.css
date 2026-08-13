@@ -4100,3 +4100,81 @@ tbody tr:hover {
   margin-top: 3px;
   font-size: 12px;
 }
+
+/* Карточка человека: правка, архив и отказ в удалении. */
+
+.page-notice,
+.page-warning {
+  margin-bottom: 14px;
+  padding: 12px 15px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.page-notice {
+  border: 1px solid #b9dccb;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.page-warning {
+  border: 1px solid #ead7a8;
+  background: #fff8e7;
+  color: #775319;
+}
+
+.page-warning ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.secondary-button.danger {
+  border-color: #e3bebe;
+  color: var(--danger);
+}
+
+.secondary-button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.person-edit-form {
+  display: grid;
+  padding: 16px 18px;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.person-edit-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.person-edit-form label > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.person-edit-form input,
+.person-edit-form textarea {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.person-edit-form textarea {
+  resize: vertical;
+}
+
+.person-edit-form .person-edit-wide {
+  grid-column: 1 / -1;
+}
+
+.person-edit-form button[type="submit"] {
+  justify-self: start;
+  grid-column: 1 / -1;
+}

@@ -97,6 +97,27 @@ const peopleQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional()
 }).strict();
 
+// null означает «стереть значение», отсутствие ключа — «не трогать».
+const editableIdentifier = z.string().trim().max(320).nullable();
+
+const updatePersonBody = z.object({
+  name: z.string().trim().max(200).nullable().optional(),
+  phone: editableIdentifier.optional(),
+  telegram: editableIdentifier.optional(),
+  max: editableIdentifier.optional(),
+  email: editableIdentifier.optional(),
+  source: z.string().trim().max(200).nullable().optional(),
+  note: z.string().trim().max(2000).nullable().optional()
+}).strict().refine((value) => Object.keys(value).length > 0);
+
+const archivePersonBody = z.object({
+  reason: z.string().trim().max(500).optional()
+}).strict();
+
+const deletePersonBody = z.object({
+  reason: z.string().trim().max(500).optional()
+}).strict();
+
 const baseContactsQuery = z.object({
   campaignId: uuid,
   search: z.string().trim().min(2).max(100).optional(),
@@ -212,6 +233,10 @@ export type AdminOutreachHandler = Pick<
   | "getContact"
   | "listPeople"
   | "getPerson"
+  | "updatePerson"
+  | "archivePerson"
+  | "restorePerson"
+  | "deletePerson"
   | "importContacts"
   | "createContact"
   | "assignContacts"
@@ -343,6 +368,99 @@ export class AdminOutreachController {
       throw outreachNotFound();
     }
     return person;
+  }
+
+  @Patch("base/:id")
+  @RequireAdminPermission("outreach.write")
+  async updatePerson(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(updatePersonBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.updatePerson({
+        actor: requireActor(request),
+        contactId,
+        changes: parsed,
+        now: new Date()
+      })
+    );
+    if (result.status === "not_found") {
+      throw outreachNotFound();
+    }
+    // Занятый признак отдаём обычным ответом, а не ошибкой: это не поломка, а развилка —
+    // опечатка или дубль, который пора объединить. Панели нужно имя второго человека, чтобы
+    // спросить об этом внятно, а через ошибку структура не проходит.
+    return result;
+  }
+
+  @Post("base/:id/archive")
+  @RequireAdminPermission("outreach.write")
+  async archivePerson(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(archivePersonBody, body ?? {});
+    const archived = await executeOutreach(() =>
+      this.handler.archivePerson({
+        actor: requireActor(request),
+        contactId,
+        ...(parsed.reason === undefined ? {} : { reason: parsed.reason }),
+        now: new Date()
+      })
+    );
+    if (!archived) {
+      throw outreachNotFound();
+    }
+    return { archived };
+  }
+
+  @Post("base/:id/restore")
+  @RequireAdminPermission("outreach.write")
+  async restorePerson(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const restored = await executeOutreach(() =>
+      this.handler.restorePerson({
+        actor: requireActor(request),
+        contactId,
+        now: new Date()
+      })
+    );
+    if (!restored) {
+      throw outreachNotFound();
+    }
+    return { restored };
+  }
+
+  @Post("base/:id/delete")
+  @RequireAdminPermission("outreach.delete")
+  async deletePerson(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(deletePersonBody, body ?? {});
+    const result = await executeOutreach(() =>
+      this.handler.deletePerson({
+        actor: requireActor(request),
+        contactId,
+        ...(parsed.reason === undefined ? {} : { reason: parsed.reason }),
+        now: new Date()
+      })
+    );
+    // Отказ по причине — не ошибка запроса: панель показывает причины и предлагает архив.
+    if (!result.deleted && result.blockers.length === 0) {
+      throw outreachNotFound();
+    }
+    return result;
   }
 
   @Post("campaigns/:id/contacts/add")

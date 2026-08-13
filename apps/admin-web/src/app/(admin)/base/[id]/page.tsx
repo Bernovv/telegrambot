@@ -2,20 +2,35 @@
 
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
-import { AdminApiError, getOutreachPerson } from "@/lib/admin-api";
-import { formatCompactDate, formatDateTime } from "@/lib/format";
-import type { OutreachPersonCard } from "@ticket-platform/contracts/admin-outreach";
 import {
+  AdminApiError,
+  archiveOutreachPerson,
+  deleteOutreachPerson,
+  getOutreachPerson,
+  restoreOutreachPerson,
+  updateOutreachPerson
+} from "@/lib/admin-api";
+import { formatCompactDate, formatDateTime } from "@/lib/format";
+import type {
+  OutreachDeleteBlocker,
+  OutreachPersonCard
+} from "@ticket-platform/contracts/admin-outreach";
+import {
+  ArchiveRestore,
   ArrowLeft,
   Bot,
   CalendarDays,
   Mail,
   MessageSquare,
+  Pencil,
   Phone,
-  RefreshCw
+  RefreshCw,
+  Trash2,
+  X
 } from "lucide-react";
 import Link from "next/link";
-import { use, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { type FormEvent, use, useCallback, useEffect, useState } from "react";
 
 const CHANNEL_LABELS: Record<string, string> = {
   phone: "Звонок",
@@ -37,13 +52,31 @@ const RESULT_LABELS: Record<string, string> = {
   invalid: "Неверный контакт"
 };
 
+const BLOCKER_LABELS: Record<OutreachDeleteBlocker, string> = {
+  in_bot: "человек есть в боте — там его согласия и, возможно, оплаты",
+  has_activity: "по нему есть звонки и сообщения, их нельзя стирать",
+  has_participation: "он записан на мероприятие"
+};
+
+const CONFLICT_FIELDS: Record<string, string> = {
+  phone: "Телефон",
+  telegram: "Telegram",
+  max: "MAX",
+  email: "Почта"
+};
+
 export default function OutreachPersonPage(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = use(params);
+  const router = useRouter();
   const [person, setPerson] = useState<OutreachPersonCard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [mutating, setMutating] = useState(false);
+  const [blockers, setBlockers] = useState<readonly OutreachDeleteBlocker[]>([]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -68,6 +101,115 @@ export default function OutreachPersonPage(
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  function messageFor(caught: unknown, fallback: string): string {
+    return caught instanceof AdminApiError ? caught.message : fallback;
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const field = (name: string) => {
+      const value = data.get(name);
+      // Пустое поле — это осознанное «стереть», а не «не менять»: правка приходит целиком.
+      return typeof value === "string" && value.trim() ? value.trim() : null;
+    };
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await updateOutreachPerson(id, {
+        name: field("name"),
+        phone: field("phone"),
+        telegram: field("telegram"),
+        max: field("max"),
+        email: field("email"),
+        source: field("source"),
+        note: field("note")
+      });
+      if (result.status === "conflict") {
+        const label = CONFLICT_FIELDS[result.conflict.field] ?? "Признак";
+        const owner = result.conflict.displayName ?? "другого контакта";
+        setError(
+          `${label} уже занят: ${owner}. Это опечатка или тот же человек заведён дважды —`
+          + " во втором случае контакты нужно объединить, а не переписывать."
+        );
+        return;
+      }
+      setEditing(false);
+      setNotice("Карточка сохранена.");
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить карточку."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function toggleArchive() {
+    if (!person) {
+      return;
+    }
+    if (!person.archivedAt) {
+      const reason = window.prompt(
+        "Убрать человека из базы? Он исчезнет из списков и подбора в кампании,"
+        + " история сохранится. Почему убираем?"
+      );
+      if (reason === null) {
+        return;
+      }
+      await run(
+        () => archiveOutreachPerson(id, reason.trim() || undefined),
+        "Человек убран из базы."
+      );
+      return;
+    }
+    await run(() => restoreOutreachPerson(id), "Человек возвращён в базу.");
+  }
+
+  async function run(action: () => Promise<unknown>, success: string) {
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await action();
+      setNotice(success);
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось выполнить действие."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(
+      "Стереть человека насовсем? Это необратимо. Если нужно просто убрать его с глаз,"
+      + " используйте «Убрать из базы» — оттуда можно вернуть."
+    )) {
+      return;
+    }
+    const reason = window.prompt("Почему удаляем? Останется в журнале действий.");
+    if (reason === null) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    setBlockers([]);
+    try {
+      const result = await deleteOutreachPerson(id, reason.trim() || undefined);
+      if (!result.deleted) {
+        setBlockers(result.blockers);
+        return;
+      }
+      router.push("/base");
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось удалить человека."));
+    } finally {
+      setMutating(false);
+    }
+  }
 
   if (loading && !person) {
     return <PageLoading />;
@@ -112,8 +254,110 @@ export default function OutreachPersonPage(
           >
             <RefreshCw size={18} />
           </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating}
+            onClick={() => setEditing((current) => !current)}
+          >
+            <Pencil size={16} />
+            {editing ? "Отменить" : "Изменить"}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating}
+            onClick={() => void toggleArchive()}
+          >
+            <ArchiveRestore size={16} />
+            {person.archivedAt ? "Вернуть в базу" : "Убрать из базы"}
+          </button>
+          <button
+            className="secondary-button danger"
+            type="button"
+            disabled={mutating}
+            onClick={() => void remove()}
+          >
+            <Trash2 size={16} />
+            Удалить
+          </button>
         </div>
       </div>
+
+      {notice ? <div className="page-notice">{notice}</div> : null}
+      {error ? <div className="page-warning">{error}</div> : null}
+      {person.archivedAt && person.archivedReason ? (
+        <div className="page-notice">
+          Убран из базы: {person.archivedReason}
+        </div>
+      ) : null}
+      {blockers.length > 0 ? (
+        <div className="page-warning">
+          <strong>Стереть насовсем нельзя.</strong>
+          <ul>
+            {blockers.map((blocker) => (
+              <li key={blocker}>{BLOCKER_LABELS[blocker]}</li>
+            ))}
+          </ul>
+          Уберите его из базы — он исчезнет из списков, а история останется.
+        </div>
+      ) : null}
+
+      {editing ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Изменить карточку</h2>
+              <span>Пустое поле сотрёт значение</span>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Закрыть"
+              onClick={() => setEditing(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <form className="person-edit-form" onSubmit={(event) => void save(event)}>
+            <label className="person-edit-wide">
+              <span>Имя</span>
+              <input name="name" defaultValue={person.displayName ?? ""} maxLength={200} />
+            </label>
+            <label>
+              <span>Телефон</span>
+              <input name="phone" defaultValue={person.phone ?? ""} maxLength={100} />
+            </label>
+            <label>
+              <span>Telegram</span>
+              <input
+                name="telegram"
+                defaultValue={person.telegramUsername ?? ""}
+                maxLength={100}
+              />
+            </label>
+            <label>
+              <span>MAX</span>
+              <input name="max" defaultValue={person.maxIdentifier ?? ""} maxLength={100} />
+            </label>
+            <label>
+              <span>Почта</span>
+              <input name="email" defaultValue={person.email ?? ""} maxLength={320} />
+            </label>
+            <label>
+              <span>Источник</span>
+              <input name="source" defaultValue={person.source ?? ""} maxLength={200} />
+            </label>
+            <label className="person-edit-wide">
+              <span>Комментарий</span>
+              <textarea name="note" defaultValue={person.note ?? ""} rows={3} maxLength={2000} />
+            </label>
+            <button className="primary-button" type="submit" disabled={mutating}>
+              {mutating ? "Сохраняем…" : "Сохранить"}
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="data-section">
         <div className="section-title-row">

@@ -5,6 +5,7 @@ export const ADMIN_PERMISSIONS = [
   "participants.export",
   "outreach.read",
   "outreach.write",
+  "outreach.delete",
   "events.read",
   "events.write",
   "events.publish",

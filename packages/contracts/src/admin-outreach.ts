@@ -320,12 +320,60 @@ export interface OutreachPersonCard {
   readonly note: string | null;
   readonly linkedUserId: string | null;
   readonly archivedAt: string | null;
+  readonly archivedReason: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly campaigns: readonly OutreachPersonCampaign[];
   /** Вся история звонков и сообщений из всех кампаний одной лентой. */
   readonly activities: readonly OutreachPersonActivity[];
   readonly participations: readonly OutreachContactParticipation[];
+}
+
+/**
+ * Правка карточки. Пустая строка означает «стереть значение», отсутствие поля — «не трогать».
+ * Различие существенное: правка одного телефона не должна обнулять почту.
+ */
+export interface UpdateOutreachPersonRequest {
+  readonly name?: string | null | undefined;
+  readonly phone?: string | null | undefined;
+  readonly telegram?: string | null | undefined;
+  readonly max?: string | null | undefined;
+  readonly email?: string | null | undefined;
+  readonly source?: string | null | undefined;
+  readonly note?: string | null | undefined;
+}
+
+/** Признак уже занят другим человеком — какой именно и кем. */
+export interface OutreachPersonConflict {
+  readonly field: "phone" | "telegram" | "max" | "email";
+  readonly contactId: string;
+  readonly displayName: string | null;
+}
+
+export type OutreachPersonUpdateResult =
+  | { readonly status: "updated" }
+  | { readonly status: "not_found" }
+  | { readonly status: "conflict"; readonly conflict: OutreachPersonConflict };
+
+/**
+ * Почему человека нельзя стереть насовсем.
+ *
+ * `in_bot` — это клиент бота с согласиями и, возможно, оплатами. `has_activity` — звонки и
+ * сообщения, они физически неудаляемы: журнал активностей защищён триггером. `has_participation`
+ * — человек записан на мероприятие.
+ */
+export const OUTREACH_DELETE_BLOCKERS = [
+  "in_bot",
+  "has_activity",
+  "has_participation"
+] as const;
+
+export type OutreachDeleteBlocker = typeof OUTREACH_DELETE_BLOCKERS[number];
+
+export interface DeleteOutreachPersonResult {
+  readonly deleted: boolean;
+  /** Пусто, когда удалили. Иначе — что помешало; архив остаётся доступен всегда. */
+  readonly blockers: readonly OutreachDeleteBlocker[];
 }
 
 export interface OutreachImportRow {

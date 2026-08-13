@@ -123,6 +123,82 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.deepEqual(select.values, ["%иван%", "all", 25, 25]);
   });
 
+  it("looks for a participation by phone too, not only by the link", async () => {
+    // Связь outreach_contact_id проставляется только когда участника завели из карточки
+    // кампании. У добавленных на вкладке мероприятия и у покупателей бота она пустая, и
+    // проверка по одной связи разрешила бы стереть человека, который едет на пикник.
+    const connection = new DeletableContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.deletePerson({
+      contactId: "00000000-0000-4000-8000-000000000301",
+      reason: "дубль",
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      auditId: "00000000-0000-4000-8000-000000000401",
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    const check = connection.queries.find((query) =>
+      query.text.includes("from public.event_participants")
+    );
+    assert.ok(check);
+    assert.match(check.text, /outreach_contact_id = \$1::uuid/);
+    assert.match(check.text, /phone_e164 = \$2::text/);
+    assert.deepEqual(check.values, [
+      "00000000-0000-4000-8000-000000000301",
+      "+79991234567"
+    ]);
+  });
+
+  it("refuses to delete a contact that belongs to a bot user", async () => {
+    const connection = new DeletableContactConnection({ linkedUserId: "00000000-0000-4000-8000-000000000009" });
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const result = await repository.deletePerson({
+      contactId: "00000000-0000-4000-8000-000000000301",
+      reason: null,
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      auditId: "00000000-0000-4000-8000-000000000401",
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    assert.equal(result.deleted, false);
+    assert.deepEqual(result.blockers, ["in_bot"]);
+    // Ничего не стёрли и в журнал ничего не написали: отказ не событие.
+    assert.equal(
+      connection.queries.some((query) => query.text.startsWith("delete")),
+      false
+    );
+    assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
+
+  it("keeps the audit record of a deletion, since the contact row itself is gone", async () => {
+    const connection = new DeletableContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const result = await repository.deletePerson({
+      contactId: "00000000-0000-4000-8000-000000000301",
+      reason: "загрузили мусором",
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      auditId: "00000000-0000-4000-8000-000000000401",
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    assert.equal(result.deleted, true);
+    const audit = connection.queries.find((query) =>
+      query.text.includes("insert into public.audit_log")
+    );
+    assert.ok(audit);
+    assert.equal(audit.values[2], "outreach.contact.deleted");
+    assert.equal(audit.values[4], "загрузили мусором");
+    // Запись идёт после удаления — иначе транзакция откатила бы её вместе с отказом.
+    const deleteIndex = connection.queries.findIndex((query) =>
+      query.text.includes("delete from public.outreach_contacts")
+    );
+    const auditIndex = connection.queries.indexOf(audit);
+    assert.ok(auditIndex > deleteIndex);
+  });
+
   it("collects a person's history across campaigns, not within one", async () => {
     const connection = new PersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
@@ -152,6 +228,43 @@ class RecordingConnection implements SqlConnection {
     values: readonly unknown[] = []
   ): Promise<SqlQueryResult<TRow>> {
     this.queries.push({ text, values });
+    return { rows: [], rowCount: 0 };
+  }
+
+  release(): void {
+    this.released = true;
+  }
+}
+
+/**
+ * Контакт, который в принципе можно стереть: без звонков, без истории стадий и без участий.
+ * Привязку к боту задаёт тест — она единственный блокирующий признак, который виден сразу
+ * из самой строки контакта.
+ */
+class DeletableContactConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  constructor(
+    private readonly options: { readonly linkedUserId?: string } = {}
+  ) {}
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    if (text.includes("from public.outreach_contacts")) {
+      return {
+        rows: [{
+          id: values[0],
+          display_name: "Иван",
+          phone_e164: "+79991234567",
+          linked_user_id: this.options.linkedUserId ?? null
+        } as TRow],
+        rowCount: 1
+      };
+    }
     return { rows: [], rowCount: 0 };
   }
 

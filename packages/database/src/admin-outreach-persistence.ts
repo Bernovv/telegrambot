@@ -16,9 +16,12 @@ import type {
   MoveOutreachContactsResult,
   OutreachBaseContact,
   OutreachImportRow,
+  DeleteOutreachPersonResult,
+  OutreachDeleteBlocker,
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
+  OutreachPersonUpdateResult,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachStageHistoryEntry,
@@ -169,6 +172,7 @@ interface PersonCardRow {
   readonly note: string | null;
   readonly linked_user_id: string | null;
   readonly archived_at: Date | string | null;
+  readonly archived_reason: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
@@ -1091,6 +1095,7 @@ implements AdminOutreachRepository {
            contact.note,
            contact.linked_user_id,
            contact.archived_at,
+           contact.archived_reason,
            contact.created_at,
            contact.updated_at
          from public.outreach_contacts contact
@@ -1170,6 +1175,7 @@ implements AdminOutreachRepository {
         note: contact.note,
         linkedUserId: contact.linked_user_id,
         archivedAt: nullableIso(contact.archived_at),
+        archivedReason: contact.archived_reason,
         createdAt: toIso(contact.created_at),
         updatedAt: toIso(contact.updated_at),
         campaigns: campaigns.rows.map((row) => ({
@@ -1194,6 +1200,276 @@ implements AdminOutreachRepository {
           sleepingPlaces: participation.sleeping_places
         }))
       };
+    });
+  }
+
+  updatePerson(
+    input: Parameters<AdminOutreachRepository["updatePerson"]>[0]
+  ): Promise<OutreachPersonUpdateResult> {
+    return this.write(async (connection) => {
+      const existing = await connection.query<PersonCardRow>(
+        `select id as contact_id, display_name, phone_e164, telegram_username,
+                max_identifier, email, source, note
+           from public.outreach_contacts
+          where id = $1::uuid
+          for update`,
+        [input.contactId]
+      );
+      const before = existing.rows[0];
+      if (!before) {
+        return { status: "not_found" as const };
+      }
+
+      // Ошибку уникального индекса можно было бы просто поймать, но она не говорит, у кого
+      // именно занят номер. Человеку в панели нужно имя второго контакта — иначе он не поймёт,
+      // это опечатка или дубль, который пора объединить.
+      for (const candidate of input.conflictCandidates) {
+        const owner = await connection.query<{
+          readonly id: string;
+          readonly display_name: string | null;
+        }>(
+          `select id, display_name
+             from public.outreach_contacts
+            where id <> $1::uuid
+              and case $2::text
+                    when 'phone' then phone_e164 = $3::text
+                    when 'telegram' then telegram_username_normalized = $3::text
+                    when 'max' then max_identifier_normalized = $3::text
+                    else email_normalized = $3::text
+                  end
+            limit 1`,
+          [input.contactId, candidate.field, candidate.value]
+        );
+        const conflict = owner.rows[0];
+        if (conflict) {
+          return {
+            status: "conflict" as const,
+            conflict: {
+              field: candidate.field,
+              contactId: conflict.id,
+              displayName: conflict.display_name
+            }
+          };
+        }
+      }
+
+      await connection.query(
+        `update public.outreach_contacts
+            set display_name = $2::text,
+                phone_e164 = $3::text,
+                telegram_username = $4::text,
+                telegram_username_normalized = $5::text,
+                max_identifier = $6::text,
+                max_identifier_normalized = $7::text,
+                email = $8::text,
+                email_normalized = $9::text,
+                source = $10::text,
+                note = $11::text,
+                updated_at = $12::timestamptz
+          where id = $1::uuid`,
+        [
+          input.contactId,
+          input.fields.displayName,
+          input.fields.phoneE164,
+          input.fields.telegramUsername,
+          input.fields.telegramUsernameNormalized,
+          input.fields.maxIdentifier,
+          input.fields.maxIdentifierNormalized,
+          input.fields.email,
+          input.fields.emailNormalized,
+          input.fields.source,
+          input.fields.note,
+          input.now
+        ]
+      );
+      await writeOutreachAudit(connection, {
+        auditId: input.auditId,
+        actorAdminId: input.actorAdminId,
+        action: "outreach.contact.updated",
+        contactId: input.contactId,
+        reason: null,
+        before: {
+          displayName: before.display_name,
+          phone: before.phone_e164,
+          telegram: before.telegram_username,
+          max: before.max_identifier,
+          email: before.email,
+          source: before.source,
+          note: before.note
+        },
+        after: { ...input.fields },
+        occurredAt: input.now
+      });
+      return { status: "updated" as const };
+    });
+  }
+
+  archivePerson(
+    input: Parameters<AdminOutreachRepository["archivePerson"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_contacts
+            set archived_at = $2::timestamptz,
+                archived_reason = $3::text,
+                archived_by_admin_id = $4::uuid,
+                updated_at = $2::timestamptz
+          where id = $1::uuid and archived_at is null`,
+        [input.contactId, input.now, input.reason, input.actorAdminId]
+      );
+      if (result.rowCount === 0) {
+        return false;
+      }
+      await writeOutreachAudit(connection, {
+        auditId: input.auditId,
+        actorAdminId: input.actorAdminId,
+        action: "outreach.contact.archived",
+        contactId: input.contactId,
+        reason: input.reason,
+        before: null,
+        after: { archived: true },
+        occurredAt: input.now
+      });
+      return true;
+    });
+  }
+
+  restorePerson(
+    input: Parameters<AdminOutreachRepository["restorePerson"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_contacts
+            set archived_at = null,
+                archived_reason = null,
+                archived_by_admin_id = null,
+                updated_at = $2::timestamptz
+          where id = $1::uuid and archived_at is not null`,
+        [input.contactId, input.now]
+      );
+      if (result.rowCount === 0) {
+        return false;
+      }
+      await writeOutreachAudit(connection, {
+        auditId: input.auditId,
+        actorAdminId: input.actorAdminId,
+        action: "outreach.contact.restored",
+        contactId: input.contactId,
+        reason: null,
+        before: null,
+        after: { archived: false },
+        occurredAt: input.now
+      });
+      return true;
+    });
+  }
+
+  deletePerson(
+    input: Parameters<AdminOutreachRepository["deletePerson"]>[0]
+  ): Promise<DeleteOutreachPersonResult> {
+    return this.write(async (connection) => {
+      const existing = await connection.query<{
+        readonly id: string;
+        readonly display_name: string | null;
+        readonly phone_e164: string | null;
+        readonly linked_user_id: string | null;
+      }>(
+        `select id, display_name, phone_e164, linked_user_id
+           from public.outreach_contacts
+          where id = $1::uuid
+          for update`,
+        [input.contactId]
+      );
+      const contact = existing.rows[0];
+      if (!contact) {
+        return { deleted: false, blockers: [] };
+      }
+
+      const blockers: OutreachDeleteBlocker[] = [];
+      if (contact.linked_user_id !== null) {
+        blockers.push("in_bot");
+      }
+
+      // Журнал активностей и история стадий защищены триггерами «только на добавление»:
+      // удалить их нельзя физически, а обе таблицы ссылаются на строку участия. Без этой
+      // проверки удаление падало бы на внешнем ключе вместо понятного отказа.
+      const history = await connection.query<{ readonly id: string }>(
+        `select activity.id
+           from public.outreach_activities activity
+          where activity.contact_id = $1::uuid
+          union all
+         select stage_history.id
+           from public.outreach_stage_history stage_history
+           join public.outreach_campaign_contacts member
+             on member.id = stage_history.campaign_contact_id
+          where member.contact_id = $1::uuid
+          limit 1`,
+        [input.contactId]
+      );
+      if (history.rows[0]) {
+        blockers.push("has_activity");
+      }
+
+      // Ищем участие и по связи, и по телефону. Связь проставляется только когда человека
+      // завели участником из карточки кампании; у заведённых на вкладке мероприятия и у
+      // покупателей бота она пустая. Проверка по одной связи пропустила бы их всех.
+      const participation = await connection.query<{ readonly id: string }>(
+        `select id from public.event_participants
+          where deleted_at is null
+            and (
+              outreach_contact_id = $1::uuid
+              or ($2::text is not null and phone_e164 = $2::text)
+            )
+          limit 1`,
+        [input.contactId, contact.phone_e164]
+      );
+      if (participation.rows[0]) {
+        blockers.push("has_participation");
+      }
+
+      if (blockers.length > 0) {
+        return { deleted: false, blockers };
+      }
+
+      // Порядок важен: сначала то, что ссылается на строку участия, потом сама строка.
+      await connection.query(
+        `delete from public.outreach_custom_field_values
+          where campaign_contact_id in (
+            select id from public.outreach_campaign_contacts where contact_id = $1::uuid
+          )`,
+        [input.contactId]
+      );
+      await connection.query(
+        `delete from public.outreach_tasks
+          where campaign_contact_id in (
+            select id from public.outreach_campaign_contacts where contact_id = $1::uuid
+          )`,
+        [input.contactId]
+      );
+      await connection.query(
+        `delete from public.outreach_campaign_contacts where contact_id = $1::uuid`,
+        [input.contactId]
+      );
+      await connection.query(
+        `delete from public.outreach_contacts where id = $1::uuid`,
+        [input.contactId]
+      );
+      // Аудит пишется после удаления и переживает его: строки больше нет, и единственный
+      // след того, что человек вообще был, — эта запись.
+      await writeOutreachAudit(connection, {
+        auditId: input.auditId,
+        actorAdminId: input.actorAdminId,
+        action: "outreach.contact.deleted",
+        contactId: input.contactId,
+        reason: input.reason,
+        before: {
+          displayName: contact.display_name,
+          phone: contact.phone_e164
+        },
+        after: {},
+        occurredAt: input.now
+      });
+      return { deleted: true, blockers: [] };
     });
   }
 
@@ -2023,6 +2299,47 @@ function isForeignKeyViolation(error: unknown): boolean {
     && error !== null
     && "code" in error
     && (error as { readonly code?: unknown }).code === "23503";
+}
+
+/**
+ * Запись в общий журнал действий. Для удаления это единственный след того, что человек был:
+ * строки уже нет, восстановить её неоткуда.
+ *
+ * request_id, ip и user_agent остаются пустыми: до слоя работы с базой они не доходят, а
+ * выдумывать их хуже, чем честно не заполнить.
+ */
+async function writeOutreachAudit(
+  connection: SqlConnection,
+  input: {
+    readonly auditId: string;
+    readonly actorAdminId: string;
+    readonly action: string;
+    readonly contactId: string;
+    readonly reason: string | null;
+    readonly before: Readonly<Record<string, unknown>> | null;
+    readonly after: Readonly<Record<string, unknown>>;
+    readonly occurredAt: Date;
+  }
+): Promise<void> {
+  await connection.query(
+    `insert into public.audit_log (
+       id, actor_admin_id, action, target_type, target_id,
+       reason, before_masked, after_masked, created_at
+     ) values (
+       $1::uuid, $2::uuid, $3::text, 'outreach_contact', $4::text,
+       $5::text, $6::jsonb, $7::jsonb, $8::timestamptz
+     )`,
+    [
+      input.auditId,
+      input.actorAdminId,
+      input.action,
+      input.contactId,
+      input.reason,
+      input.before === null ? null : JSON.stringify(input.before),
+      JSON.stringify(input.after),
+      input.occurredAt
+    ]
+  );
 }
 
 function mapPerson(row: PersonRow): OutreachPerson {

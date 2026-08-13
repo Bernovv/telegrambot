@@ -98,6 +98,94 @@ describe("AdminOutreachService", () => {
     });
   });
 
+  it("normalizes an edited phone the same way an import would", async () => {
+    // Иначе исправленный руками телефон лёг бы в базу в том виде, в каком его набрали, и
+    // человек перестал бы находиться поиском.
+    let received:
+      Parameters<AdminOutreachRepository["updatePerson"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async getPerson() { return personCard(); },
+        async updatePerson(input) {
+          received = input;
+          return { status: "updated" as const };
+        }
+      }),
+      ruPhones(),
+      countingIds()
+    );
+
+    const result = await service.updatePerson({
+      actor: writeActor,
+      contactId: CONTACT_ID,
+      changes: { phone: "8 (999) 123-45-67" },
+      now
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(received?.fields.phoneE164, "+79991234567");
+    // Имя не трогали — оно должно остаться прежним, а не обнулиться.
+    assert.equal(received?.fields.displayName, "Анна");
+  });
+
+  it("checks only the identifiers the edit actually changes", async () => {
+    // Иначе контакт конфликтовал бы сам с собой при любой правке имени.
+    let received:
+      Parameters<AdminOutreachRepository["updatePerson"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async getPerson() { return personCard(); },
+        async updatePerson(input) {
+          received = input;
+          return { status: "updated" as const };
+        }
+      }),
+      ruPhones(),
+      countingIds()
+    );
+
+    await service.updatePerson({
+      actor: writeActor,
+      contactId: CONTACT_ID,
+      changes: { name: "Анна Петрова" },
+      now
+    });
+
+    assert.deepEqual(received?.conflictCandidates, []);
+  });
+
+  it("refuses an edit that would leave the contact with no identity at all", async () => {
+    const service = new AdminOutreachService(
+      repository({ async getPerson() { return personCard(); } }),
+      ruPhones(),
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.updatePerson({
+        actor: writeActor,
+        contactId: CONTACT_ID,
+        changes: { phone: null, telegram: null, max: null, email: null },
+        now
+      }),
+      /identity is invalid/
+    );
+  });
+
+  it("does not let the write permission delete a contact", async () => {
+    // Удаление необратимо, поэтому право у него своё и более узкое.
+    const service = new AdminOutreachService(
+      repository({}),
+      ruPhones(),
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.deletePerson({ actor: writeActor, contactId: CONTACT_ID, now }),
+      /permission is invalid/
+    );
+  });
+
   it("keeps a row whose phone is junk but whose handle is good", async () => {
     // Раньше такая строка пропадала целиком: разбор телефона ронял её вместе с ником, и из
     // выгрузки на восемь тысяч так терялись живые контакты.
@@ -173,7 +261,7 @@ describe("AdminOutreachService", () => {
     // «Нет признаков» человеку, который ввёл кривой ник, ничего не объясняет.
     const service = new AdminOutreachService(
       repository({}),
-      { normalize: () => "+79991234567" },
+      ruPhones(),
       countingIds()
     );
 
@@ -951,6 +1039,10 @@ function repository(
     async listBaseContacts() { return []; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async updatePerson() { return { status: "not_found" as const }; },
+    async archivePerson() { return true; },
+    async restorePerson() { return true; },
+    async deletePerson() { return { deleted: true, blockers: [] }; },
     async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
     async archiveCampaign() { return true; },
     async restoreCampaign() { return true; },
@@ -1005,6 +1097,22 @@ function repository(
 
 /** Неограниченный генератор: пакетный импорт съедает по два идентификатора на строку. */
 /**
+ * Разборщик российских номеров. Заглушка, всегда возвращающая один и тот же номер, здесь не
+ * годится: тогда неизменённый телефон выглядел бы изменившимся и попадал в проверку занятости.
+ */
+function ruPhones() {
+  return {
+    normalize(value: string): string {
+      const digits = value.replace(/\D/g, "");
+      if (/^[78]\d{10}$/.test(digits)) {
+        return `+7${digits.slice(1)}`;
+      }
+      throw new Error("Phone number is invalid");
+    }
+  };
+}
+
+/**
  * Разборщик, который не принимает ни одного номера. Отказ — это исключение, а не null:
  * так устроен настоящий LibPhoneNumberNormalizer, и заглушка обязана вести себя как он.
  */
@@ -1052,7 +1160,29 @@ const EVENT_ID = "00000000-0000-4000-8000-000000000801";
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000102";
 const CAMPAIGN_CONTACT_ID = "00000000-0000-4000-8000-000000000103";
 const CAMPAIGN_CONTACT_ID_2 = "00000000-0000-4000-8000-000000000104";
+const CONTACT_ID = "00000000-0000-4000-8000-000000000105";
 const now = new Date("2026-07-29T12:00:00.000Z");
+
+function personCard() {
+  return {
+    contactId: CONTACT_ID,
+    displayName: "Анна",
+    phone: "+79990000000",
+    telegramUsername: null,
+    maxIdentifier: null,
+    email: null,
+    source: "amoCRM",
+    note: null,
+    linkedUserId: null,
+    archivedAt: null,
+    archivedReason: null,
+    createdAt: "2026-07-01T10:00:00.000Z",
+    updatedAt: "2026-07-01T10:00:00.000Z",
+    campaigns: [],
+    activities: [],
+    participations: []
+  };
+}
 
 const writeActor: AdminRequestActor = {
   adminId: ADMIN_ID,
