@@ -39,6 +39,8 @@ export interface NormalizedOutreachImportRow {
   readonly telegramUsernameNormalized: string | null;
   readonly maxIdentifier: string | null;
   readonly maxIdentifierNormalized: string | null;
+  readonly email: string | null;
+  readonly emailNormalized: string | null;
   readonly source: string | null;
   readonly note: string | null;
 }
@@ -1064,7 +1066,9 @@ export class AdminOutreachService {
     if (row.phone?.trim()) {
       phoneE164 = this.phoneNormalizer.normalize(row.phone.trim());
     }
-    if (!phoneE164 && !telegramUsername && !maxIdentifier) {
+    const email = normalizeEmail(row.email);
+    // Почта — такой же признак, как телефон и ник: в выгрузках она бывает единственным.
+    if (!phoneE164 && !telegramUsername && !maxIdentifier && !email) {
       throw new Error("Outreach contact identity is invalid");
     }
     return {
@@ -1074,10 +1078,21 @@ export class AdminOutreachService {
       telegramUsernameNormalized: telegramUsername?.toLowerCase() ?? null,
       maxIdentifier,
       maxIdentifierNormalized: maxIdentifier?.toLowerCase() ?? null,
+      email,
+      emailNormalized: email?.toLowerCase() ?? null,
       source: optionalText(row.source, 200),
       note: optionalText(row.note, 2000)
     };
   }
+}
+
+/** Почта без собаки или с пробелами — не почта: в базу такое пускать незачем. */
+function normalizeEmail(value: string | undefined): string | null {
+  const text = (value ?? "").trim();
+  if (text === "" || text.length > 320 || /\s/.test(text)) {
+    return null;
+  }
+  return /^[^@]+@[^@.]+\.[^@]+$/.test(text) ? text : null;
 }
 
 function requirePermission(

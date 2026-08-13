@@ -4,7 +4,7 @@ export interface OutreachCsvParseResult {
   readonly rows: readonly OutreachImportRow[];
   /** Номер строки файла для каждой разобранной записи — по нему показываем ошибки. */
   readonly lines: readonly number[];
-  /** Номера строк файла без телефона, Telegram и MAX — импортировать из них нечего. */
+  /** Номера строк без телефона, Telegram, MAX и почты — импортировать из них нечего. */
   readonly skippedLines: readonly number[];
 }
 
@@ -19,8 +19,9 @@ export function parseOutreachCsv(text: string): OutreachCsvParseResult {
     throw new Error("CSV-файл пуст");
   }
   const fields = header.map(resolveHeader);
-  if (!fields.some((field) => field === "phone" || field === "telegram" || field === "max")) {
-    throw new Error("Нужна хотя бы одна колонка: phone, telegram или max");
+  if (!fields.some((field) =>
+    field === "phone" || field === "telegram" || field === "max" || field === "email")) {
+    throw new Error("Нужна хотя бы одна колонка: телефон, Telegram, MAX или почта");
   }
   // Одна пустая строка не должна ронять импорт целиком: в выгрузке на восемь тысяч
   // контактов такая найдётся почти наверняка. Пропускаем её и говорим, сколько пропустили.
@@ -34,7 +35,7 @@ export function parseOutreachCsv(text: string): OutreachCsvParseResult {
         row[field] = cells[index]?.trim() ?? "";
       }
     });
-    if (!row.phone && !row.telegram && !row.max) {
+    if (!row.phone && !row.telegram && !row.max && !row.email) {
       skippedLines.push(rowIndex + 2);
       return;
     }
@@ -90,13 +91,21 @@ function resolveHeader(value: string): string | null {
   const headers: Record<string, string> = {
     name: "name",
     "имя": "name",
+    // Timepad выгружает одной колонкой «Фамилия и имя».
+    "фамилия и имя": "name",
+    "фио": "name",
     phone: "phone",
     "телефон": "phone",
+    "номер телефона": "phone",
     telegram: "telegram",
     "телеграм": "telegram",
     tg: "telegram",
     max: "max",
     "макс": "max",
+    email: "email",
+    "почта": "email",
+    "e-mail": "email",
+    "электронная почта": "email",
     source: "source",
     "источник": "source",
     note: "note",

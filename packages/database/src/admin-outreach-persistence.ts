@@ -1103,12 +1103,14 @@ implements AdminOutreachRepository {
            where ($1::text is not null and phone_e164 = $1)
               or ($2::text is not null and telegram_username_normalized = $2)
               or ($3::text is not null and max_identifier_normalized = $3)
+              or ($4::text is not null and email_normalized = $4)
            order by created_at
            limit 2`,
           [
             row.phoneE164,
             row.telegramUsernameNormalized,
-            row.maxIdentifierNormalized
+            row.maxIdentifierNormalized,
+            row.emailNormalized
           ]
         );
         if (matches.rows.length > 1) {
@@ -1611,6 +1613,7 @@ async function insertContact(
        id, linked_user_id, display_name, phone_e164,
        telegram_username, telegram_username_normalized,
        max_identifier, max_identifier_normalized,
+       email, email_normalized,
        source, note, created_by_admin_id, created_at, updated_at
      ) values (
        $1,
@@ -1623,7 +1626,7 @@ async function insertContact(
          order by user_contact.is_primary desc, user_contact.created_at
          limit 1
        ),
-       $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11
+       $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13
      )`,
     [
       contactId,
@@ -1633,6 +1636,8 @@ async function insertContact(
       row.telegramUsernameNormalized,
       row.maxIdentifier,
       row.maxIdentifierNormalized,
+      row.email,
+      row.emailNormalized,
       row.source,
       row.note,
       createdByAdminId,
@@ -1655,8 +1660,10 @@ async function updateContact(
          telegram_username_normalized = coalesce($5, telegram_username_normalized),
          max_identifier = coalesce($6, max_identifier),
          max_identifier_normalized = coalesce($7, max_identifier_normalized),
-         source = coalesce($8, source),
-         note = coalesce($9, note),
+         email = coalesce($8, email),
+         email_normalized = coalesce($9, email_normalized),
+         source = coalesce($10, source),
+         note = coalesce($11, note),
          linked_user_id = coalesce(
            linked_user_id,
            (
@@ -1669,7 +1676,7 @@ async function updateContact(
              limit 1
            )
          ),
-         updated_at = $10
+         updated_at = $12
      where id = $1`,
     [
       contactId,
@@ -1679,6 +1686,8 @@ async function updateContact(
       row.telegramUsernameNormalized,
       row.maxIdentifier,
       row.maxIdentifierNormalized,
+      row.email,
+      row.emailNormalized,
       row.source,
       row.note,
       now

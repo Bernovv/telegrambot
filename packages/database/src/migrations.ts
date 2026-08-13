@@ -184,5 +184,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260808180000_event_organizers",
     description: "Add the organizer roster and their profit shares, visible to the owner only",
     destructive: false
+  },
+  {
+    id: "20260813120000_outreach_contact_email",
+    description: "Add email to outreach contacts as a fourth identity for import matching",
+    destructive: false
   }
 ];

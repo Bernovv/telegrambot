@@ -46,3 +46,38 @@ describe("outreach CSV parser", () => {
     );
   });
 });
+
+describe("outreach CSV parser — выгрузка Timepad", () => {
+  // «Фамилия и имя» одной колонкой, точка с запятой, почта у всех, а телефона у части
+  // нет. Без распознавания почты такой контакт вообще некуда положить.
+  it("reads the Timepad export the way it comes", () => {
+    const csv = [
+      '"Фамилия и имя";"Телефон";"Email";"Кол-во событий"',
+      '"Гречневкина Ольга";"+7 (962) 708-47-43";"lily_foxy@vk.com";"1"',
+      '"Без телефона Иван";"";"ivan@example.com";"2"'
+    ].join("\r\n");
+
+    const result = parseOutreachCsv(csv);
+
+    assert.equal(result.rows.length, 2);
+    assert.equal(result.rows[0]?.name, "Гречневкина Ольга");
+    assert.equal(result.rows[0]?.email, "lily_foxy@vk.com");
+    assert.equal(result.rows[1]?.phone, undefined);
+    assert.equal(result.rows[1]?.email, "ivan@example.com");
+    assert.deepEqual(result.skippedLines, []);
+  });
+
+  it("takes a row with only an email, because that is enough to find a person", () => {
+    const result = parseOutreachCsv("Имя,Почта\nИван,ivan@example.com");
+
+    assert.equal(result.rows.length, 1);
+    assert.equal(result.rows[0]?.email, "ivan@example.com");
+  });
+
+  it("still refuses a file with no way to identify anyone", () => {
+    assert.throws(
+      () => parseOutreachCsv("Имя,Кол-во событий\nИван,3"),
+      /хотя бы одна колонка/
+    );
+  });
+});

@@ -89,11 +89,90 @@ describe("AdminOutreachService", () => {
       telegramUsernameNormalized: "anna_test",
       maxIdentifier: null,
       maxIdentifierNormalized: null,
+      email: null,
+      emailNormalized: null,
       source: "База 2025",
       note: null,
       contactId: "00000000-0000-4000-8000-000000000201",
       campaignContactId: "00000000-0000-4000-8000-000000000202"
     });
+  });
+
+  // В выгрузке Timepad почта есть у всех, а телефона нет у части: без неё такой контакт
+  // некуда положить — проверка требует хотя бы один признак.
+  it("accepts a contact identified by email alone", async () => {
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            addedToCampaign: 1,
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      }),
+      { normalize: () => null },
+      sequenceIds()
+    );
+
+    await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [{ name: "Иван", email: "  Ivan@Example.COM  " }],
+      now
+    });
+
+    const row = received?.rows[0];
+    assert.equal(row?.email, "Ivan@Example.COM");
+    assert.equal(row?.emailNormalized, "ivan@example.com");
+    assert.equal(row?.phoneE164, null);
+  });
+
+  it("refuses a row whose email is not an email, so junk cannot become an identity", async () => {
+    let received:
+      Parameters<AdminOutreachRepository["importContacts"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importContacts(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 0,
+            updatedContacts: 0,
+            addedToCampaign: 0,
+            alreadyInCampaign: 0,
+            invalidRows: 0,
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      }),
+      { normalize: () => null },
+      sequenceIds()
+    );
+
+    const result = await service.importContacts({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      rows: [{ name: "Иван", email: "не почта" }],
+      skipInvalid: true,
+      now
+    });
+
+    assert.equal(result.addedToCampaign, 0);
+    assert.equal(result.invalidRows, 1);
+    // До базы такая строка не доходит вовсе — «не почта» не признак человека.
+    assert.equal(received, undefined);
   });
 
   it("skips an unparseable phone instead of losing the whole batch", async () => {

@@ -253,6 +253,7 @@ export interface OutreachImportRow {
   readonly phone?: string;
   readonly telegram?: string;
   readonly max?: string;
+  readonly email?: string;
   readonly source?: string;
   readonly note?: string;
 }
