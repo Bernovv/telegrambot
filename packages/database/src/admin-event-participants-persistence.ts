@@ -15,6 +15,10 @@ import type {
 } from "@ticket-platform/contracts";
 import { PostgresAdminAccommodationRepository } from "./admin-accommodation-persistence.js";
 import { toBundleComposition } from "./bundle-composition.js";
+import {
+  PARTICIPANT_CONTACT_SOURCE,
+  resolveParticipantContact
+} from "./participant-contact-link.js";
 import type { SqlConnectionPool } from "./postgres.js";
 
 interface OrderFieldValueResult {
@@ -250,13 +254,25 @@ export class PostgresAdminEventParticipantsRepository
     try {
       await connection.query("begin");
       for (const input of inputs) {
+        // Из таблицы приезжает и ник, поэтому человека в базе ищем по двум признакам сразу —
+        // у половины строк телефона нет, зато есть Telegram.
+        const contactId = await resolveParticipantContact(connection, {
+          contactId: input.contactSeedId,
+          displayName: input.name,
+          phoneE164: input.phone,
+          telegram: input.telegram,
+          adminId: input.adminId,
+          source: PARTICIPANT_CONTACT_SOURCE
+        });
         await connection.query(
           `insert into public.event_participants (
-             id, event_id, display_name, phone_e164, source, ticket_title,
+             id, event_id, outreach_contact_id, display_name, phone_e164,
+             source, ticket_title,
              adults, children, sleeping_places, note, amount_kopecks,
              created_by_admin_id
            ) values (
-             $1::uuid, $2::uuid, $3::text, $4::text, 'direct', '',
+             $1::uuid, $2::uuid, $11::uuid, $3::text, $4::text,
+             'direct', '',
              $5::integer, $6::integer, $7::integer, $8::text, $9::bigint,
              $10::uuid
            )`,
@@ -273,7 +289,8 @@ export class PostgresAdminEventParticipantsRepository
               .join("; ")
               .slice(0, 500),
             input.amountKopecks,
-            input.adminId
+            input.adminId,
+            contactId
           ]
         );
       }

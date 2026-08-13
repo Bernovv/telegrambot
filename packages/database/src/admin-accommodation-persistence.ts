@@ -23,6 +23,10 @@ import type {
   EventParticipantSource
 } from "@ticket-platform/contracts";
 import { toBundleComposition } from "./bundle-composition.js";
+import {
+  PARTICIPANT_CONTACT_SOURCE,
+  resolveParticipantContact
+} from "./participant-contact-link.js";
 import type { SqlConnection, SqlConnectionPool } from "./postgres.js";
 
 interface EventResult {
@@ -317,6 +321,18 @@ export class PostgresAdminAccommodationRepository
 
   async createParticipant(input: CreateEventParticipantInput): Promise<void> {
     await this.write(async (connection) => {
+      // Связь задана явно, когда участника завели из карточки кампании. В остальных случаях
+      // ищем человека в базе по телефону, а не нашли — заводим: иначе участник мероприятия и
+      // человек из базы так и остаются разными людьми.
+      const contactId = input.outreachContactId
+        ?? await resolveParticipantContact(connection, {
+          contactId: input.contactSeedId,
+          displayName: input.displayName,
+          phoneE164: input.phone,
+          telegram: null,
+          adminId: input.adminId,
+          source: PARTICIPANT_CONTACT_SOURCE
+        });
       await connection.query(
         `insert into public.event_participants (
            id, event_id, outreach_contact_id, display_name, phone_e164, source,
@@ -328,7 +344,7 @@ export class PostgresAdminAccommodationRepository
         [
           input.participantId,
           input.eventId,
-          input.outreachContactId,
+          contactId,
           input.displayName,
           input.phone,
           input.source,

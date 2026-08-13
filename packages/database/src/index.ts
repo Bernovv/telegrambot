@@ -1,5 +1,6 @@
 export * from "./migrations.js";
 export * from "./postgres.js";
+export * from "./participant-contact-link.js";
 export * from "./node-postgres.js";
 export * from "./telegram-start-persistence.js";
 export * from "./phone-persistence.js";

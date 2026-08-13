@@ -8,6 +8,7 @@ import {
   ParticipantsEventNotFoundError,
   buildParticipantsView,
   type AdminEventParticipantsRepository,
+  type CreateImportedParticipantInput,
   type ParticipantOrderItemRow
 } from "./admin-event-participants.js";
 
@@ -446,6 +447,26 @@ describe("ImportParticipantsService", () => {
 
     assert.deepEqual(result, { added: 1, skipped: [] });
     assert.equal(written.length, 1);
+  });
+
+  it("hands the handle and a spare id down so the person can be linked to the base", async () => {
+    // Разбирает ник и ищет человека слой базы — здесь важно лишь, что ему есть чем искать и
+    // подо что заводить, если человека там ещё нет.
+    const written: CreateImportedParticipantInput[] = [];
+    const service = importService(repository({
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [row]
+    });
+
+    assert.equal(written[0]?.telegram, "@Nadinka88");
+    assert.notEqual(written[0]?.contactSeedId, written[0]?.participantId);
   });
 
   // Задвоение — главная опасность переноса: человек уже лежит оплаченным заказом.

@@ -61,9 +61,12 @@ export interface SaveOrderFieldValueInput {
 
 export interface CreateImportedParticipantInput {
   readonly participantId: string;
+  /** Под этим идентификатором человека заведут в базе, если там его ещё нет. */
+  readonly contactSeedId: string;
   readonly eventId: string;
   readonly name: string;
   readonly phone: string | null;
+  /** Как ник записали в таблице: уходит в примечание участника и на поиск в базе. */
   readonly telegram: string | null;
   readonly adults: number;
   readonly children: number;
@@ -305,6 +308,7 @@ export class ImportParticipantsService {
 
       toCreate.push({
         participantId: this.idGenerator.newId(),
+        contactSeedId: this.idGenerator.newId(),
         eventId: input.eventId,
         name,
         phone: phone === "" ? null : phone,

@@ -168,6 +168,21 @@ export function stripHandleWrapping(value: string): string {
     .trim();
 }
 
+/**
+ * Ник Telegram по настоящему правилу мессенджера — или null, если это не ник. Обёртка вроде
+ * `@` и ссылки на t.me снимается. Регистр сохраняется: приводить к нижнему нужно только для
+ * поиска и уникальности.
+ */
+export function parseTelegramUsername(
+  value: string | null | undefined
+): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+  const handle = stripHandleWrapping(value);
+  return TELEGRAM_USERNAME.test(handle) ? handle : null;
+}
+
 /** Имя ли это вообще: «a cloud» — да, «+7 999 123-45-67» и «12» — нет. */
 export function looksLikeName(value: string): boolean {
   const text = value.trim();
@@ -217,9 +232,9 @@ function normalizeTelegram(
     return { username: null, phoneCandidate: null };
   }
 
-  const handle = stripHandleWrapping(text);
-  if (TELEGRAM_USERNAME.test(handle)) {
-    return { username: handle, phoneCandidate: null };
+  const username = parseTelegramUsername(text);
+  if (username) {
+    return { username, phoneCandidate: null };
   }
 
   rejections.push({

@@ -17,7 +17,11 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadWorkerConfig } from "@ticket-platform/config";
-import { createNodePostgresPool } from "@ticket-platform/database";
+import {
+  createNodePostgresPool,
+  PARTICIPANT_CONTACT_SOURCE,
+  resolveParticipantContact
+} from "@ticket-platform/database";
 import { resolveAdminId } from "./admin-lookup.js";
 import {
   parseParticipantsCsv,
@@ -176,13 +180,25 @@ try {
     try {
       for (const plan of toInsert) {
         const row = plan.row;
+        // Тот же поиск-или-заведение, что и при загрузке таблицей через панель: иначе
+        // перенесённый командой участник остаётся для базы отдельным человеком.
+        const contactId = await resolveParticipantContact(connection, {
+          contactId: randomUUID(),
+          displayName: row.name,
+          phoneE164: row.phone === "" ? null : row.phone,
+          telegram: row.telegram,
+          adminId,
+          source: PARTICIPANT_CONTACT_SOURCE
+        });
         await connection.query(
           `insert into public.event_participants (
-             id, event_id, display_name, phone_e164, source, ticket_title,
+             id, event_id, outreach_contact_id, display_name, phone_e164,
+             source, ticket_title,
              adults, children, sleeping_places, note, amount_kopecks,
              created_by_admin_id
            ) values (
-             $1::uuid, $2::uuid, $3::text, $4::text, $5::text, '',
+             $1::uuid, $2::uuid, $12::uuid, $3::text, $4::text,
+             $5::text, '',
              $6::integer, $7::integer, $8::integer, $9::text, $10::bigint,
              $11::uuid
            )`,
@@ -197,7 +213,8 @@ try {
             Number(row.sleeping),
             [row.note, row.telegram].filter((part) => part !== "").join("; ").slice(0, 500),
             row.amountKopecks,
-            adminId
+            adminId,
+            contactId
           ]
         );
       }

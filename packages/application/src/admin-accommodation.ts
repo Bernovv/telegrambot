@@ -84,6 +84,12 @@ export interface CreateEventParticipantInput {
   readonly sleepingPlaces: number;
   readonly note: string;
   readonly outreachContactId: string | null;
+  /**
+   * Идентификатор про запас: под него заведут человека в общей базе, если по телефону там
+   * никого не найдётся. Приходит сверху, а не рождается в слое базы, чтобы идентификаторы
+   * оставались предсказуемыми в тестах.
+   */
+  readonly contactSeedId: string;
   readonly adminId: string;
 }
 
@@ -256,6 +262,7 @@ export class AdminAccommodationService {
 
     await this.repository.createParticipant({
       participantId: this.idGenerator.newId(),
+      contactSeedId: this.idGenerator.newId(),
       eventId: input.eventId,
       adminId: input.actor.adminId,
       ...input.participant,
