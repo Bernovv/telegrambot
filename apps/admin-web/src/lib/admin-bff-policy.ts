@@ -54,7 +54,7 @@ export function isAllowedAdminApiPath(
       || path === "outreach/campaign-contacts/move"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/(?:archive|restore|import-participants)$/i
         .test(path)
-      || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete)$/i.test(path)
+      || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete|merge)$/i.test(path)
       || path === "outreach/custom-fields"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/(?:add|remove))?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/tasks$/i.test(path)

@@ -321,6 +321,11 @@ export interface OutreachPersonCard {
   readonly linkedUserId: string | null;
   readonly archivedAt: string | null;
   readonly archivedReason: string | null;
+  /** Карточка признана дублем: смотреть надо главного, ссылка на него здесь. */
+  readonly mergedIntoContactId: string | null;
+  readonly mergedIntoDisplayName: string | null;
+  /** Сколько дублей свели в эту карточку — их история уже показана ниже. */
+  readonly mergedDuplicates: number;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly campaigns: readonly OutreachPersonCampaign[];
@@ -374,6 +379,30 @@ export interface DeleteOutreachPersonResult {
   readonly deleted: boolean;
   /** Пусто, когда удалили. Иначе — что помешало; архив остаётся доступен всегда. */
   readonly blockers: readonly OutreachDeleteBlocker[];
+}
+
+/**
+ * Объединение дублей.
+ *
+ * Проигравший контакт не исчезает: на него ссылается журнал активностей, защищённый от
+ * изменений, да и звонок был сделан по той карточке, которая была. Он получает указатель на
+ * главного, уходит в архив, а карточка главного собирает историю по всей цепочке.
+ */
+export const OUTREACH_MERGE_BLOCKERS = [
+  "same_contact",
+  "already_merged",
+  "target_already_merged"
+] as const;
+
+export type OutreachMergeBlocker = typeof OUTREACH_MERGE_BLOCKERS[number];
+
+export interface MergeOutreachPeopleResult {
+  readonly merged: boolean;
+  readonly blocker?: OutreachMergeBlocker;
+  /** Что переехало к главному — панель показывает это в подтверждении. */
+  readonly movedCampaigns: number;
+  readonly movedParticipations: number;
+  readonly takenIdentifiers: readonly OutreachPersonConflict["field"][];
 }
 
 export interface OutreachImportRow {

@@ -7,12 +7,16 @@ import {
   archiveOutreachPerson,
   deleteOutreachPerson,
   getOutreachPerson,
+  listOutreachPeople,
+  mergeOutreachPeople,
   restoreOutreachPerson,
   updateOutreachPerson
 } from "@/lib/admin-api";
 import { formatCompactDate, formatDateTime } from "@/lib/format";
 import type {
   OutreachDeleteBlocker,
+  OutreachMergeBlocker,
+  OutreachPerson,
   OutreachPersonCard
 } from "@ticket-platform/contracts/admin-outreach";
 import {
@@ -21,10 +25,12 @@ import {
   Bot,
   CalendarDays,
   Mail,
+  Merge,
   MessageSquare,
   Pencil,
   Phone,
   RefreshCw,
+  Search,
   Trash2,
   X
 } from "lucide-react";
@@ -58,6 +64,13 @@ const BLOCKER_LABELS: Record<OutreachDeleteBlocker, string> = {
   has_participation: "он записан на мероприятие"
 };
 
+const MERGE_BLOCKER_LABELS: Record<OutreachMergeBlocker, string> = {
+  same_contact: "Это один и тот же контакт.",
+  already_merged: "Эта карточка уже объединена с другой.",
+  target_already_merged:
+    "Выбранный контакт сам является дублем. Выберите того, к кому его свели."
+};
+
 const CONFLICT_FIELDS: Record<string, string> = {
   phone: "Телефон",
   telegram: "Telegram",
@@ -77,6 +90,10 @@ export default function OutreachPersonPage(
   const [editing, setEditing] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [blockers, setBlockers] = useState<readonly OutreachDeleteBlocker[]>([]);
+  const [merging, setMerging] = useState(false);
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [mergeResults, setMergeResults] = useState<readonly OutreachPerson[]>([]);
+  const [mergeSearching, setMergeSearching] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -182,6 +199,64 @@ export default function OutreachPersonPage(
     }
   }
 
+  async function searchForMerge(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = mergeQuery.trim();
+    if (query.length < 2) {
+      return;
+    }
+    setMergeSearching(true);
+    setError(null);
+    try {
+      const page = await listOutreachPeople({ search: query, limit: 20 });
+      // Себя в списке кандидатов быть не должно: объединить карточку с самой собой нельзя.
+      setMergeResults(page.items.filter((item) => item.contactId !== id));
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось найти контакты."));
+    } finally {
+      setMergeSearching(false);
+    }
+  }
+
+  async function merge(target: OutreachPerson) {
+    const targetName = target.displayName ?? "контакт без имени";
+    if (!window.confirm(
+      `Признать эту карточку дублем и свести её к «${targetName}»?\n\n`
+      + "История звонков, кампании и мероприятия перейдут туда. Эта карточка останется"
+      + " указателем на главного — старые ссылки продолжат работать."
+    )) {
+      return;
+    }
+    const reason = window.prompt("Почему это один человек? Останется в журнале.");
+    if (reason === null) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await mergeOutreachPeople(
+        id,
+        target.contactId,
+        reason.trim() || undefined
+      );
+      if (!result.merged) {
+        setError(
+          result.blocker
+            ? MERGE_BLOCKER_LABELS[result.blocker]
+            : "Не удалось объединить контакты."
+        );
+        return;
+      }
+      setMerging(false);
+      router.push(`/base/${target.contactId}`);
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось объединить контакты."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function remove() {
     if (!window.confirm(
       "Стереть человека насовсем? Это необратимо. Если нужно просто убрать его с глаз,"
@@ -273,6 +348,15 @@ export default function OutreachPersonPage(
             {person.archivedAt ? "Вернуть в базу" : "Убрать из базы"}
           </button>
           <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating || person.mergedIntoContactId !== null}
+            onClick={() => setMerging((current) => !current)}
+          >
+            <Merge size={16} />
+            {merging ? "Отменить" : "Это дубль"}
+          </button>
+          <button
             className="secondary-button danger"
             type="button"
             disabled={mutating}
@@ -286,6 +370,22 @@ export default function OutreachPersonPage(
 
       {notice ? <div className="page-notice">{notice}</div> : null}
       {error ? <div className="page-warning">{error}</div> : null}
+      {person.mergedIntoContactId ? (
+        <div className="page-warning">
+          <strong>Это дубль.</strong>{" "}
+          Карточка признана дублем и сведена к другому человеку. История здесь уже не ведётся —
+          смотрите{" "}
+          <Link href={`/base/${person.mergedIntoContactId}`}>
+            {person.mergedIntoDisplayName ?? "главную карточку"}
+          </Link>.
+        </div>
+      ) : null}
+      {person.mergedDuplicates > 0 ? (
+        <div className="page-notice">
+          Сюда сведено дублей: {person.mergedDuplicates}. Их звонки, кампании и мероприятия
+          показаны ниже вместе со своими.
+        </div>
+      ) : null}
       {person.archivedAt && person.archivedReason ? (
         <div className="page-notice">
           Убран из базы: {person.archivedReason}
@@ -301,6 +401,70 @@ export default function OutreachPersonPage(
           </ul>
           Уберите его из базы — он исчезнет из списков, а история останется.
         </div>
+      ) : null}
+
+      {merging ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>С кем объединить</h2>
+              <span>Найдите вторую карточку того же человека</span>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Закрыть"
+              onClick={() => setMerging(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <form className="base-search" onSubmit={(event) => void searchForMerge(event)}>
+            <label className="base-search-field">
+              <Search size={16} />
+              <input
+                value={mergeQuery}
+                onChange={(event) => setMergeQuery(event.target.value)}
+                placeholder="Имя, телефон, Telegram, MAX или почта"
+                maxLength={100}
+                autoFocus
+              />
+            </label>
+            <button className="secondary-button" type="submit" disabled={mergeSearching}>
+              {mergeSearching ? "Ищем…" : "Найти"}
+            </button>
+          </form>
+          {mergeResults.length > 0 ? (
+            <ul className="merge-candidates">
+              {mergeResults.map((candidate) => (
+                <li key={candidate.contactId}>
+                  <div className="stacked-cell">
+                    <strong>{candidate.displayName ?? "Без имени"}</strong>
+                    <span className="muted">
+                      {[
+                        candidate.phone,
+                        candidate.telegramUsername ? `@${candidate.telegramUsername}` : null,
+                        candidate.email
+                      ].filter(Boolean).join(" · ") || "без признаков"}
+                    </span>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={mutating}
+                    onClick={() => void merge(candidate)}
+                  >
+                    Свести сюда
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="muted person-meta">
+            Открытая карточка станет дублем, а выбранная — главной. Ничего не пропадёт: история
+            останется видна в главной карточке.
+          </p>
+        </section>
       ) : null}
 
       {editing ? (

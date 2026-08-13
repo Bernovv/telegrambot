@@ -118,6 +118,12 @@ const deletePersonBody = z.object({
   reason: z.string().trim().max(500).optional()
 }).strict();
 
+const mergePersonBody = z.object({
+  /** Главный контакт, к которому сводят открытый. */
+  targetContactId: uuid,
+  reason: z.string().trim().max(500).optional()
+}).strict();
+
 const baseContactsQuery = z.object({
   campaignId: uuid,
   search: z.string().trim().min(2).max(100).optional(),
@@ -237,6 +243,7 @@ export type AdminOutreachHandler = Pick<
   | "archivePerson"
   | "restorePerson"
   | "deletePerson"
+  | "mergePeople"
   | "importContacts"
   | "createContact"
   | "assignContacts"
@@ -437,6 +444,32 @@ export class AdminOutreachController {
       throw outreachNotFound();
     }
     return { restored };
+  }
+
+  @Post("base/:id/merge")
+  @RequireAdminPermission("outreach.write")
+  async mergePeople(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(mergePersonBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.mergePeople({
+        actor: requireActor(request),
+        contactId,
+        targetContactId: parsed.targetContactId,
+        ...(parsed.reason === undefined ? {} : { reason: parsed.reason }),
+        now: new Date()
+      })
+    );
+    // Отказ с причиной — обычный ответ: панель объясняет, почему свести нельзя. Без причины
+    // это «не нашли», и вот тогда 404.
+    if (!result.merged && result.blocker === undefined) {
+      throw outreachNotFound();
+    }
+    return result;
   }
 
   @Post("base/:id/delete")

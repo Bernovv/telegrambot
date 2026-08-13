@@ -199,6 +199,119 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.ok(auditIndex > deleteIndex);
   });
 
+  it("clears an identifier from the duplicate before giving it to the master", async () => {
+    // Уникальный индекс проверяется на уровне запроса: одно значение не может принадлежать
+    // обоим контактам даже на мгновение внутри транзакции.
+    const connection = new MergeConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.mergePeople({
+      contactId: DUPLICATE_ID,
+      targetContactId: MASTER_ID,
+      reason: "один человек",
+      actorAdminId: ADMIN_ID,
+      auditId: AUDIT_ID,
+      now: new Date("2026-08-14T12:00:00.000Z")
+    });
+
+    const clear = connection.queries.findIndex((query) =>
+      query.text.includes("phone_e164 = null")
+    );
+    const set = connection.queries.findIndex((query) =>
+      query.text.includes("phone_e164 = $2::text")
+    );
+    assert.ok(clear >= 0 && set >= 0);
+    assert.ok(clear < set, "признак снимается раньше, чем ставится");
+    assert.equal(connection.queries[clear]?.values[0], DUPLICATE_ID);
+    assert.equal(connection.queries[set]?.values[0], MASTER_ID);
+    assert.equal(connection.queries[set]?.values[1], "+79991234567");
+  });
+
+  it("moves only the campaigns the master is not already in", async () => {
+    // Слить две строки участия в одну нельзя: к каждой привязаны свои звонки и стадии.
+    const connection = new MergeConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.mergePeople({
+      contactId: DUPLICATE_ID,
+      targetContactId: MASTER_ID,
+      reason: null,
+      actorAdminId: ADMIN_ID,
+      auditId: AUDIT_ID,
+      now: new Date("2026-08-14T12:00:00.000Z")
+    });
+
+    const move = connection.queries.find((query) =>
+      query.text.includes("set contact_id = $2::uuid")
+    );
+    assert.ok(move);
+    assert.match(move.text, /not exists/);
+    assert.match(move.text, /other\.campaign_id = member\.campaign_id/);
+  });
+
+  it("refuses to merge a contact into one that is itself a duplicate", async () => {
+    // Иначе получилась бы цепочка, ведущая в никуда.
+    const connection = new MergeConnection({ masterMergedInto: OTHER_ID });
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const result = await repository.mergePeople({
+      contactId: DUPLICATE_ID,
+      targetContactId: MASTER_ID,
+      reason: null,
+      actorAdminId: ADMIN_ID,
+      auditId: AUDIT_ID,
+      now: new Date("2026-08-14T12:00:00.000Z")
+    });
+
+    assert.equal(result.merged, false);
+    assert.equal(result.blocker, "target_already_merged");
+    assert.equal(
+      connection.queries.some((query) => query.text.includes("merged_into_contact_id = $2")),
+      false,
+      "ничего не тронули"
+    );
+  });
+
+  it("follows the merge pointer when an import matches a duplicate", async () => {
+    // После объединения у дубля остаются признаки, которых у главного не было. Без указателя
+    // повторная загрузка положила бы человека на надгробие.
+    const connection = new ImportLookupConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.importContacts({
+      campaignId: "00000000-0000-4000-8000-000000000102",
+      assignedAdminId: ADMIN_ID,
+      createdByAdminId: ADMIN_ID,
+      rows: [{
+        displayName: "Анна",
+        phoneE164: "+79991234567",
+        telegramUsername: null,
+        telegramUsernameNormalized: null,
+        maxIdentifier: null,
+        maxIdentifierNormalized: null,
+        email: null,
+        emailNormalized: null,
+        source: null,
+        note: null,
+        contactId: DUPLICATE_ID,
+        campaignContactId: "00000000-0000-4000-8000-000000000501"
+      }],
+      skipAmbiguous: true,
+      now: new Date("2026-08-14T12:00:00.000Z")
+    });
+
+    const lookup = connection.queries.find((query) =>
+      query.text.includes("from public.outreach_contacts contact")
+    );
+    assert.ok(lookup);
+    assert.match(
+      lookup.text,
+      /coalesce\(contact\.merged_into_contact_id, contact\.id\)/
+    );
+    // Два признака, ведущие на два дубля одного человека, спором уже не являются.
+    assert.match(lookup.text, /select distinct/);
+  });
+
   it("collects a person's history across campaigns, not within one", async () => {
     const connection = new PersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
@@ -210,13 +323,106 @@ describe("PostgreSQL administrator outreach persistence", () => {
     );
     assert.ok(activities);
     // Ключевое отличие от карточки в кампании: отбор по человеку, а не по строке участия.
-    assert.match(activities.text, /where activity\.contact_id = \$1::uuid/);
+    // Людей может быть несколько — сам человек и сведённые в него дубли: их историю
+    // переписать нельзя, журнал защищён от изменений, поэтому она собирается обходом.
+    assert.match(activities.text, /where activity\.contact_id = any\(\$1::uuid\[\]\)/);
+    const chain = connection.queries.find((query) =>
+      query.text.includes("with recursive chain")
+    );
+    assert.ok(chain, "цепочка дублей собирается рекурсивным обходом");
   });
 });
+
+const ADMIN_ID = "00000000-0000-4000-8000-000000000001";
+const DUPLICATE_ID = "00000000-0000-4000-8000-000000000401";
+const MASTER_ID = "00000000-0000-4000-8000-000000000402";
+const OTHER_ID = "00000000-0000-4000-8000-000000000403";
+const AUDIT_ID = "00000000-0000-4000-8000-000000000404";
 
 interface RecordedQuery {
   readonly text: string;
   readonly values: readonly unknown[];
+}
+
+/**
+ * Пара «дубль и главный» для объединения. У дубля есть телефон, у главного нет — значит
+ * телефон должен переехать. Указатель на главного у самого главного задаёт тест.
+ */
+class MergeConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  constructor(
+    private readonly options: { readonly masterMergedInto?: string } = {}
+  ) {}
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    if (text.includes("for update") && text.includes("merged_into_contact_id")) {
+      return {
+        rows: [
+          {
+            id: DUPLICATE_ID,
+            display_name: "Анна (дубль)",
+            phone_e164: "+79991234567",
+            telegram_username: null,
+            telegram_username_normalized: null,
+            max_identifier: null,
+            max_identifier_normalized: null,
+            email: null,
+            email_normalized: null,
+            source: "amoCRM",
+            note: null,
+            merged_into_contact_id: null
+          },
+          {
+            id: MASTER_ID,
+            display_name: "Анна",
+            phone_e164: null,
+            telegram_username: "anna",
+            telegram_username_normalized: "anna",
+            max_identifier: null,
+            max_identifier_normalized: null,
+            email: null,
+            email_normalized: null,
+            source: "Timepad",
+            note: null,
+            merged_into_contact_id: this.options.masterMergedInto ?? null
+          }
+        ] as TRow[],
+        rowCount: 2
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  release(): void {
+    this.released = true;
+  }
+}
+
+/** Кампания находится, контакт по признакам — нет: важен только текст запроса поиска. */
+class ImportLookupConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    if (text.includes("from public.outreach_campaigns")) {
+      return { rows: [{ id: values[0] } as TRow], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  release(): void {
+    this.released = true;
+  }
 }
 
 class RecordingConnection implements SqlConnection {

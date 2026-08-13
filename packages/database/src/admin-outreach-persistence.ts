@@ -17,10 +17,12 @@ import type {
   OutreachBaseContact,
   OutreachImportRow,
   DeleteOutreachPersonResult,
+  MergeOutreachPeopleResult,
   OutreachDeleteBlocker,
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
+  OutreachPersonConflict,
   OutreachPersonUpdateResult,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
@@ -173,8 +175,119 @@ interface PersonCardRow {
   readonly linked_user_id: string | null;
   readonly archived_at: Date | string | null;
   readonly archived_reason: string | null;
+  readonly merged_into_contact_id: string | null;
+  readonly merged_into_display_name: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
+}
+
+interface MergeContactRow {
+  readonly id: string;
+  readonly display_name: string | null;
+  readonly phone_e164: string | null;
+  readonly telegram_username: string | null;
+  readonly telegram_username_normalized: string | null;
+  readonly max_identifier: string | null;
+  readonly max_identifier_normalized: string | null;
+  readonly email: string | null;
+  readonly email_normalized: string | null;
+  readonly source: string | null;
+  readonly note: string | null;
+  readonly merged_into_contact_id: string | null;
+}
+
+/**
+ * Переносит признак с дубля на главного. Двумя запросами и именно в этом порядке: уникальный
+ * индекс проверяется на уровне запроса, поэтому одно значение не может принадлежать обоим
+ * контактам даже на мгновение внутри транзакции.
+ *
+ * Значение берётся из строки, прочитанной до снятия, — после первого запроса его на дубле
+ * уже нет.
+ */
+async function moveIdentifier(
+  connection: SqlConnection,
+  field: OutreachPersonConflict["field"],
+  duplicate: MergeContactRow,
+  masterId: string,
+  now: Date
+): Promise<void> {
+  const moved = describeIdentifier(field, duplicate);
+  const clearList = moved.normalizedColumn === null
+    ? `${moved.column} = null`
+    : `${moved.column} = null, ${moved.normalizedColumn} = null`;
+  const setList = moved.normalizedColumn === null
+    ? `${moved.column} = $2::text`
+    : `${moved.column} = $2::text, ${moved.normalizedColumn} = $3::text`;
+
+  await connection.query(
+    `update public.outreach_contacts
+        set ${clearList}, updated_at = $2::timestamptz
+      where id = $1::uuid`,
+    [duplicate.id, now]
+  );
+  await connection.query(
+    `update public.outreach_contacts
+        set ${setList}, updated_at = $4::timestamptz
+      where id = $1::uuid`,
+    [masterId, moved.value, moved.normalizedValue, now]
+  );
+}
+
+/**
+ * Колонки и значения одного признака. Switch, а не таблица: при индексации по объединению
+ * TypeScript всё равно допускает промах, а здесь его быть не может.
+ */
+function describeIdentifier(
+  field: OutreachPersonConflict["field"],
+  contact: MergeContactRow
+): {
+  readonly column: string;
+  readonly normalizedColumn: string | null;
+  readonly value: string | null;
+  readonly normalizedValue: string | null;
+} {
+  switch (field) {
+    case "phone":
+      return {
+        column: "phone_e164",
+        normalizedColumn: null,
+        value: contact.phone_e164,
+        normalizedValue: null
+      };
+    case "telegram":
+      return {
+        column: "telegram_username",
+        normalizedColumn: "telegram_username_normalized",
+        value: contact.telegram_username,
+        normalizedValue: contact.telegram_username_normalized
+      };
+    case "max":
+      return {
+        column: "max_identifier",
+        normalizedColumn: "max_identifier_normalized",
+        value: contact.max_identifier,
+        normalizedValue: contact.max_identifier_normalized
+      };
+    case "email":
+      return {
+        column: "email",
+        normalizedColumn: "email_normalized",
+        value: contact.email,
+        normalizedValue: contact.email_normalized
+      };
+  }
+}
+
+function refusedMerge(
+  blocker?: MergeOutreachPeopleResult["blocker"]
+): MergeOutreachPeopleResult {
+  return {
+    merged: false,
+    ...(blocker ? { blocker } : {}),
+    movedCampaigns: 0,
+    movedParticipations: 0,
+    takenIdentifiers: []
+  };
 }
 
 interface PersonCampaignRow {
@@ -1096,9 +1209,13 @@ implements AdminOutreachRepository {
            contact.linked_user_id,
            contact.archived_at,
            contact.archived_reason,
+           contact.merged_into_contact_id,
+           master.display_name as merged_into_display_name,
            contact.created_at,
            contact.updated_at
          from public.outreach_contacts contact
+         left join public.outreach_contacts master
+           on master.id = contact.merged_into_contact_id
          where contact.id = $1::uuid`,
         [contactId]
       );
@@ -1106,6 +1223,22 @@ implements AdminOutreachRepository {
       if (!contact) {
         return null;
       }
+
+      // Вся цепочка сведённых сюда дублей. История привязана к той карточке, по которой
+      // звонили, и переписать её нельзя — журнал защищён от изменений. Поэтому карточка
+      // главного собирает свою историю обходом вниз по указателям.
+      const duplicates = await connection.query<{ readonly id: string }>(
+        `with recursive chain as (
+           select id from public.outreach_contacts where id = $1::uuid
+           union all
+           select child.id
+             from public.outreach_contacts child
+             join chain on child.merged_into_contact_id = chain.id
+         )
+         select id from chain`,
+        [contactId]
+      );
+      const chain = duplicates.rows.map((row) => row.id);
 
       // Убранные из кампании тоже показываем: вопрос «что человеку уже говорили» они
       // закрывают не хуже действующих, а скрыть их — значит потерять половину истории.
@@ -1125,10 +1258,10 @@ implements AdminOutreachRepository {
           and pipeline_column.stage = member.pipeline_stage
          left join public.admin_accounts assignee
            on assignee.id = member.assigned_admin_id
-         where member.contact_id = $1::uuid
+         where member.contact_id = any($1::uuid[])
          order by member.removed_at nulls first, member.created_at desc
          limit 50`,
-        [contactId]
+        [chain]
       );
 
       const activities = await connection.query<PersonActivityRow>(
@@ -1142,10 +1275,10 @@ implements AdminOutreachRepository {
          join public.outreach_campaign_contacts member
            on member.id = activity.campaign_contact_id
          join public.outreach_campaigns campaign on campaign.id = member.campaign_id
-         where activity.contact_id = $1::uuid
+         where activity.contact_id = any($1::uuid[])
          order by activity.occurred_at desc, activity.id desc
          limit 200`,
-        [contactId]
+        [chain]
       );
 
       const participations = await connection.query<ParticipationRow>(
@@ -1157,11 +1290,11 @@ implements AdminOutreachRepository {
                 participant.sleeping_places
          from public.event_participants participant
          join public.events event on event.id = participant.event_id
-         where participant.outreach_contact_id = $1::uuid
+         where participant.outreach_contact_id = any($1::uuid[])
            and participant.deleted_at is null
          order by event.starts_at desc
          limit 20`,
-        [contactId]
+        [chain]
       );
 
       return {
@@ -1176,6 +1309,10 @@ implements AdminOutreachRepository {
         linkedUserId: contact.linked_user_id,
         archivedAt: nullableIso(contact.archived_at),
         archivedReason: contact.archived_reason,
+        mergedIntoContactId: contact.merged_into_contact_id,
+        mergedIntoDisplayName: contact.merged_into_display_name,
+        // Сама карточка тоже в цепочке, поэтому дублей на единицу меньше.
+        mergedDuplicates: chain.length - 1,
         createdAt: toIso(contact.created_at),
         updatedAt: toIso(contact.updated_at),
         campaigns: campaigns.rows.map((row) => ({
@@ -1301,6 +1438,181 @@ implements AdminOutreachRepository {
         occurredAt: input.now
       });
       return { status: "updated" as const };
+    });
+  }
+
+  /**
+   * Сводит дубль к главному. Историю не переносит и не может: журнал активностей и история
+   * стадий защищены триггерами «только на добавление». Вместо этого дубль остаётся указателем
+   * на главного, а карточка главного собирает историю по цепочке.
+   */
+  mergePeople(
+    input: Parameters<AdminOutreachRepository["mergePeople"]>[0]
+  ): Promise<MergeOutreachPeopleResult> {
+    return this.write(async (connection) => {
+      if (input.contactId === input.targetContactId) {
+        return refusedMerge("same_contact");
+      }
+
+      // Порядок блокировки по идентификатору: две встречные попытки объединить одну пару
+      // иначе встанут намертво, каждая держа то, что нужно другой.
+      const [first, second] = [input.contactId, input.targetContactId].sort();
+      const locked = await connection.query<MergeContactRow>(
+        `select id, display_name, phone_e164,
+                telegram_username, telegram_username_normalized,
+                max_identifier, max_identifier_normalized,
+                email, email_normalized,
+                source, note, merged_into_contact_id
+           from public.outreach_contacts
+          where id in ($1::uuid, $2::uuid)
+          for update`,
+        [first, second]
+      );
+      const duplicate = locked.rows.find((row) => row.id === input.contactId);
+      const master = locked.rows.find((row) => row.id === input.targetContactId);
+      if (!duplicate || !master) {
+        return refusedMerge();
+      }
+      if (duplicate.merged_into_contact_id !== null) {
+        return refusedMerge("already_merged");
+      }
+      // Сводить в того, кто сам дубль, значит строить цепочку из ниоткуда в никуда.
+      if (master.merged_into_contact_id !== null) {
+        return refusedMerge("target_already_merged");
+      }
+
+      // Признаки переезжают только в пустые места: у главного своя правда, и затирать её
+      // значением дубля нельзя. Сначала снимаем признак с дубля, потом ставим главному —
+      // иначе уникальный индекс не пропустит промежуточное состояние.
+      const taken: OutreachPersonConflict["field"][] = [];
+      const moves: { readonly field: OutreachPersonConflict["field"] }[] = [];
+      if (master.phone_e164 === null && duplicate.phone_e164 !== null) {
+        moves.push({ field: "phone" });
+      }
+      if (
+        master.telegram_username_normalized === null
+        && duplicate.telegram_username_normalized !== null
+      ) {
+        moves.push({ field: "telegram" });
+      }
+      if (
+        master.max_identifier_normalized === null
+        && duplicate.max_identifier_normalized !== null
+      ) {
+        moves.push({ field: "max" });
+      }
+      if (master.email_normalized === null && duplicate.email_normalized !== null) {
+        moves.push({ field: "email" });
+      }
+      for (const move of moves) {
+        await moveIdentifier(
+          connection,
+          move.field,
+          duplicate,
+          input.targetContactId,
+          input.now
+        );
+        taken.push(move.field);
+      }
+
+      // Участия переезжают там, где главный в этой кампании ещё не состоит. Где состоит —
+      // строка дубля остаётся при своих звонках и помечается убранной: слить две строки в
+      // одну нельзя, к каждой привязана своя история.
+      const movedCampaigns = await connection.query(
+        `update public.outreach_campaign_contacts member
+            set contact_id = $2::uuid, updated_at = $3::timestamptz
+          where member.contact_id = $1::uuid
+            and not exists (
+              select 1 from public.outreach_campaign_contacts other
+               where other.contact_id = $2::uuid
+                 and other.campaign_id = member.campaign_id
+            )`,
+        [input.contactId, input.targetContactId, input.now]
+      );
+      await connection.query(
+        `update public.outreach_campaign_contacts
+            set removed_at = $2::timestamptz,
+                removed_by_admin_id = $3::uuid,
+                updated_at = $2::timestamptz
+          where contact_id = $1::uuid and removed_at is null`,
+        [input.contactId, input.now, input.actorAdminId]
+      );
+
+      const movedParticipations = await connection.query(
+        `update public.event_participants
+            set outreach_contact_id = $2::uuid, updated_at = $3::timestamptz
+          where outreach_contact_id = $1::uuid`,
+        [input.contactId, input.targetContactId, input.now]
+      );
+
+      // Источник и примечание дописываем, а не заменяем: откуда человек пришёл во второй раз —
+      // такой же факт, как и первый.
+      await connection.query(
+        `update public.outreach_contacts master
+            set source = case
+                  when master.source is null then duplicate.source
+                  when duplicate.source is null then master.source
+                  when master.source = duplicate.source then master.source
+                  else left(master.source || '; ' || duplicate.source, 200)
+                end,
+                note = case
+                  when duplicate.note is null then master.note
+                  when master.note is null then duplicate.note
+                  else left(master.note || E'\\n' || duplicate.note, 2000)
+                end,
+                updated_at = $3::timestamptz
+           from public.outreach_contacts duplicate
+          where master.id = $2::uuid and duplicate.id = $1::uuid`,
+        [input.contactId, input.targetContactId, input.now]
+      );
+
+      await connection.query(
+        `update public.outreach_contacts
+            set merged_into_contact_id = $2::uuid,
+                merged_at = $3::timestamptz,
+                merged_by_admin_id = $4::uuid,
+                archived_at = coalesce(archived_at, $3::timestamptz),
+                archived_reason = coalesce(archived_reason, $5::text),
+                archived_by_admin_id = coalesce(archived_by_admin_id, $4::uuid),
+                updated_at = $3::timestamptz
+          where id = $1::uuid`,
+        [
+          input.contactId,
+          input.targetContactId,
+          input.now,
+          input.actorAdminId,
+          "Объединён с другим контактом"
+        ]
+      );
+
+      await writeOutreachAudit(connection, {
+        auditId: input.auditId,
+        actorAdminId: input.actorAdminId,
+        action: "outreach.contact.merged",
+        contactId: input.contactId,
+        reason: input.reason,
+        before: {
+          displayName: duplicate.display_name,
+          phone: duplicate.phone_e164,
+          telegram: duplicate.telegram_username,
+          max: duplicate.max_identifier,
+          email: duplicate.email
+        },
+        after: {
+          mergedInto: input.targetContactId,
+          movedCampaigns: movedCampaigns.rowCount,
+          movedParticipations: movedParticipations.rowCount,
+          takenIdentifiers: taken
+        },
+        occurredAt: input.now
+      });
+
+      return {
+        merged: true,
+        movedCampaigns: movedCampaigns.rowCount,
+        movedParticipations: movedParticipations.rowCount,
+        takenIdentifiers: taken
+      };
     });
   }
 
@@ -1610,13 +1922,16 @@ implements AdminOutreachRepository {
       const ambiguousRowIndexes: number[] = [];
       for (const [rowIndex, row] of input.rows.entries()) {
         const matches = await connection.query<ExistingContactRow>(
-          `select id
-           from public.outreach_contacts
-           where ($1::text is not null and phone_e164 = $1)
-              or ($2::text is not null and telegram_username_normalized = $2)
-              or ($3::text is not null and max_identifier_normalized = $3)
-              or ($4::text is not null and email_normalized = $4)
-           order by created_at
+          // Указатель на главного важен: после объединения у дубля остаются те признаки,
+          // которых у главного не было пусто, и без coalesce импорт положил бы человека на
+          // надгробие. Distinct нужен там же — два признака, ведущие на два дубля одного
+          // человека, спором уже не являются.
+          `select distinct coalesce(contact.merged_into_contact_id, contact.id) as id
+           from public.outreach_contacts contact
+           where ($1::text is not null and contact.phone_e164 = $1)
+              or ($2::text is not null and contact.telegram_username_normalized = $2)
+              or ($3::text is not null and contact.max_identifier_normalized = $3)
+              or ($4::text is not null and contact.email_normalized = $4)
            limit 2`,
           [
             row.phoneE164,

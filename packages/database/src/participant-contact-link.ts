@@ -46,7 +46,9 @@ export async function resolveParticipantContact(
   }
 
   const existing = await connection.query<{ readonly id: string }>(
-    `select id
+    // Указатель на главного: после объединения дубль остаётся со своими признаками, и без
+    // coalesce участник привязался бы к надгробию вместо человека.
+    `select coalesce(merged_into_contact_id, id) as id
        from public.outreach_contacts
       where ($1::text is not null and phone_e164 = $1::text)
          or ($2::text is not null and telegram_username_normalized = $2::text)
@@ -89,7 +91,7 @@ export async function resolveParticipantContact(
   // Сюда попадаем, если между поиском и вставкой контакт завёл кто-то другой. Читаем ещё раз:
   // потерять связь из-за гонки хуже, чем сделать лишний запрос на редком пути.
   const race = await connection.query<{ readonly id: string }>(
-    `select id
+    `select coalesce(merged_into_contact_id, id) as id
        from public.outreach_contacts
       where ($1::text is not null and phone_e164 = $1::text)
          or ($2::text is not null and telegram_username_normalized = $2::text)

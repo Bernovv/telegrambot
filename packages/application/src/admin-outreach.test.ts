@@ -1043,6 +1043,14 @@ function repository(
     async archivePerson() { return true; },
     async restorePerson() { return true; },
     async deletePerson() { return { deleted: true, blockers: [] }; },
+    async mergePeople() {
+      return {
+        merged: true,
+        movedCampaigns: 0,
+        movedParticipations: 0,
+        takenIdentifiers: []
+      };
+    },
     async addExistingContacts() { return { added: 0, alreadyInCampaign: 0 }; },
     async archiveCampaign() { return true; },
     async restoreCampaign() { return true; },
@@ -1176,6 +1184,9 @@ function personCard() {
     linkedUserId: null,
     archivedAt: null,
     archivedReason: null,
+    mergedIntoContactId: null,
+    mergedIntoDisplayName: null,
+    mergedDuplicates: 0,
     createdAt: "2026-07-01T10:00:00.000Z",
     updatedAt: "2026-07-01T10:00:00.000Z",
     campaigns: [],

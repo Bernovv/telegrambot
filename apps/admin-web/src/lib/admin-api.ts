@@ -35,6 +35,7 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   DeleteOutreachPersonResult,
+  MergeOutreachPeopleResult,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonUpdateResult,
@@ -831,6 +832,19 @@ export function deleteOutreachPerson(
     `outreach/base/${encodeURIComponent(contactId)}/delete`,
     "POST",
     reason ? { reason } : {}
+  );
+}
+
+/** contactId — открытая карточка-дубль, targetContactId — главный. */
+export function mergeOutreachPeople(
+  contactId: string,
+  targetContactId: string,
+  reason?: string
+): Promise<MergeOutreachPeopleResult> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/merge`,
+    "POST",
+    { targetContactId, ...(reason ? { reason } : {}) }
   );
 }
 

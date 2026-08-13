@@ -4178,3 +4178,24 @@ tbody tr:hover {
   justify-self: start;
   grid-column: 1 / -1;
 }
+
+/* Объединение дублей: список кандидатов на карточке. */
+
+.merge-candidates {
+  display: grid;
+  margin: 0;
+  padding: 0 18px 8px;
+  gap: 10px;
+  list-style: none;
+}
+
+.merge-candidates li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}

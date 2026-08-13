@@ -367,6 +367,14 @@ function handler(
     async archivePerson() { return true; },
     async restorePerson() { return true; },
     async deletePerson() { return { deleted: true, blockers: [] }; },
+    async mergePeople() {
+      return {
+        merged: true,
+        movedCampaigns: 0,
+        movedParticipations: 0,
+        takenIdentifiers: []
+      };
+    },
     async importContacts() {
       return {
         received: 0,

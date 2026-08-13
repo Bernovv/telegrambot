@@ -22,6 +22,7 @@ import type {
   OutreachImportRow,
   OutreachLostReason,
   DeleteOutreachPersonResult,
+  MergeOutreachPeopleResult,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonConflict,
@@ -229,6 +230,15 @@ export interface AdminOutreachRepository {
     readonly auditId: string;
     readonly now: Date;
   }): Promise<DeleteOutreachPersonResult>;
+  /** contactId — дубль, targetContactId — главный, к которому его сводят. */
+  mergePeople(input: {
+    readonly contactId: string;
+    readonly targetContactId: string;
+    readonly reason: string | null;
+    readonly actorAdminId: string;
+    readonly auditId: string;
+    readonly now: Date;
+  }): Promise<MergeOutreachPeopleResult>;
   importContacts(input: {
     readonly campaignId: string;
     readonly assignedAdminId: string;
@@ -957,6 +967,30 @@ export class AdminOutreachService {
     requireUuid(input.contactId);
     return this.repository.restorePerson({
       contactId: input.contactId,
+      actorAdminId: input.actor.adminId,
+      auditId: this.idGenerator.newId(),
+      now: input.now
+    });
+  }
+
+  /**
+   * Объединение дублей. Право общее с правкой, а не с удалением: ничего не пропадает — дубль
+   * остаётся указателем на главного, и вся его история видна в карточке главного.
+   */
+  async mergePeople(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly targetContactId: string;
+    readonly reason?: string;
+    readonly now: Date;
+  }): Promise<MergeOutreachPeopleResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    requireUuid(input.targetContactId);
+    return this.repository.mergePeople({
+      contactId: input.contactId,
+      targetContactId: input.targetContactId,
+      reason: optionalText(input.reason ?? "", 500),
       actorAdminId: input.actor.adminId,
       auditId: this.idGenerator.newId(),
       now: input.now

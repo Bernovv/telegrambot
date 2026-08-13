@@ -199,5 +199,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260813210000_link_participants_to_contacts",
     description: "Backfill the participant link to the contact base by phone and create the missing contacts",
     destructive: false
+  },
+  {
+    id: "20260814120000_outreach_contact_merge",
+    description: "Point a duplicate contact at the master it was merged into, keeping its append-only history",
+    destructive: false
   }
 ];
