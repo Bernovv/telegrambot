@@ -111,6 +111,15 @@ const answerBody = z.object({
   { message: "exactly one target" }
 );
 
+const attendanceBody = z.object({
+  orderId: uuid.optional(),
+  participantId: uuid.optional(),
+  attended: z.boolean()
+}).strict().refine(
+  (body) => (body.orderId === undefined) !== (body.participantId === undefined),
+  { message: "exactly one target" }
+);
+
 const participantFieldBody = z.object({
   label: z.string().trim().min(1).max(80),
   type: z.enum(EVENT_PARTICIPANT_FIELD_TYPES),
@@ -134,7 +143,7 @@ const excludeOrderBody = z.object({
 
 export type AdminEventParticipantsHandler = Pick<
   AdminEventParticipantsService,
-  "list" | "saveAnswer"
+  "list" | "saveAnswer" | "setAttendance"
 >;
 
 export type ImportParticipantsHandler = Pick<ImportParticipantsService, "execute">;
@@ -352,6 +361,32 @@ export class AdminParticipantsController {
           : {}),
         fieldId: parsed.fieldId,
         value: parsed.value
+      })
+    );
+    return { saved: true };
+  }
+
+  /**
+   * Отметка «пришёл» и её снятие. Отдельным запросом на строку: отмечают по одному
+   * человеку у входа, и ждать сохранения всего списка там нечего.
+   */
+  @Post("events/:eventId/participants/attendance")
+  @RequireAdminPermission("participants.manage")
+  async setAttendance(
+    @Param("eventId") eventId: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(attendanceBody, body);
+    await execute(() =>
+      this.participants.setAttendance({
+        actor: requireActor(request),
+        eventId: parse(uuid, eventId),
+        ...(parsed.orderId !== undefined ? { orderId: parsed.orderId } : {}),
+        ...(parsed.participantId !== undefined
+          ? { participantId: parsed.participantId }
+          : {}),
+        attended: parsed.attended
       })
     );
     return { saved: true };

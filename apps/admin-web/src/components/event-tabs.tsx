@@ -3,6 +3,7 @@
 import {
   Boxes,
   ClipboardList,
+  DoorOpen,
   HandCoins,
   LayoutDashboard,
   Settings2,
@@ -25,6 +26,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { segment: "", label: "Обзор", icon: LayoutDashboard },
   { segment: "participants", label: "Участники", icon: Users },
+  { segment: "attendance", label: "Явка", icon: DoorOpen },
   { segment: "questionnaire", label: "Анкеты", icon: ClipboardList },
   { segment: "accommodation", label: "Логистика", icon: Tent },
   { segment: "expenses", label: "Расходы", icon: Wallet },

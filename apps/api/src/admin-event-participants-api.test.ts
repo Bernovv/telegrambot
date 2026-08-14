@@ -291,6 +291,9 @@ function participantsHandler(
         onSave();
       }
       requests.push(input);
+    },
+    async setAttendance(input) {
+      requests.push(input);
     }
   };
 }
@@ -312,6 +315,7 @@ const view: EventParticipantsView = {
   rows: [],
   excludedOrders: 0,
   fields: [],
+  attendance: { registered: 2, attended: 0 },
   questionnaire: { people: 2, answered: 1 },
   canManageParticipants: true
 };

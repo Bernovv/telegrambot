@@ -4310,3 +4310,51 @@ tbody tr:hover {
   gap: 10px;
   grid-column: 1 / -1;
 }
+
+/* Отметка явки. Экран открывают с телефона у входа в зал, поэтому строка крупная, кнопка
+   попадает под палец, а список не превращается в таблицу с горизонтальной прокруткой. */
+.attendance-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.attendance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attendance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.attendance-row-done {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attendance-person {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attendance-person small {
+  overflow-wrap: anywhere;
+}
+
+.attendance-row button {
+  flex-shrink: 0;
+  min-height: 44px;
+}

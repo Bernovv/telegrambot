@@ -50,6 +50,21 @@ export function formatDateTime(value: string | null): string {
   return DATE_TIME_FORMAT.format(date);
 }
 
+/**
+ * Только время отметки: на входе в зал дата известна и без нас, а «14:03» читается с
+ * одного взгляда, тогда как «14 авг. 2026 г., 14:03» приходится разбирать.
+ */
+export function formatTime(value: string | null): string {
+  if (!value) {
+    return "—";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return TIME_FORMAT.format(date);
+}
+
 export function formatEventDateTime(
   value: string | null,
   timeZone: string
@@ -128,6 +143,10 @@ export function productTypeLabel(type: AdminProductType): string {
 const RUBLE_FORMAT = new Intl.NumberFormat("ru-RU");
 const DATE_TIME_FORMAT = new Intl.DateTimeFormat("ru-RU", {
   dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "Europe/Moscow"
+});
+const TIME_FORMAT = new Intl.DateTimeFormat("ru-RU", {
   timeStyle: "short",
   timeZone: "Europe/Moscow"
 });

@@ -53,6 +53,7 @@ describe("buildParticipantsView", () => {
       participants: [],
       fields: [],
       orderAnswers: [],
+      attendance: [],
       excludedOrders: 0,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -75,6 +76,7 @@ describe("buildParticipantsView", () => {
       participants: [],
       fields: [],
       orderAnswers: [],
+      attendance: [],
       excludedOrders: 0,
       canManageParticipants: false,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -93,6 +95,7 @@ describe("buildParticipantsView", () => {
       participants: [],
       fields: [],
       orderAnswers: [],
+      attendance: [],
       excludedOrders: 0,
       canManageParticipants: false,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -113,6 +116,7 @@ describe("buildParticipantsView", () => {
       participants: [participant({ adults: 1, children: 2, sleepingPlaces: 3 })],
       fields: [],
       orderAnswers: [],
+      attendance: [],
       excludedOrders: 2,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -140,6 +144,7 @@ describe("buildParticipantsView", () => {
       participants: [],
       fields: [field],
       orderAnswers: [{ orderId: ORDER_ID, value: answer("Москва") }],
+      attendance: [],
       excludedOrders: 0,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
@@ -158,12 +163,43 @@ describe("buildParticipantsView", () => {
       participants: [participant({ customFields: [answer(null)] })],
       fields: [field],
       orderAnswers: [{ orderId: ORDER_ID, value: answer("Москва") }],
+      attendance: [],
       excludedOrders: 0,
       canManageParticipants: true,
       calculatedAt: new Date("2026-08-10T09:00:00.000Z")
     });
 
     assert.deepEqual(view.questionnaire, { people: 3, answered: 1 });
+  });
+
+  it("puts the mark on the right row and counts who reached the hall", () => {
+    const view = buildParticipantsView({
+      event: { id: EVENT_ID, title: "Вечер экспертов" },
+      items: [item({}), item({ orderId: OTHER_ORDER_ID })],
+      participants: [participant({})],
+      fields: [],
+      orderAnswers: [],
+      attendance: [
+        {
+          orderId: null,
+          participantId: "019c0123-4567-789a-bcde-f0123456789e",
+          checkedInAt: new Date("2026-08-19T16:05:00.000Z")
+        },
+        {
+          orderId: ORDER_ID,
+          participantId: null,
+          checkedInAt: new Date("2026-08-19T16:02:00.000Z")
+        }
+      ],
+      excludedOrders: 0,
+      canManageParticipants: true,
+      calculatedAt: new Date("2026-08-19T17:00:00.000Z")
+    });
+
+    assert.equal(view.rows[0]?.attendedAt, "2026-08-19T16:02:00.000Z");
+    assert.equal(view.rows[1]?.attendedAt, null);
+    assert.equal(view.rows[2]?.attendedAt, "2026-08-19T16:05:00.000Z");
+    assert.deepEqual(view.attendance, { registered: 3, attended: 2 });
   });
 });
 
@@ -326,6 +362,101 @@ describe("AdminEventParticipantsService.saveAnswer", () => {
   });
 });
 
+describe("AdminEventParticipantsService.setAttendance", () => {
+  it("marks a manual participant and passes the moment they arrived", async () => {
+    const marks: { attended: boolean; checkedInAt: Date }[] = [];
+    const service = new AdminEventParticipantsService(
+      repository({
+        async setAttendance(input) {
+          marks.push(input);
+          return true;
+        }
+      }),
+      clock
+    );
+
+    await service.setAttendance({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      participantId: PARTICIPANT_ID,
+      attended: true
+    });
+
+    assert.equal(marks[0]?.attended, true);
+    assert.deepEqual(marks[0]?.checkedInAt, new Date("2026-08-10T09:00:00.000Z"));
+  });
+
+  it("takes the mark off when the wrong row was tapped", async () => {
+    const marks: { attended: boolean }[] = [];
+    const service = new AdminEventParticipantsService(
+      repository({
+        async setAttendance(input) {
+          marks.push(input);
+          return true;
+        }
+      }),
+      clock
+    );
+
+    await service.setAttendance({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      orderId: ORDER_ID,
+      attended: false
+    });
+
+    assert.equal(marks[0]?.attended, false);
+  });
+
+  it("refuses a request that names both an order and a participant", async () => {
+    const service = new AdminEventParticipantsService(repository(), clock);
+
+    await assert.rejects(
+      () => service.setAttendance({
+        actor: actorWith("participants.manage"),
+        eventId: EVENT_ID,
+        orderId: ORDER_ID,
+        participantId: PARTICIPANT_ID,
+        attended: true
+      }),
+      /request is invalid/
+    );
+  });
+
+  it("requires participants.manage, not merely the read permission", async () => {
+    const service = new AdminEventParticipantsService(repository(), clock);
+
+    await assert.rejects(
+      () => service.setAttendance({
+        actor: actorWith("accommodation.read"),
+        eventId: EVENT_ID,
+        participantId: PARTICIPANT_ID,
+        attended: true
+      }),
+      /permission is invalid/
+    );
+  });
+
+  // Строка чужого мероприятия или удалённый участник: молчаливое «сохранено» здесь
+  // означало бы, что человека отметили, а в списке пришедших его нет.
+  it("reports a row that does not belong to the event", async () => {
+    const service = new AdminEventParticipantsService(
+      repository({ async setAttendance() { return false; } }),
+      clock
+    );
+
+    await assert.rejects(
+      () => service.setAttendance({
+        actor: actorWith("participants.manage"),
+        eventId: EVENT_ID,
+        participantId: PARTICIPANT_ID,
+        attended: true
+      }),
+      ParticipantAnswerTargetNotFoundError
+    );
+  });
+});
+
 const clock = { now: () => new Date("2026-08-10T09:00:00.000Z") };
 
 function actorWith(permission: string): AdminRequestActor {
@@ -350,6 +481,12 @@ function repository(
     },
     async listOrderFieldValues() {
       return [];
+    },
+    async listAttendance() {
+      return [];
+    },
+    async setAttendance() {
+      return true;
     },
     async countExcludedOrders() {
       return 0;

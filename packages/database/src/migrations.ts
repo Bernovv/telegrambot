@@ -219,5 +219,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260814200000_participant_email_and_timepad",
     description: "Give a participant their email and let Timepad be the source of the list",
     destructive: false
+  },
+  {
+    id: "20260814210000_event_attendance",
+    description: "Record who actually reached the hall, per participant row rather than per ticket",
+    destructive: false
   }
 ];

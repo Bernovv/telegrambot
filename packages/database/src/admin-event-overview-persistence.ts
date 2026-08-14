@@ -100,15 +100,23 @@ export class PostgresAdminEventOverviewRepository
   }
 
   async loadParticipants(eventId: string): Promise<EventParticipantsView> {
-    const [event, items, participants, fields, orderAnswers, excludedOrders] =
-      await Promise.all([
-        this.participants.findEvent(eventId),
-        this.participants.listPaidOrderItems(eventId),
-        this.participants.listParticipants(eventId),
-        this.participants.listParticipantFields(eventId),
-        this.participants.listOrderFieldValues(eventId),
-        this.participants.countExcludedOrders(eventId)
-      ]);
+    const [
+      event,
+      items,
+      participants,
+      fields,
+      orderAnswers,
+      attendance,
+      excludedOrders
+    ] = await Promise.all([
+      this.participants.findEvent(eventId),
+      this.participants.listPaidOrderItems(eventId),
+      this.participants.listParticipants(eventId),
+      this.participants.listParticipantFields(eventId),
+      this.participants.listOrderFieldValues(eventId),
+      this.participants.listAttendance(eventId),
+      this.participants.countExcludedOrders(eventId)
+    ]);
 
     return buildParticipantsView({
       event: event ?? { id: eventId, title: "" },
@@ -116,6 +124,7 @@ export class PostgresAdminEventOverviewRepository
       participants,
       fields,
       orderAnswers,
+      attendance,
       excludedOrders,
       // Обзор ничего не правит, поэтому и права на правку в нём не спрашиваются.
       canManageParticipants: false,

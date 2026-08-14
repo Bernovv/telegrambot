@@ -92,7 +92,8 @@ import type {
   EventParticipantsView,
   ImportParticipantsRequest,
   ImportParticipantsResult,
-  SaveParticipantAnswerRequest
+  SaveParticipantAnswerRequest,
+  SetParticipantAttendanceRequest
 } from "@ticket-platform/contracts/admin-participants";
 import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
 import type {
@@ -195,6 +196,21 @@ export function saveParticipantAnswer(
 ): Promise<{ readonly saved: boolean }> {
   return requestAdminMutation(
     `events/${encodeURIComponent(eventId)}/participants/answers`,
+    "POST",
+    input
+  );
+}
+
+/**
+ * Отметка «пришёл» и её снятие. Запрос на строку: отмечают по одному человеку у входа в
+ * зал, и ждать сохранения всего списка там нечего.
+ */
+export function setParticipantAttendance(
+  eventId: string,
+  input: SetParticipantAttendanceRequest
+): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/participants/attendance`,
     "POST",
     input
   );

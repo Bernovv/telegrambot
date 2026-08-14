@@ -83,7 +83,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/accommodation\/groups\/split$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/accommodation\/plans$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
-      || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers|import)$/i
+      || /^events\/[0-9a-f-]{36}\/participants\/(?:remove|update|answers|import|attendance)$/i
         .test(path)
       || path === "vendors"
       || /^events\/[0-9a-f-]{36}\/expenses(?:\/(?:update|cancel))?$/i.test(path)

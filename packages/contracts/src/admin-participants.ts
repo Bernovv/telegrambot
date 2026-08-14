@@ -47,6 +47,8 @@ export interface EventParticipantRow {
   readonly paidAt: string | null;
   readonly paymentMethod: string | null;
   readonly note: string;
+  /** Когда человека отметили пришедшим. Пусто — не пришёл или ещё не дошёл. */
+  readonly attendedAt: string | null;
   readonly customFields: readonly EventParticipantFieldValue[];
 }
 
@@ -68,6 +70,23 @@ export interface EventQuestionnaireProgress {
   readonly answered: number;
 }
 
+export interface EventAttendanceProgress {
+  /** Сколько строк в списке — знаменатель счётчика «пришло N из M». */
+  readonly registered: number;
+  /** Сколько из них отмечено пришедшими. */
+  readonly attended: number;
+}
+
+/**
+ * Отметка явки: пришёл или отметку сняли. Заполнено ровно одно из двух — смотря откуда
+ * строка списка, из заказа или из заведённого руками участника.
+ */
+export interface SetParticipantAttendanceRequest {
+  readonly orderId?: string;
+  readonly participantId?: string;
+  readonly attended: boolean;
+}
+
 export interface EventParticipantsView {
   readonly eventId: string;
   readonly eventTitle: string;
@@ -79,6 +98,7 @@ export interface EventParticipantsView {
   /** Вопросы анкеты этого мероприятия: общий набор для покупателей и ручных участников. */
   readonly fields: readonly EventParticipantFieldDefinition[];
   readonly questionnaire: EventQuestionnaireProgress;
+  readonly attendance: EventAttendanceProgress;
   readonly canManageParticipants: boolean;
 }
 

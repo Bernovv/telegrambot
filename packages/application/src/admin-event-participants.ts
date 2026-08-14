@@ -9,7 +9,8 @@ import type {
   EventParticipantRow,
   EventParticipantTotals,
   EventParticipantsView,
-  EventQuestionnaireProgress
+  EventQuestionnaireProgress,
+  EventAttendanceProgress
 } from "@ticket-platform/contracts";
 import { countRole, type AccommodationBundleRole } from "./admin-accommodation.js";
 
@@ -80,6 +81,22 @@ export interface CreateImportedParticipantInput {
   readonly adminId: string;
 }
 
+/** Отметка явки как она лежит в базе: строка списка и время, когда её отметили. */
+export interface AttendanceMarkRow {
+  readonly orderId: string | null;
+  readonly participantId: string | null;
+  readonly checkedInAt: Date;
+}
+
+export interface SetAttendanceInput {
+  readonly eventId: string;
+  readonly orderId: string | null;
+  readonly participantId: string | null;
+  readonly attended: boolean;
+  readonly adminId: string;
+  readonly checkedInAt: Date;
+}
+
 /** Кто уже есть у мероприятия — чтобы не завести человека вторым. */
 export interface ExistingPeople {
   readonly buyerPhones: readonly string[];
@@ -97,6 +114,9 @@ export interface AdminEventParticipantsRepository {
     eventId: string
   ): Promise<readonly EventParticipantFieldDefinition[]>;
   listOrderFieldValues(eventId: string): Promise<readonly OrderFieldValueRow[]>;
+  listAttendance(eventId: string): Promise<readonly AttendanceMarkRow[]>;
+  /** Ставит или снимает отметку. `false` — строки списка у этого мероприятия нет. */
+  setAttendance(input: SetAttendanceInput): Promise<boolean>;
   countExcludedOrders(eventId: string): Promise<number>;
   hasPermission(adminId: string, permission: string): Promise<boolean>;
   saveOrderFieldValue(input: SaveOrderFieldValueInput): Promise<boolean>;
@@ -156,6 +176,7 @@ export class AdminEventParticipantsService {
       participants,
       fields,
       orderAnswers,
+      attendance,
       excludedOrders,
       canManageParticipants
     ] = await Promise.all([
@@ -163,6 +184,7 @@ export class AdminEventParticipantsService {
       this.repository.listParticipants(input.eventId),
       this.repository.listParticipantFields(input.eventId),
       this.repository.listOrderFieldValues(input.eventId),
+      this.repository.listAttendance(input.eventId),
       this.repository.countExcludedOrders(input.eventId),
       this.repository.hasPermission(input.actor.adminId, "participants.manage")
     ]);
@@ -173,6 +195,7 @@ export class AdminEventParticipantsService {
       participants,
       fields,
       orderAnswers,
+      attendance,
       excludedOrders,
       canManageParticipants,
       calculatedAt: this.clock.now()
@@ -235,6 +258,54 @@ export class AdminEventParticipantsService {
         value
       });
     }
+
+    if (!saved) {
+      throw new ParticipantAnswerTargetNotFoundError();
+    }
+  }
+
+  /**
+   * Отметка «пришёл» и её снятие.
+   *
+   * Отмечают на входе в зал, с телефона, одним пальцем, и промах по соседней строке —
+   * обычное дело, поэтому снятие обязано быть таким же простым, как отметка. Повторное
+   * нажатие на уже отмеченного ничего не портит: база держит по одной отметке на строку,
+   * а время первой отметки остаётся прежним — это время прихода, а не время последнего
+   * касания экрана.
+   */
+  async setAttendance(input: {
+    readonly actor: AdminRequestActor;
+    readonly eventId: string;
+    readonly orderId?: string;
+    readonly participantId?: string;
+    readonly attended: boolean;
+  }): Promise<void> {
+    if (
+      input.actor.permission !== "participants.manage"
+      || !UUID_PATTERN.test(input.actor.adminId)
+    ) {
+      throw new Error("Administrator participants permission is invalid");
+    }
+    if (!UUID_PATTERN.test(input.eventId)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+    if ((input.orderId === undefined) === (input.participantId === undefined)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+    // Одно из двух здесь заполнено — это проверено строкой выше.
+    const target = input.orderId ?? input.participantId ?? "";
+    if (!UUID_PATTERN.test(target)) {
+      throw new Error("Administrator participants request is invalid");
+    }
+
+    const saved = await this.repository.setAttendance({
+      eventId: input.eventId,
+      orderId: input.orderId ?? null,
+      participantId: input.participantId ?? null,
+      attended: input.attended,
+      adminId: input.actor.adminId,
+      checkedInAt: this.clock.now()
+    });
 
     if (!saved) {
       throw new ParticipantAnswerTargetNotFoundError();
@@ -400,6 +471,7 @@ export interface ParticipantsViewInput {
   readonly participants: readonly EventParticipant[];
   readonly fields: readonly EventParticipantFieldDefinition[];
   readonly orderAnswers: readonly OrderFieldValueRow[];
+  readonly attendance: readonly AttendanceMarkRow[];
   readonly excludedOrders: number;
   readonly canManageParticipants: boolean;
   readonly calculatedAt: Date;
@@ -408,10 +480,17 @@ export interface ParticipantsViewInput {
 export function buildParticipantsView(
   input: ParticipantsViewInput
 ): EventParticipantsView {
+  const attendedAt = new Map<string, string>();
+  for (const mark of input.attendance) {
+    attendedAt.set(
+      mark.orderId === null ? `manual:${mark.participantId}` : `order:${mark.orderId}`,
+      mark.checkedInAt.toISOString()
+    );
+  }
   const rows = [
     ...buildOrderRows(input.items, input.orderAnswers),
     ...input.participants.map(toManualRow)
-  ];
+  ].map((row) => ({ ...row, attendedAt: attendedAt.get(row.key) ?? null }));
 
   return {
     eventId: input.event.id,
@@ -422,8 +501,25 @@ export function buildParticipantsView(
     excludedOrders: input.excludedOrders,
     fields: input.fields,
     questionnaire: progressOf(rows),
+    attendance: attendanceOf(rows),
     canManageParticipants: input.canManageParticipants
   };
+}
+
+/**
+ * Пришло N из M. Знаменатель — весь список: на вход зарегистрированного человека ждут
+ * независимо от того, купил он билет или записался бесплатно.
+ */
+function attendanceOf(
+  rows: readonly EventParticipantRow[]
+): EventAttendanceProgress {
+  let attended = 0;
+  for (const row of rows) {
+    if (row.attendedAt !== null) {
+      attended += 1;
+    }
+  }
+  return { registered: rows.length, attended };
 }
 
 /**
@@ -507,6 +603,8 @@ function buildOrderRows(
     phone: order.phone,
     // Покупатель бота приходит из мессенджера: почты у него нет и взяться ей неоткуда.
     email: null,
+    // Явку проставляет buildParticipantsView: она лежит своей таблицей, а не в заказе.
+    attendedAt: null,
     telegramUsername: order.telegramUsername,
     ticketTitle: order.titles.join(", "),
     adults: order.adults,
@@ -531,6 +629,7 @@ function toManualRow(participant: EventParticipant): EventParticipantRow {
     displayName: participant.displayName,
     phone: participant.phone,
     email: participant.email,
+    attendedAt: null,
     telegramUsername: null,
     ticketTitle: participant.ticketTitle,
     adults: participant.adults,

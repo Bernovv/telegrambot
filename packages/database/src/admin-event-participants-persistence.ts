@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type {
   AdminEventParticipantsRepository,
+  AttendanceMarkRow,
   CreateImportedParticipantInput,
   ExistingPeople,
   OrderFieldValueRow,
   ParticipantOrderItemRow,
   ParticipantsEventRow,
-  SaveOrderFieldValueInput
+  SaveOrderFieldValueInput,
+  SetAttendanceInput
 } from "@ticket-platform/application";
 import type {
   EventParticipant,
@@ -132,6 +134,103 @@ export class PostgresAdminEventParticipantsRepository
           value: row.value_text
         }
       }));
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async listAttendance(eventId: string): Promise<readonly AttendanceMarkRow[]> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query(
+        "begin transaction isolation level repeatable read read only"
+      );
+      const result = await connection.query<{
+        readonly order_id: string | null;
+        readonly participant_id: string | null;
+        readonly checked_in_at: Date | string;
+      }>(
+        `select order_id, participant_id, checked_in_at
+           from public.event_attendance
+          where event_id = $1::uuid`,
+        [eventId]
+      );
+      await connection.query("commit");
+
+      return result.rows.map((row) => ({
+        orderId: row.order_id,
+        participantId: row.participant_id,
+        checkedInAt: new Date(row.checked_in_at)
+      }));
+    } catch (error) {
+      await connection.query("rollback");
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * Ставит или снимает отметку явки.
+   *
+   * Отметка ставится `do nothing` при повторе: на входе легко нажать дважды, и время
+   * прихода не должно съезжать на второе нажатие. Снятие удаляет строку — это исправление
+   * промаха по соседней строке, а не финансовая история, копить журнал которой обязательно.
+   */
+  async setAttendance(input: SetAttendanceInput): Promise<boolean> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query("begin");
+      // Строка списка обязана принадлежать этому мероприятию: без проверки отметку можно
+      // было бы поставить участнику соседнего события, подставив его идентификатор.
+      const target = input.orderId === null
+        ? await connection.query<{ readonly id: string }>(
+          `select id from public.event_participants
+            where id = $1::uuid and event_id = $2::uuid and deleted_at is null`,
+          [input.participantId, input.eventId]
+        )
+        : await connection.query<{ readonly id: string }>(
+          `select id from public.orders
+            where id = $1::uuid and event_id = $2::uuid
+              and status = 'paid' and excluded_at is null`,
+          [input.orderId, input.eventId]
+        );
+      if (target.rows.length === 0) {
+        await connection.query("rollback");
+        return false;
+      }
+
+      if (input.attended) {
+        await connection.query(
+          `insert into public.event_attendance (
+             id, event_id, order_id, participant_id,
+             checked_in_at, checked_in_by_admin_id
+           ) values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::uuid)
+           on conflict do nothing`,
+          [
+            randomUUID(),
+            input.eventId,
+            input.orderId,
+            input.participantId,
+            input.checkedInAt,
+            input.adminId
+          ]
+        );
+      } else {
+        await connection.query(
+          `delete from public.event_attendance
+            where event_id = $1::uuid
+              and order_id is not distinct from $2::uuid
+              and participant_id is not distinct from $3::uuid`,
+          [input.eventId, input.orderId, input.participantId]
+        );
+      }
+
+      await connection.query("commit");
+      return true;
     } catch (error) {
       await connection.query("rollback");
       throw error;

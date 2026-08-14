@@ -218,6 +218,7 @@ function participants(overrides: {
     fields: overrides.fields ?? [
       { id: "f", label: "Город", type: "text", options: null, global: false }
     ],
+    attendance: { registered: 0, attended: 0 },
     questionnaire: { people: 7, answered: 4 },
     canManageParticipants: true
   };

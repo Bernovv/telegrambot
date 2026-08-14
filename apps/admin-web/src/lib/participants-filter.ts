@@ -65,7 +65,10 @@ function matches(row: EventParticipantRow, needle: string): boolean {
     row.telegramUsername,
     row.orderNumber,
     row.ticketTitle,
-    row.note
+    row.note,
+    // У людей из Timepad почта часто единственное, чем их можно найти: телефона нет, ника
+    // нет, а на входе называют себя как попало.
+    row.email
   ];
 
   for (const value of haystack) {
