@@ -231,12 +231,25 @@ export interface OutreachStageHistoryEntry {
   readonly occurredAt: string;
 }
 
+/** Заполненный ответ анкеты. Пустые поля до карточки не доезжают — показывать нечего. */
+export interface OutreachParticipationAnswer {
+  readonly fieldId: string;
+  readonly label: string;
+  readonly value: string;
+}
+
 export interface OutreachContactParticipation {
   readonly participantId: string;
   readonly eventId: string;
   readonly eventTitle: string;
   readonly guests: number;
   readonly sleepingPlaces: number;
+  /**
+   * Ответы анкеты этого человека по этому мероприятию. Анкета заполняется на вкладке
+   * мероприятия и висит на участнике, а в карточке нужна для ответа на вопрос «что мы про
+   * человека знаем» — иначе ради неё приходится помнить, на какое событие он ездил.
+   */
+  readonly answers: readonly OutreachParticipationAnswer[];
 }
 
 export interface OutreachCampaignContactDetail

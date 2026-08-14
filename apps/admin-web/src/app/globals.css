@@ -4060,11 +4060,43 @@ tbody tr:hover {
 }
 
 .person-events li {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.person-event-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.person-answers {
+  display: grid;
+  margin: 0;
+  padding: 10px 12px;
+  gap: 10px 20px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.person-answers dt {
+  margin-bottom: 2px;
   color: var(--muted);
+  font-size: 12px;
+}
+
+.person-answers dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.person-answers-empty {
+  font-size: 12px;
 }
 
 .person-events a {

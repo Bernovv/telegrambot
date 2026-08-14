@@ -312,6 +312,25 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.match(lookup.text, /select distinct/);
   });
 
+  it("pulls questionnaire answers into the person card", async () => {
+    // Анкета заполняется на вкладке мероприятия и висит на участнике. Без неё карточка не
+    // отвечает на вопрос «что мы про человека знаем», и ради ответов приходится помнить, на
+    // какое событие он ездил.
+    const connection = new PersonCardConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.getPerson("00000000-0000-4000-8000-000000000301");
+
+    const answers = connection.queries.find((query) =>
+      query.text.includes("from public.event_participant_field_values")
+    );
+    assert.ok(answers, "карточка не спрашивает ответы анкеты");
+    // Пустые ответы показывать нечего, и в карточку они не едут.
+    assert.match(answers.text, /btrim\(value\.value_text\) <> ''/);
+    // Один запрос на все участия, а не по одному на каждое мероприятие.
+    assert.match(answers.text, /participant\.outreach_contact_id = any\(\$1::uuid\[\]\)/);
+  });
+
   it("collects a person's history across campaigns, not within one", async () => {
     const connection = new PersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));

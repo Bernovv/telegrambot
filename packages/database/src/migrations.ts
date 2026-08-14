@@ -204,5 +204,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260814120000_outreach_contact_merge",
     description: "Point a duplicate contact at the master it was merged into, keeping its append-only history",
     destructive: false
+  },
+  {
+    id: "20260814150000_link_participants_by_handle",
+    description: "Link the remaining participants to the contact base by the Telegram handle kept in their note",
+    destructive: false
   }
 ];

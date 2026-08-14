@@ -22,6 +22,7 @@ import type {
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
+  OutreachParticipationAnswer,
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
   OutreachPipelineColumn,
@@ -278,6 +279,49 @@ function describeIdentifier(
   }
 }
 
+/**
+ * Ответы анкет всех участий человека одним запросом. Анкета заполняется на вкладке
+ * мероприятия и висит на участнике, а в карточке она отвечает на вопрос «что мы про человека
+ * знаем» — без неё приходится помнить, на какое событие он ездил, и идти туда.
+ *
+ * Запрос один на все участия: их до двадцати, и отдельное обращение на каждое превратило бы
+ * открытие карточки в два десятка походов в базу.
+ */
+async function loadParticipationAnswers(
+  connection: SqlConnection,
+  contactIds: readonly string[]
+): Promise<Map<string, OutreachParticipationAnswer[]>> {
+  const result = await connection.query<ParticipationAnswerRow>(
+    `select value.participant_id,
+            value.field_definition_id,
+            definition.label,
+            value.value_text
+       from public.event_participant_field_values value
+       join public.event_participant_field_definitions definition
+         on definition.id = value.field_definition_id
+       join public.event_participants participant
+         on participant.id = value.participant_id
+      where participant.outreach_contact_id = any($1::uuid[])
+        and participant.deleted_at is null
+        and value.value_text is not null
+        and btrim(value.value_text) <> ''
+      order by definition.position, definition.created_at`,
+    [contactIds]
+  );
+
+  const byParticipant = new Map<string, OutreachParticipationAnswer[]>();
+  for (const row of result.rows) {
+    const list = byParticipant.get(row.participant_id) ?? [];
+    list.push({
+      fieldId: row.field_definition_id,
+      label: row.label,
+      value: row.value_text
+    });
+    byParticipant.set(row.participant_id, list);
+  }
+  return byParticipant;
+}
+
 function refusedMerge(
   blocker?: MergeOutreachPeopleResult["blocker"]
 ): MergeOutreachPeopleResult {
@@ -288,6 +332,13 @@ function refusedMerge(
     movedParticipations: 0,
     takenIdentifiers: []
   };
+}
+
+interface ParticipationAnswerRow {
+  readonly participant_id: string;
+  readonly field_definition_id: string;
+  readonly label: string;
+  readonly value_text: string;
 }
 
 interface PersonCampaignRow {
@@ -1297,6 +1348,8 @@ implements AdminOutreachRepository {
         [chain]
       );
 
+      const answersByParticipant = await loadParticipationAnswers(connection, chain);
+
       return {
         contactId: contact.contact_id,
         displayName: contact.display_name,
@@ -1334,7 +1387,8 @@ implements AdminOutreachRepository {
           eventId: participation.event_id,
           eventTitle: participation.event_title,
           guests: participation.adults + participation.children,
-          sleepingPlaces: participation.sleeping_places
+          sleepingPlaces: participation.sleeping_places,
+          answers: answersByParticipant.get(participation.participant_id) ?? []
         }))
       };
     });
@@ -1873,6 +1927,10 @@ implements AdminOutreachRepository {
          limit 20`,
         [row.contact_id]
       );
+      const participationAnswers = await loadParticipationAnswers(
+        connection,
+        [row.contact_id]
+      );
       const stageHistory = await connection.query<StageHistoryRow>(
         `select history.id, history.actor_admin_id,
                 coalesce(actor.display_name, actor.email_normalized, 'Система') as actor_name,
@@ -1895,7 +1953,8 @@ implements AdminOutreachRepository {
           eventId: participation.event_id,
           eventTitle: participation.event_title,
           guests: participation.adults + participation.children,
-          sleepingPlaces: participation.sleeping_places
+          sleepingPlaces: participation.sleeping_places,
+          answers: participationAnswers.get(participation.participant_id) ?? []
         }))
       };
     });

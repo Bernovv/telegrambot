@@ -638,16 +638,32 @@ export default function OutreachPersonPage(
           <ul className="person-events">
             {person.participations.map((participation) => (
               <li key={participation.participantId}>
-                <CalendarDays size={15} />
-                <Link href={`/events/${participation.eventId}/participants`}>
-                  {participation.eventTitle}
-                </Link>
-                <span className="muted">
-                  {participation.guests} чел.
-                  {participation.sleepingPlaces > 0
-                    ? `, мест: ${participation.sleepingPlaces}`
-                    : ""}
-                </span>
+                <div className="person-event-head">
+                  <CalendarDays size={15} />
+                  <Link href={`/events/${participation.eventId}/participants`}>
+                    {participation.eventTitle}
+                  </Link>
+                  <span className="muted">
+                    {participation.guests} чел.
+                    {participation.sleepingPlaces > 0
+                      ? `, мест: ${participation.sleepingPlaces}`
+                      : ""}
+                  </span>
+                </div>
+                {/* Анкета заполняется на вкладке мероприятия, а нужна здесь: иначе, чтобы
+                    вспомнить, чем человек занимается, надо помнить, куда он ездил. */}
+                {participation.answers.length > 0 ? (
+                  <dl className="person-answers">
+                    {participation.answers.map((answer) => (
+                      <div key={answer.fieldId}>
+                        <dt>{answer.label}</dt>
+                        <dd>{answer.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <span className="muted person-answers-empty">анкета не заполнена</span>
+                )}
               </li>
             ))}
           </ul>
