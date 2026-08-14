@@ -53,6 +53,7 @@ interface ParticipantResult {
   readonly id: string;
   readonly display_name: string;
   readonly phone_e164: string | null;
+  readonly email: string | null;
   readonly source: string;
   readonly ticket_title: string;
   readonly adults: number;
@@ -195,7 +196,7 @@ export class PostgresAdminAccommodationRepository
     return this.read(async (connection) => {
       const result = await connection.query<ParticipantResult>(
         `select
-           id, display_name, phone_e164, source, ticket_title,
+           id, display_name, phone_e164, email, source, ticket_title,
            adults, children, sleeping_places, note, outreach_contact_id,
            amount_kopecks::text, paid_at, payment_method, created_at
          from public.event_participants
@@ -239,6 +240,7 @@ export class PostgresAdminAccommodationRepository
         id: row.id,
         displayName: row.display_name,
         phone: row.phone_e164,
+        email: row.email,
         source: row.source as EventParticipantSource,
         ticketTitle: row.ticket_title,
         adults: row.adults,

@@ -18,6 +18,7 @@ import { type FormEvent, useState } from "react";
 const SOURCE_LABELS: Record<EventParticipantSource, string> = {
   max: "MAX",
   site: "Сайт",
+  timepad: "Timepad",
   direct: "Договорились напрямую",
   other: "Другое"
 };

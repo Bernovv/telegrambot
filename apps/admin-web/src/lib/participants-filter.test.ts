@@ -88,6 +88,7 @@ function row(overrides: Partial<EventParticipantRow>): EventParticipantRow {
     channel: "telegram",
     displayName: "Иван",
     phone: "+79000000000",
+    email: null,
     telegramUsername: null,
     ticketTitle: "Стандарт",
     adults: 1,

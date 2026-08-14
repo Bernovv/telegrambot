@@ -19,6 +19,7 @@
 export const PARTICIPANT_FIELDS = [
   "name",
   "phone",
+  "email",
   "telegram",
   "amount",
   "sleeping",
@@ -36,6 +37,7 @@ export interface MappedParticipant {
   readonly line: number;
   readonly name: string;
   readonly phone: string;
+  readonly email: string;
   readonly telegram: string;
   readonly adults: number;
   readonly children: number;
@@ -115,6 +117,7 @@ export function mapParticipants(
       name,
       phone,
       telegram: normalizeTelegram(cell(cells, mapping.telegram)),
+      email: normalizeEmail(cell(cells, mapping.email)),
       isChild: CHILD.test(name),
       sleeping: wholeNumber(cell(cells, mapping.sleeping)),
       children: wholeNumber(cell(cells, mapping.children)),
@@ -159,6 +162,7 @@ export function mapParticipants(
       line: host.line,
       name: host.name,
       phone: host.phone,
+      email: host.email,
       telegram: host.telegram,
       adults,
       children,
@@ -176,6 +180,7 @@ interface Draft {
   readonly line: number;
   readonly name: string;
   readonly phone: string;
+  readonly email: string;
   readonly telegram: string;
   readonly isChild: boolean;
   readonly sleeping: number;
@@ -268,6 +273,19 @@ export function normalizePhone(raw: string): {
   return { phone: "", leftover: value };
 }
 
+/**
+ * Адрес почты или пусто. Проверка нарочно грубая — собака внутри и никаких пробелов: в
+ * выгрузке Timepad адрес уже проверен формой, а строгий разбор здесь означал бы потерянного
+ * участника из-за редкого, но допустимого адреса.
+ */
+function normalizeEmail(raw: string): string {
+  const value = raw.trim().toLowerCase();
+  if (value.length < 3 || value.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    return "";
+  }
+  return value;
+}
+
 function normalizeTelegram(raw: string): string {
   const value = raw.trim();
   if (value === "" || !/^@?[A-Za-z0-9_]{3,64}$/.test(value)) {
@@ -321,6 +339,8 @@ export function guessMapping(header: readonly string[]): ColumnMapping {
   const hints: Readonly<Record<ParticipantField, readonly RegExp[]>> = {
     name: [/^имя$/i, /^фио$/i, /^участник$/i, /^name$/i, /^гость$/i],
     phone: [/телефон/i, /^phone$/i, /^номер/i],
+    // «Почта» и «e-mail» — как их называет выгрузка Timepad и обычная таблица.
+    email: [/^почта$/i, /^e-?mail$/i, /электрон/i],
     telegram: [/^тг$/i, /телеграм/i, /^telegram$/i, /^ник$/i],
     amount: [/^сумма$/i, /оплат/i, /^amount$/i, /^цена$/i],
     // Намеренно не ловим «спальник»: в августовской таблице так назывались арендованные
@@ -333,6 +353,7 @@ export function guessMapping(header: readonly string[]): ColumnMapping {
   const mapping: Record<ParticipantField, number | null> = {
     name: null,
     phone: null,
+    email: null,
     telegram: null,
     amount: null,
     sleeping: null,

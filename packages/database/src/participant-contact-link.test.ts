@@ -48,7 +48,7 @@ describe("связь участника мероприятия с человек
     const select = connection.queries[0];
     assert.ok(select);
     // Ник ищется в нижнем регистре: именно так он лежит в уникальном индексе.
-    assert.deepEqual(select.values, [null, "irina_alira"]);
+    assert.deepEqual(select.values, [null, "irina_alira", null]);
   });
 
   it("заводит человека в базе, когда его там ещё нет", async () => {
@@ -73,7 +73,51 @@ describe("связь участника мероприятия с человек
     // Ссылка развёрнута до ника: в базе лежит ник, а не кусок адреса.
     assert.equal(insert.values[3], "NewGuy");
     assert.equal(insert.values[4], "newguy");
-    assert.equal(insert.values[5], PARTICIPANT_CONTACT_SOURCE);
+    assert.equal(insert.values[7], PARTICIPANT_CONTACT_SOURCE);
+  });
+
+  it("узнаёт человека по почте, когда ни телефона, ни ника нет", async () => {
+    // Списки из Timepad: телефон указывают не все, почта есть у всех. Раньше такой
+    // участник оставался без карточки, и после встречи связаться с ним было нечем.
+    const connection = new FakeConnection({ selectReturns: EXISTING_ID });
+
+    const contactId = await resolveParticipantContact(connection, {
+      contactId: SEED_ID,
+      displayName: "Надежда",
+      phoneE164: null,
+      telegram: null,
+      email: "Nadya@Example.com",
+      adminId: ADMIN_ID,
+      source: PARTICIPANT_CONTACT_SOURCE
+    });
+
+    assert.equal(contactId, EXISTING_ID);
+    const select = connection.queries[0];
+    assert.ok(select);
+    // Почта ищется в нижнем регистре — так она лежит в уникальном индексе базы.
+    assert.deepEqual(select.values, [null, null, "nadya@example.com"]);
+  });
+
+  it("заводит человека, у которого есть только почта", async () => {
+    const connection = new FakeConnection({ selectReturns: null, insertReturns: SEED_ID });
+
+    const contactId = await resolveParticipantContact(connection, {
+      contactId: SEED_ID,
+      displayName: "Надежда",
+      phoneE164: null,
+      telegram: null,
+      email: "nadya@example.com",
+      adminId: ADMIN_ID,
+      source: PARTICIPANT_CONTACT_SOURCE
+    });
+
+    assert.equal(contactId, SEED_ID);
+    const insert = connection.queries.find((query) =>
+      query.text.includes("insert into public.outreach_contacts")
+    );
+    assert.ok(insert);
+    assert.equal(insert.values[5], "nadya@example.com");
+    assert.equal(insert.values[6], "nadya@example.com");
   });
 
   it("не заводит никого, когда опознать человека нечем", async () => {

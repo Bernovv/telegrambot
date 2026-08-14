@@ -195,6 +195,7 @@ export default function EventParticipantsPage() {
             <option value="telegram">Telegram</option>
             <option value="max">MAX</option>
             <option value="site">Сайт</option>
+            <option value="timepad">Timepad</option>
             <option value="direct">Напрямую</option>
             <option value="other">Другое</option>
           </select>
@@ -373,6 +374,8 @@ function channelLabel(channel: ParticipantChannel): string {
       return "MAX";
     case "site":
       return "Сайт";
+    case "timepad":
+      return "Timepad";
     case "direct":
       return "Напрямую";
     default:

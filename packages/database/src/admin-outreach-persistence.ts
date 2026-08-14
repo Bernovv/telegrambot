@@ -528,12 +528,14 @@ implements AdminOutreachRepository {
         readonly name: string | null;
         readonly phone: string | null;
         readonly telegram: string | null;
+        readonly email: string | null;
         readonly source: string;
       }>(
         `select
            nullif(btrim(u.display_name), '') as name,
            contact.value_normalized as phone,
            identity.username as telegram,
+           null::text as email,
            'Мероприятие' as source
          from public.orders o
          join public.users u on u.id = o.user_id
@@ -558,7 +560,8 @@ implements AdminOutreachRepository {
          select
            nullif(btrim(p.display_name), '') as name,
            p.phone_e164 as phone,
-           null as telegram,
+           null::text as telegram,
+           p.email as email,
            'Мероприятие' as source
          from public.event_participants p
          where p.event_id = $1::uuid
@@ -566,13 +569,16 @@ implements AdminOutreachRepository {
         [eventId]
       );
 
-      // Без телефона и ника контакт завести нельзя — база их и различает.
+      // Признаков четыре, и достаточно любого: у людей из Timepad телефона часто нет, а
+      // почта есть у всех. Отбор по одному телефону выбрасывал их молча — контакт не
+      // заводился, и после встречи связаться с человеком было нечем.
       return result.rows
-        .filter((row) => row.phone !== null || row.telegram !== null)
+        .filter((row) => row.phone !== null || row.telegram !== null || row.email !== null)
         .map((row) => ({
           ...(row.name === null ? {} : { name: row.name }),
           ...(row.phone === null ? {} : { phone: row.phone }),
           ...(row.telegram === null ? {} : { telegram: row.telegram }),
+          ...(row.email === null ? {} : { email: row.email }),
           source: row.source
         }));
     });

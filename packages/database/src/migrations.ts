@@ -214,5 +214,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260814180000_outreach_import_journal",
     description: "Keep import runs and the rows that did not land so they survive a closed tab",
     destructive: false
+  },
+  {
+    id: "20260814200000_participant_email_and_timepad",
+    description: "Give a participant their email and let Timepad be the source of the list",
+    destructive: false
   }
 ];

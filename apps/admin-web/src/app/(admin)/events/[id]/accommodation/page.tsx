@@ -324,6 +324,7 @@ export default function EventAccommodationPage() {
               <select name="source" defaultValue="direct">
                 <option value="max">MAX</option>
                 <option value="site">Сайт</option>
+                <option value="timepad">Timepad</option>
                 <option value="direct">Договорились напрямую</option>
                 <option value="other">Другое</option>
               </select>
@@ -601,6 +602,8 @@ function sourceLabel(source: EventParticipantSource): string {
       return "MAX";
     case "site":
       return "Сайт";
+    case "timepad":
+      return "Timepad";
     case "direct":
       return "Напрямую";
     default:

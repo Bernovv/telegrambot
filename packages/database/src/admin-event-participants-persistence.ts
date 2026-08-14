@@ -220,8 +220,9 @@ export class PostgresAdminEventParticipantsRepository
       const manual = await connection.query<{
         readonly display_name: string;
         readonly phone_e164: string | null;
+        readonly email_normalized: string | null;
       }>(
-        `select display_name, phone_e164
+        `select display_name, phone_e164, email_normalized
            from public.event_participants
           where event_id = $1::uuid and deleted_at is null`,
         [eventId]
@@ -233,6 +234,7 @@ export class PostgresAdminEventParticipantsRepository
         buyerPhones: buyers.rows.map((row) => row.phone).filter(text),
         buyerHandles: buyers.rows.map((row) => row.username).filter(text),
         manualPhones: manual.rows.map((row) => row.phone_e164).filter(text),
+        manualEmails: manual.rows.map((row) => row.email_normalized).filter(text),
         manualNames: manual.rows.map((row) => row.display_name)
       };
     } catch (error) {
@@ -261,18 +263,21 @@ export class PostgresAdminEventParticipantsRepository
           displayName: input.name,
           phoneE164: input.phone,
           telegram: input.telegram,
+          email: input.email,
           adminId: input.adminId,
           source: PARTICIPANT_CONTACT_SOURCE
         });
         await connection.query(
           `insert into public.event_participants (
              id, event_id, outreach_contact_id, display_name, phone_e164,
+             email, email_normalized,
              source, ticket_title,
              adults, children, sleeping_places, note, amount_kopecks,
              created_by_admin_id
            ) values (
              $1::uuid, $2::uuid, $11::uuid, $3::text, $4::text,
-             'direct', '',
+             $12::text, lower($12::text),
+             $13::text, '',
              $5::integer, $6::integer, $7::integer, $8::text, $9::bigint,
              $10::uuid
            )`,
@@ -290,7 +295,9 @@ export class PostgresAdminEventParticipantsRepository
               .slice(0, 500),
             input.amountKopecks,
             input.adminId,
-            contactId
+            contactId,
+            input.email,
+            input.source
           ]
         );
       }

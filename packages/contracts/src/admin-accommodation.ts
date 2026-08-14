@@ -9,6 +9,7 @@ export const EVENT_PARTICIPANT_SOURCES = [
   "max",
   "site",
   "direct",
+  "timepad",
   "other"
 ] as const;
 
@@ -45,6 +46,8 @@ export interface EventParticipant {
   readonly id: string;
   readonly displayName: string;
   readonly phone: string | null;
+  /** У списков из Timepad это единственный признак: телефон там указывают не все. */
+  readonly email: string | null;
   readonly source: EventParticipantSource;
   readonly ticketTitle: string;
   readonly adults: number;

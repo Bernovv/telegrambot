@@ -368,6 +368,7 @@ function repository(
         buyerPhones: [],
         buyerHandles: [],
         manualPhones: [],
+        manualEmails: [],
         manualNames: []
       };
     },
@@ -403,6 +404,7 @@ function participant(overrides: Partial<EventParticipant>): EventParticipant {
     id: "019c0123-4567-789a-bcde-f0123456789e",
     displayName: "Мария",
     phone: null,
+    email: null,
     source: "max",
     ticketTitle: "Все включено",
     adults: 1,
@@ -478,6 +480,7 @@ describe("ImportParticipantsService", () => {
           buyerPhones: ["+79001234567"],
           buyerHandles: [],
           manualPhones: [],
+          manualEmails: [],
           manualNames: []
         };
       },
@@ -503,6 +506,7 @@ describe("ImportParticipantsService", () => {
           buyerPhones: [],
           buyerHandles: ["nadinka88"],
           manualPhones: [],
+          manualEmails: [],
           manualNames: []
         };
       }
@@ -525,6 +529,7 @@ describe("ImportParticipantsService", () => {
           buyerPhones: [],
           buyerHandles: [],
           manualPhones: [],
+          manualEmails: [],
           manualNames: ["надежда"]
         };
       }
@@ -550,6 +555,108 @@ describe("ImportParticipantsService", () => {
 
     assert.equal(result.added, 1);
     assert.deepEqual(result.skipped, [{ name: "Надежда", reason: "already_added" }]);
+  });
+
+  // Выгрузку Timepad берут дважды — до встречи и утром в день встречи. Телефона там у
+  // части людей нет, и узнать их второй раз можно только по почте.
+  it("skips a repeated Timepad row by its email when there is no phone", async () => {
+    const service = importService(repository({
+      async loadExistingPeople() {
+        return {
+          buyerPhones: [],
+          buyerHandles: [],
+          manualPhones: [],
+          manualEmails: ["nadya@example.com"],
+          manualNames: []
+        };
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      source: "timepad",
+      rows: [{ ...row, phone: "", email: "Nadya@Example.com" }]
+    });
+
+    assert.equal(result.skipped[0]?.reason, "already_added");
+  });
+
+  // Тёзки в выгрузке — обычное дело, и это два разных человека. Прежнее правило по имени
+  // склеило бы их в одного, а вместе с ним потерялся бы и второй участник.
+  it("keeps two namesakes apart when their emails differ", async () => {
+    const written: { name: string }[] = [];
+    const service = importService(repository({
+      async loadExistingPeople() {
+        return {
+          buyerPhones: [],
+          buyerHandles: [],
+          manualPhones: [],
+          manualEmails: [],
+          manualNames: ["надежда"]
+        };
+      },
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    const result = await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      source: "timepad",
+      rows: [{ ...row, phone: "", email: "nadya-2@example.com" }]
+    });
+
+    assert.equal(result.added, 1);
+    assert.equal(written.length, 1);
+  });
+
+  it("puts the chosen source on every row of the list", async () => {
+    const written: { source: string; email: string | null }[] = [];
+    const service = importService(repository({
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      source: "timepad",
+      rows: [{ ...row, email: "nadya@example.com" }]
+    });
+
+    assert.equal(written[0]?.source, "timepad");
+    assert.equal(written[0]?.email, "nadya@example.com");
+  });
+
+  // Загрузка без выбранного источника осталась от прежних таблиц — она не должна падать.
+  it("falls back to direct when the list has no source", async () => {
+    const written: { source: string }[] = [];
+    const service = importService(repository({
+      async createImportedParticipants(inputs) {
+        written.push(...inputs);
+      }
+    }));
+
+    await service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [row]
+    });
+
+    assert.equal(written[0]?.source, "direct");
+  });
+
+  it("rejects a row whose email is not an address", async () => {
+    const service = importService(repository());
+
+    await assert.rejects(() => service.execute({
+      actor: actorWith("participants.manage"),
+      eventId: EVENT_ID,
+      rows: [{ ...row, email: "@example.com" }]
+    }));
   });
 
   it("refuses a party with more sleeping places than people", async () => {

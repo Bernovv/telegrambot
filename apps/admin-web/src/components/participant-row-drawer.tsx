@@ -14,6 +14,7 @@ const CHANNEL_LABELS: Record<ParticipantChannel, string> = {
   telegram: "Telegram",
   max: "MAX",
   site: "Сайт",
+  timepad: "Timepad",
   direct: "Договорились напрямую",
   other: "Другое"
 };

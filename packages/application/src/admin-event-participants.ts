@@ -2,6 +2,7 @@ import type {
   AdminRequestActor,
   ImportParticipantRow,
   ImportParticipantsResult,
+  ImportParticipantsSource,
   EventParticipant,
   EventParticipantFieldDefinition,
   EventParticipantFieldValue,
@@ -66,8 +67,11 @@ export interface CreateImportedParticipantInput {
   readonly eventId: string;
   readonly name: string;
   readonly phone: string | null;
+  /** Почта как её написали: в нижний регистр её приводит база, показываем как есть. */
+  readonly email: string | null;
   /** Как ник записали в таблице: уходит в примечание участника и на поиск в базе. */
   readonly telegram: string | null;
+  readonly source: ImportParticipantsSource;
   readonly adults: number;
   readonly children: number;
   readonly sleeping: number;
@@ -81,6 +85,7 @@ export interface ExistingPeople {
   readonly buyerPhones: readonly string[];
   readonly buyerHandles: readonly string[];
   readonly manualPhones: readonly string[];
+  readonly manualEmails: readonly string[];
   readonly manualNames: readonly string[];
 }
 
@@ -244,6 +249,10 @@ export class AdminEventParticipantsService {
  * оплаченными заказами, и завести их ещё и руками значит удвоить гостей, выручку, палатки
  * и порции. Поэтому сверяемся по телефону и нику, а заодно по тем, кого заводили руками
  * раньше — из этого же следует, что повторный запуск ничего не испортит.
+ *
+ * У списков из Timepad к признакам добавляется почта, и она же там главная: телефон
+ * указывают не все, а имя и фамилия совпадают чаще, чем кажется. Выгрузку берут дважды —
+ * до встречи и утром в день встречи, — так что второй заход обязан узнать тех же людей.
  */
 export class ImportParticipantsService {
   constructor(
@@ -255,6 +264,7 @@ export class ImportParticipantsService {
     readonly actor: AdminRequestActor;
     readonly eventId: string;
     readonly rows: readonly ImportParticipantRow[];
+    readonly source?: ImportParticipantsSource;
   }): Promise<ImportParticipantsResult> {
     if (
       input.actor.permission !== "participants.manage"
@@ -282,13 +292,16 @@ export class ImportParticipantsService {
     const buyerPhones = new Set(existing.buyerPhones);
     const buyerHandles = new Set(existing.buyerHandles.map(lower));
     const manualPhones = new Set(existing.manualPhones);
+    const manualEmails = new Set(existing.manualEmails.map(lower));
     const manualNames = new Set(existing.manualNames.map(lower));
+    const source = input.source ?? "direct";
 
     const skipped: { name: string; reason: "bot_buyer" | "already_added" }[] = [];
     const toCreate: CreateImportedParticipantInput[] = [];
 
     for (const row of input.rows) {
       const phone = (row.phone ?? "").trim();
+      const email = (row.email ?? "").trim();
       const handle = lower((row.telegram ?? "").replace(/^@/, ""));
       const name = row.name.trim();
 
@@ -296,7 +309,16 @@ export class ImportParticipantsService {
         skipped.push({ name, reason: "bot_buyer" });
         continue;
       }
-      if ((phone !== "" && manualPhones.has(phone)) || manualNames.has(lower(name))) {
+      // Почта не добавляется к сверке по имени, а заменяет её. Имя — слабый признак: в
+      // выгрузке Timepad двое тёзок с разными адресами это два человека, и совпадение имён
+      // склеило бы их в одного. Поэтому там, где почта есть, решает она, и только там, где
+      // её нет, остаётся прежнее правило по имени.
+      const duplicate = phone !== "" && manualPhones.has(phone)
+        ? true
+        : email !== ""
+          ? manualEmails.has(lower(email))
+          : manualNames.has(lower(name));
+      if (duplicate) {
         skipped.push({ name, reason: "already_added" });
         continue;
       }
@@ -305,6 +327,9 @@ export class ImportParticipantsService {
       if (phone !== "") {
         manualPhones.add(phone);
       }
+      if (email !== "") {
+        manualEmails.add(lower(email));
+      }
 
       toCreate.push({
         participantId: this.idGenerator.newId(),
@@ -312,7 +337,9 @@ export class ImportParticipantsService {
         eventId: input.eventId,
         name,
         phone: phone === "" ? null : phone,
+        email: email === "" ? null : email,
         telegram: (row.telegram ?? "").trim() === "" ? null : (row.telegram ?? "").trim(),
+        source,
         adults: row.adults,
         children: row.children,
         sleeping: row.sleeping,
@@ -356,6 +383,13 @@ function requireImportRow(row: ImportParticipantRow): void {
     throw new Error("Administrator participants request is invalid");
   }
   if ((row.phone ?? "") !== "" && !/^\+[1-9][0-9]{7,14}$/.test(row.phone ?? "")) {
+    throw new Error("Administrator participants request is invalid");
+  }
+  // То же правило, что у контакта базы: собака не первым символом и длина от трёх до 320.
+  // Разбирать почту строже смысла нет — адрес приезжает из формы Timepad, где его уже
+  // проверили, а лишняя строгость здесь означала бы потерянного участника.
+  const email = (row.email ?? "").trim();
+  if (email !== "" && (email.length < 3 || email.length > 320 || email.indexOf("@") < 1)) {
     throw new Error("Administrator participants request is invalid");
   }
 }
@@ -471,6 +505,8 @@ function buildOrderRows(
     // заказа вместо имени бесполезен, но пустая ячейка хуже — по ней не найти строку.
     displayName: order.buyerName?.trim() || `Заказ ${order.orderNumber}`,
     phone: order.phone,
+    // Покупатель бота приходит из мессенджера: почты у него нет и взяться ей неоткуда.
+    email: null,
     telegramUsername: order.telegramUsername,
     ticketTitle: order.titles.join(", "),
     adults: order.adults,
@@ -494,6 +530,7 @@ function toManualRow(participant: EventParticipant): EventParticipantRow {
     channel: participant.source,
     displayName: participant.displayName,
     phone: participant.phone,
+    email: participant.email,
     telegramUsername: null,
     ticketTitle: participant.ticketTitle,
     adults: participant.adults,

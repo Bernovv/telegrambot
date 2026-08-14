@@ -12,6 +12,7 @@ import {
 const MAPPING: ColumnMapping = {
   name: 0,
   phone: 1,
+  email: null,
   telegram: 2,
   amount: 3,
   sleeping: 4,

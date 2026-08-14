@@ -27,13 +27,18 @@ export interface ParticipantContactSeed {
    * вызывающего: путей создания участника три, и правило должно остаться одно на всех.
    */
   readonly telegram: string | null;
+  /**
+   * Почта как её написали. У списков из Timepad это единственный признак: телефон там
+   * указывают не все, и без почты такой человек в базу вообще не попадал.
+   */
+  readonly email?: string | null;
   readonly adminId: string;
   readonly source: string;
 }
 
 /**
- * Возвращает id человека в базе или null, когда опознать его нечем — без телефона и ника
- * контакт создать нельзя, да и незачем: найти его потом всё равно не выйдет.
+ * Возвращает id человека в базе или null, когда опознать его нечем — без телефона, ника и
+ * почты контакт создать нельзя, да и незачем: найти его потом всё равно не выйдет.
  */
 export async function resolveParticipantContact(
   connection: SqlConnection,
@@ -41,7 +46,9 @@ export async function resolveParticipantContact(
 ): Promise<string | null> {
   const telegramUsername = parseTelegramUsername(seed.telegram);
   const telegramNormalized = telegramUsername?.toLowerCase() ?? null;
-  if (seed.phoneE164 === null && telegramNormalized === null) {
+  const email = (seed.email ?? "").trim();
+  const emailNormalized = email === "" ? null : email.toLowerCase();
+  if (seed.phoneE164 === null && telegramNormalized === null && emailNormalized === null) {
     return null;
   }
 
@@ -52,9 +59,10 @@ export async function resolveParticipantContact(
        from public.outreach_contacts
       where ($1::text is not null and phone_e164 = $1::text)
          or ($2::text is not null and telegram_username_normalized = $2::text)
+         or ($3::text is not null and email_normalized = $3::text)
       order by created_at
       limit 1`,
-    [seed.phoneE164, telegramNormalized]
+    [seed.phoneE164, telegramNormalized, emailNormalized]
   );
   const found = existing.rows[0];
   if (found) {
@@ -67,9 +75,11 @@ export async function resolveParticipantContact(
     `insert into public.outreach_contacts (
        id, display_name, phone_e164,
        telegram_username, telegram_username_normalized,
+       email, email_normalized,
        source, created_by_admin_id
      ) values (
-       $1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, $7::uuid
+       $1::uuid, $2::text, $3::text, $4::text, $5::text,
+       $6::text, $7::text, $8::text, $9::uuid
      )
      on conflict do nothing
      returning id`,
@@ -79,6 +89,8 @@ export async function resolveParticipantContact(
       seed.phoneE164,
       telegramUsername,
       telegramNormalized,
+      email === "" ? null : email,
+      emailNormalized,
       seed.source,
       seed.adminId
     ]
@@ -95,9 +107,10 @@ export async function resolveParticipantContact(
        from public.outreach_contacts
       where ($1::text is not null and phone_e164 = $1::text)
          or ($2::text is not null and telegram_username_normalized = $2::text)
+         or ($3::text is not null and email_normalized = $3::text)
       order by created_at
       limit 1`,
-    [seed.phoneE164, telegramNormalized]
+    [seed.phoneE164, telegramNormalized, emailNormalized]
   );
   return race.rows[0]?.id ?? null;
 }

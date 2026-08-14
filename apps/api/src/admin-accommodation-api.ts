@@ -19,7 +19,8 @@ import type {
 } from "@ticket-platform/application";
 import {
   EVENT_PARTICIPANT_FIELD_TYPES,
-  EVENT_PARTICIPANT_SOURCES
+  EVENT_PARTICIPANT_SOURCES,
+  IMPORT_PARTICIPANT_SOURCES
 } from "@ticket-platform/contracts";
 import { z } from "zod";
 import {
@@ -144,13 +145,15 @@ const importBody = z.object({
   rows: z.array(z.object({
     name: z.string().trim().min(1).max(200),
     phone: z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/).optional(),
+    email: z.string().trim().min(3).max(320).email().optional(),
     telegram: z.string().trim().max(64).optional(),
     adults: z.number().int().min(0).max(100),
     children: z.number().int().min(0).max(100),
     sleeping: z.number().int().min(0).max(100),
     amountKopecks: z.string().regex(/^\d{1,15}$/),
     note: z.string().trim().max(500).optional()
-  }).strict()).min(1).max(500)
+  }).strict()).min(1).max(500),
+  source: z.enum(IMPORT_PARTICIPANT_SOURCES).optional()
 }).strict();
 
 export type AdminAccommodationHandler = Pick<
@@ -300,9 +303,11 @@ export class AdminParticipantsController {
           sleeping: row.sleeping,
           amountKopecks: row.amountKopecks,
           ...(row.phone === undefined ? {} : { phone: row.phone }),
+          ...(row.email === undefined ? {} : { email: row.email }),
           ...(row.telegram === undefined ? {} : { telegram: row.telegram }),
           ...(row.note === undefined ? {} : { note: row.note })
-        }))
+        })),
+        ...(parsed.source === undefined ? {} : { source: parsed.source })
       })
     );
   }

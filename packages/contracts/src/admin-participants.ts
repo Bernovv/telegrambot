@@ -17,6 +17,7 @@ export const PARTICIPANT_CHANNELS = [
   "max",
   "site",
   "direct",
+  "timepad",
   "other"
 ] as const;
 
@@ -35,6 +36,7 @@ export interface EventParticipantRow {
   readonly channel: ParticipantChannel;
   readonly displayName: string;
   readonly phone: string | null;
+  readonly email: string | null;
   readonly telegramUsername: string | null;
   /** Тарифы заказа через запятую; у ручного участника — то, что вписали. */
   readonly ticketTitle: string;
@@ -92,6 +94,7 @@ export interface SaveParticipantAnswerRequest {
 export interface ImportParticipantRow {
   readonly name: string;
   readonly phone?: string;
+  readonly email?: string;
   readonly telegram?: string;
   readonly adults: number;
   readonly children: number;
@@ -102,7 +105,30 @@ export interface ImportParticipantRow {
 
 export interface ImportParticipantsRequest {
   readonly rows: readonly ImportParticipantRow[];
+  /**
+   * Откуда взялся список: он целиком из одного места — выгрузка Timepad, таблица с сайта,
+   * договорённости напрямую. Спрашиваем один раз на загрузку, а не по строке: у источника
+   * потом считается, сколько людей он привёл и сколько из них дошло.
+   *
+   * Не передали — `direct`, как было до появления Timepad.
+   */
+  readonly source?: ImportParticipantsSource;
 }
+
+/**
+ * Источник загруженного списка. Telegram сюда не входит: покупатели бота приезжают
+ * заказами, а не таблицей, и заводить их руками нельзя — задвоятся.
+ */
+export const IMPORT_PARTICIPANT_SOURCES = [
+  "timepad",
+  "site",
+  "max",
+  "direct",
+  "other"
+] as const;
+
+export type ImportParticipantsSource =
+  typeof IMPORT_PARTICIPANT_SOURCES[number];
 
 export interface ImportParticipantsResult {
   readonly added: number;

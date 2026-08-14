@@ -11,12 +11,14 @@ import {
   type ParticipantField
 } from "@/lib/participants-mapping";
 import { readWorkbook, type Workbook } from "@/lib/spreadsheet";
+import type { ImportParticipantsSource } from "@ticket-platform/contracts/admin-participants";
 import { CircleAlert, FileSpreadsheet, Upload, X } from "lucide-react";
 import { useMemo, useState, type ChangeEvent } from "react";
 
 const FIELD_LABELS: Readonly<Record<ParticipantField, string>> = {
   name: "Имя",
   phone: "Телефон",
+  email: "Почта",
   telegram: "Telegram",
   amount: "Сумма, ₽",
   sleeping: "Ночует (спальное место)",
@@ -27,6 +29,7 @@ const FIELD_LABELS: Readonly<Record<ParticipantField, string>> = {
 const FIELD_HINTS: Readonly<Record<ParticipantField, string>> = {
   name: "Обязательно. Строки без имени пропускаются.",
   phone: "По нему сверяем с покупателями бота, чтобы не завести человека дважды.",
+  email: "Главный признак в списках из Timepad: телефон там указывают не все.",
   telegram: "Тоже участвует в сверке с ботом.",
   amount: "Сколько человек заплатил. Пусто — ноль.",
   sleeping: "Кто остаётся ночевать: 1 или пусто. Не путайте с числом арендованных спальников.",
@@ -56,6 +59,7 @@ export function ParticipantsImport({
   const [sheetIndex, setSheetIndex] = useState(0);
   const [headerRows, setHeaderRows] = useState(1);
   const [groupCompanions, setGroupCompanions] = useState(true);
+  const [source, setSource] = useState<ImportParticipantsSource>("timepad");
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -122,9 +126,11 @@ export function ParticipantsImport({
             sleeping: row.sleeping,
             amountKopecks: row.amountKopecks,
             ...(row.phone === "" ? {} : { phone: row.phone }),
+            ...(row.email === "" ? {} : { email: row.email }),
             ...(row.telegram === "" ? {} : { telegram: row.telegram }),
             ...(row.note === "" ? {} : { note: row.note })
-          }))
+          })),
+          source
         });
         added += answer.added;
         skipped.push(...answer.skipped.map((entry) =>
@@ -241,6 +247,25 @@ export function ParticipantsImport({
               <small className="muted">Сколько верхних строк пропустить.</small>
             </label>
           </div>
+
+          <label className="field">
+            <span>Откуда список</span>
+            <select
+              value={source}
+              onChange={(event) =>
+                setSource(event.target.value as ImportParticipantsSource)}
+            >
+              <option value="timepad">Timepad</option>
+              <option value="site">Сайт</option>
+              <option value="max">MAX</option>
+              <option value="direct">Договорились напрямую</option>
+              <option value="other">Другое</option>
+            </select>
+            <small className="muted">
+              Один источник на всю загрузку: по нему потом видно, сколько людей он привёл и
+              сколько из них дошло.
+            </small>
+          </label>
 
           <label className="checkbox-field import-toggle">
             <input

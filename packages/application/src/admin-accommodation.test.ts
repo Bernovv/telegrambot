@@ -97,6 +97,7 @@ function participant(
     id,
     displayName: `Участник ${id}`,
     phone: null,
+    email: null,
     source: "max",
     ticketTitle: "Все включено",
     adults: 1,
