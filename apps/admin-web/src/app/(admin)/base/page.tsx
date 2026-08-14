@@ -1,15 +1,20 @@
 "use client";
 
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
-import { AdminApiError, listOutreachPeople } from "@/lib/admin-api";
+import {
+  AdminApiError,
+  importOutreachPeople,
+  listOutreachPeople
+} from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
+import { parseOutreachCsv } from "@/lib/outreach-csv";
 import {
   type OutreachPerson,
   type OutreachPersonFilter
 } from "@ticket-platform/contracts/admin-outreach";
-import { ArrowRight, Bot, RefreshCw, Search } from "lucide-react";
+import { ArrowRight, Bot, RefreshCw, Search, Upload } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 
 const PAGE_SIZE = 50;
 
@@ -36,6 +41,8 @@ export default function OutreachBasePage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -87,6 +94,77 @@ export default function OutreachBasePage() {
     setFilter(value);
   }
 
+  async function importCsv(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Поле сбрасываем сразу: иначе тот же файл нельзя выбрать второй раз после ошибки.
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { rows, lines, skippedLines } = parseOutreachCsv(await file.text());
+      const skippedNote = skippedLines.length > 0
+        ? ` Пропущено строк без контакта: ${skippedLines.length}.`
+        : "";
+      if (!window.confirm(
+        `Загрузить в базу ${rows.length} контактов?${skippedNote}\n\n`
+        + "Кто уже есть — обновится, ни в какую кампанию никто не попадёт."
+      )) {
+        return;
+      }
+      let created = 0;
+      let updated = 0;
+      const badLines: number[] = [];
+      const mergeLines: number[] = [];
+      // Пачками: сервер принимает не больше 500 строк за запрос, а на восьми тысячах
+      // контактов это полсотни запросов — показываем, докуда дошли.
+      for (let offset = 0; offset < rows.length; offset += 150) {
+        const result = await importOutreachPeople(rows.slice(offset, offset + 150));
+        created += result.createdContacts;
+        updated += result.updatedContacts;
+        for (const index of result.invalidRowIndexes ?? []) {
+          const line = lines[offset + index];
+          if (line !== undefined) {
+            badLines.push(line);
+          }
+        }
+        for (const index of result.ambiguousRowIndexes ?? []) {
+          const line = lines[offset + index];
+          if (line !== undefined) {
+            mergeLines.push(line);
+          }
+        }
+        setNotice(
+          `Загружаем: ${Math.min(offset + 150, rows.length)} из ${rows.length}…`
+        );
+      }
+      const badNote = badLines.length > 0
+        ? ` Не разобрались строки: ${badLines.slice(0, 15).join(", ")}.`
+        : "";
+      // Спорные строки теперь есть чем разрешить: в карточке человека кнопка «Это дубль».
+      const mergeNote = mergeLines.length > 0
+        ? ` Признаки ведут на разных людей в строках: ${mergeLines.slice(0, 15).join(", ")}.`
+        + " Найдите обе карточки и объедините их."
+        : "";
+      setNotice(
+        `Готово. Заведено: ${created}, обновлено: ${updated}.${badNote}${mergeNote}`
+      );
+      setPage(1);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof AdminApiError
+        ? caught.message
+        : caught instanceof Error
+          ? caught.message
+          : "Не удалось загрузить файл.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -108,8 +186,20 @@ export default function OutreachBasePage() {
           >
             <RefreshCw size={18} />
           </button>
+          <label className="primary-button base-import">
+            <Upload size={17} />
+            {importing ? "Загружаем…" : "Загрузить CSV"}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              disabled={importing}
+              onChange={(event) => void importCsv(event)}
+            />
+          </label>
         </div>
       </div>
+
+      {notice ? <div className="page-notice">{notice}</div> : null}
 
       <section className="data-section">
         <form className="base-search" onSubmit={submitSearch}>

@@ -4231,3 +4231,22 @@ tbody tr:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+
+/* Загрузка CSV прямо в базу: кнопка поверх скрытого файлового поля. */
+
+.base-import {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.base-import input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.base-import input[type="file"]:disabled {
+  cursor: default;
+}

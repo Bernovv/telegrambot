@@ -23,6 +23,7 @@ import type {
   OutreachLostReason,
   DeleteOutreachPersonResult,
   MergeOutreachPeopleResult,
+  OutreachBaseImportResult,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonConflict,
@@ -63,6 +64,12 @@ export interface NormalizedOutreachImportRow {
  */
 export type OutreachImportCounts = Omit<
   OutreachImportResult,
+  "invalidRows" | "invalidRowIndexes" | "ambiguousRows"
+> & { readonly ambiguousRowIndexes: readonly number[] };
+
+/** То же для загрузки прямо в базу: пропущенные строки считает сервис, база их не видит. */
+export type OutreachBaseImportCounts = Omit<
+  OutreachBaseImportResult,
   "invalidRows" | "invalidRowIndexes" | "ambiguousRows"
 > & { readonly ambiguousRowIndexes: readonly number[] };
 
@@ -230,6 +237,15 @@ export interface AdminOutreachRepository {
     readonly auditId: string;
     readonly now: Date;
   }): Promise<DeleteOutreachPersonResult>;
+  /** Загрузка прямо в базу, без кампании. */
+  importPeople(input: {
+    readonly createdByAdminId: string;
+    readonly rows: readonly (NormalizedOutreachImportRow & {
+      readonly contactId: string;
+    })[];
+    readonly skipAmbiguous: boolean;
+    readonly now: Date;
+  }): Promise<OutreachBaseImportCounts>;
   /** contactId — дубль, targetContactId — главный, к которому его сводят. */
   mergePeople(input: {
     readonly contactId: string;
@@ -971,6 +987,76 @@ export class AdminOutreachService {
       auditId: this.idGenerator.newId(),
       now: input.now
     });
+  }
+
+  /**
+   * Загрузка прямо в базу, без кампании.
+   *
+   * Раньше файл можно было залить только внутрь кампании, и чтобы просто пополнить базу,
+   * приходилось заводить кампанию-пустышку. Кампания — это временная работа по человеку, а
+   * база живёт постоянно; требовать первую ради второй неправильно.
+   */
+  async importPeople(input: {
+    readonly actor: AdminRequestActor;
+    readonly rows: readonly OutreachImportRow[];
+    readonly now: Date;
+  }): Promise<OutreachBaseImportResult> {
+    requirePermission(input.actor, "outreach.write");
+    if (input.rows.length < 1 || input.rows.length > 500) {
+      throw new Error("Outreach import batch is invalid");
+    }
+
+    const rows: (NormalizedOutreachImportRow & {
+      readonly contactId: string;
+    })[] = [];
+    const invalidRowIndexes: number[] = [];
+    input.rows.forEach((row, index) => {
+      try {
+        rows.push({
+          // Загрузка файла всегда мягкая: в выгрузке на тысячи строк пара битых есть всегда,
+          // и ронять из-за них всю пачку нельзя.
+          ...this.normalizeImportRow(row, false),
+          contactId: this.idGenerator.newId()
+        });
+      } catch {
+        invalidRowIndexes.push(index);
+      }
+    });
+
+    if (rows.length === 0) {
+      return {
+        received: input.rows.length,
+        createdContacts: 0,
+        updatedContacts: 0,
+        invalidRows: invalidRowIndexes.length,
+        invalidRowIndexes,
+        ambiguousRows: 0,
+        ambiguousRowIndexes: []
+      };
+    }
+
+    const result = await this.repository.importPeople({
+      createdByAdminId: input.actor.adminId,
+      rows,
+      skipAmbiguous: true,
+      now: input.now
+    });
+    // База считала спорные строки по отфильтрованному списку — возвращаем их к номерам
+    // исходных строк, иначе панель покажет не те строки файла.
+    const keptIndexes = input.rows
+      .map((_, index) => index)
+      .filter((index) => !invalidRowIndexes.includes(index));
+    return {
+      received: input.rows.length,
+      createdContacts: result.createdContacts,
+      updatedContacts: result.updatedContacts,
+      invalidRows: invalidRowIndexes.length,
+      invalidRowIndexes,
+      ambiguousRows: result.ambiguousRowIndexes.length,
+      ambiguousRowIndexes: result.ambiguousRowIndexes
+        .map((index) => keptIndexes[index])
+        .filter((index): index is number => index !== undefined)
+    };
   }
 
   /**

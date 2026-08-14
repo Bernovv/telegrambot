@@ -6,7 +6,12 @@ export function getAdminMutationBodyLimit(path: string): number {
   if (path === "broadcast-images") {
     return 1_500_000;
   }
-  if (/^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)) {
+  // Пачка на полтораста строк не влезает в общий лимит: та же поблажка нужна и загрузке
+  // прямо в базу, иначе она упирается в 413 на первом же файле.
+  if (
+    /^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)
+    || path === "outreach/base/import"
+  ) {
     return 524_288;
   }
   if (/^events\/[0-9a-f-]{36}\/participants\/import$/i.test(path)) {
@@ -54,6 +59,7 @@ export function isAllowedAdminApiPath(
       || path === "outreach/campaign-contacts/move"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/(?:archive|restore|import-participants)$/i
         .test(path)
+      || path === "outreach/base/import"
       || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete|merge)$/i.test(path)
       || path === "outreach/custom-fields"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/(?:add|remove))?$/i.test(path)

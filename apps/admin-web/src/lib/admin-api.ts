@@ -36,6 +36,7 @@ import type {
   OutreachLostReason,
   DeleteOutreachPersonResult,
   MergeOutreachPeopleResult,
+  OutreachBaseImportResult,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonUpdateResult,
@@ -833,6 +834,13 @@ export function deleteOutreachPerson(
     "POST",
     reason ? { reason } : {}
   );
+}
+
+/** Загрузка прямо в базу: людей заводит и обновляет, ни в какую кампанию не кладёт. */
+export function importOutreachPeople(
+  rows: readonly OutreachImportRow[]
+): Promise<OutreachBaseImportResult> {
+  return requestAdminMutation("outreach/base/import", "POST", { rows });
 }
 
 /** contactId — открытая карточка-дубль, targetContactId — главный. */

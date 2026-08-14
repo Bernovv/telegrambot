@@ -186,6 +186,86 @@ describe("AdminOutreachService", () => {
     );
   });
 
+  it("loads people straight into the base without touching a campaign", async () => {
+    // Раньше файл можно было залить только внутрь кампании, и ради пополнения базы
+    // приходилось заводить кампанию-пустышку.
+    let received:
+      Parameters<AdminOutreachRepository["importPeople"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importPeople(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 2,
+            updatedContacts: 0,
+            ambiguousRowIndexes: []
+          };
+        },
+        async importContacts() {
+          throw new Error("загрузка в базу не должна трогать кампании");
+        }
+      }),
+      ruPhones(),
+      sequenceIds()
+    );
+
+    const result = await service.importPeople({
+      actor: writeActor,
+      rows: [
+        { name: "Анна", phone: "8 999 123-45-67" },
+        { name: "Борис", email: "boris@example.com" }
+      ],
+      now
+    });
+
+    assert.equal(result.createdContacts, 2);
+    assert.equal(received?.rows.length, 2);
+    assert.equal(received?.rows[0]?.phoneE164, "+79991234567");
+    // Строки участия здесь не рождаются — их некуда девать.
+    assert.equal(
+      (received?.rows[0] as { readonly campaignContactId?: string })
+        .campaignContactId,
+      undefined
+    );
+  });
+
+  it("skips a row it cannot parse instead of losing the whole file", async () => {
+    let received:
+      Parameters<AdminOutreachRepository["importPeople"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importPeople(input) {
+          received = input;
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            // База считает спорные строки по своему, отфильтрованному списку.
+            ambiguousRowIndexes: [0]
+          };
+        }
+      }),
+      ruPhones(),
+      sequenceIds()
+    );
+
+    const result = await service.importPeople({
+      actor: writeActor,
+      rows: [
+        { name: "Пустой" },
+        { name: "Анна", phone: "8 999 123-45-67" }
+      ],
+      now
+    });
+
+    assert.equal(received?.rows.length, 1);
+    assert.deepEqual(result.invalidRowIndexes, [0]);
+    // Спорную строку база назвала нулевой, но в файле это вторая: индексы возвращаются
+    // к исходным, иначе панель покажет не ту строку.
+    assert.deepEqual(result.ambiguousRowIndexes, [1]);
+  });
+
   it("keeps a row whose phone is junk but whose handle is good", async () => {
     // Раньше такая строка пропадала целиком: разбор телефона ронял её вместе с ником, и из
     // выгрузки на восемь тысяч так терялись живые контакты.
@@ -1039,6 +1119,14 @@ function repository(
     async listBaseContacts() { return []; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async importPeople() {
+      return {
+        received: 0,
+        createdContacts: 0,
+        updatedContacts: 0,
+        ambiguousRowIndexes: []
+      };
+    },
     async updatePerson() { return { status: "not_found" as const }; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },

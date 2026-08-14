@@ -90,6 +90,11 @@ const importBody = z.object({
   rows: z.array(importRow).min(1).max(500)
 }).strict();
 
+// Ответственного здесь нет намеренно: назначать некого, кампании у загрузки нет.
+const importPeopleBody = z.object({
+  rows: z.array(importRow).min(1).max(500)
+}).strict();
+
 const peopleQuery = z.object({
   search: z.string().trim().min(2).max(100).optional(),
   filter: z.enum(OUTREACH_PERSON_FILTERS).optional(),
@@ -244,6 +249,7 @@ export type AdminOutreachHandler = Pick<
   | "restorePerson"
   | "deletePerson"
   | "mergePeople"
+  | "importPeople"
   | "importContacts"
   | "createContact"
   | "assignContacts"
@@ -357,6 +363,32 @@ export class AdminOutreachController {
         ...(parsed.filter === undefined ? {} : { filter: parsed.filter }),
         ...(parsed.page === undefined ? {} : { page: parsed.page }),
         ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
+  }
+
+  // Загрузка прямо в базу. Соседний campaigns/:id/import кладёт тех же людей ещё и в
+  // кампанию; здесь кампании нет, и заводить её ради файла не требуется.
+  @Post("base/import")
+  @RequireAdminPermission("outreach.write")
+  importPeople(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(importPeopleBody, body);
+    return executeOutreach(() =>
+      this.handler.importPeople({
+        actor: requireActor(request),
+        rows: parsed.rows.map((row) => ({
+          ...(row.name === undefined ? {} : { name: row.name }),
+          ...(row.phone === undefined ? {} : { phone: row.phone }),
+          ...(row.telegram === undefined ? {} : { telegram: row.telegram }),
+          ...(row.max === undefined ? {} : { max: row.max }),
+          ...(row.email === undefined ? {} : { email: row.email }),
+          ...(row.source === undefined ? {} : { source: row.source }),
+          ...(row.note === undefined ? {} : { note: row.note })
+        })),
+        now: new Date()
       })
     );
   }

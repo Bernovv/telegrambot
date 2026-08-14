@@ -1,6 +1,7 @@
 import type {
   AdminOutreachRepository,
   NormalizedOutreachImportRow,
+  OutreachBaseImportCounts,
   OutreachExportRow,
   OutreachImportCounts
 } from "@ticket-platform/application";
@@ -1960,6 +1961,43 @@ implements AdminOutreachRepository {
     });
   }
 
+  /**
+   * Загрузка прямо в базу, без кампании. Кампания — временная работа по человеку, и требовать
+   * её, чтобы просто пополнить базу, значит заводить пустышки ради загрузки файла.
+   */
+  importPeople(
+    input: Parameters<AdminOutreachRepository["importPeople"]>[0]
+  ): Promise<OutreachBaseImportCounts> {
+    return this.write(async (connection) => {
+      let createdContacts = 0;
+      let updatedContacts = 0;
+      const ambiguousRowIndexes: number[] = [];
+      for (const [rowIndex, row] of input.rows.entries()) {
+        const upserted = await upsertImportedContact(connection, {
+          row,
+          createdByAdminId: input.createdByAdminId,
+          skipAmbiguous: input.skipAmbiguous,
+          now: input.now
+        });
+        if (upserted === null) {
+          ambiguousRowIndexes.push(rowIndex);
+          continue;
+        }
+        if (upserted.created) {
+          createdContacts += 1;
+        } else {
+          updatedContacts += 1;
+        }
+      }
+      return {
+        received: input.rows.length,
+        createdContacts,
+        updatedContacts,
+        ambiguousRowIndexes
+      };
+    });
+  }
+
   importContacts(
     input: Parameters<AdminOutreachRepository["importContacts"]>[0]
   ): Promise<OutreachImportCounts> {
@@ -1980,49 +2018,21 @@ implements AdminOutreachRepository {
       let alreadyInCampaign = 0;
       const ambiguousRowIndexes: number[] = [];
       for (const [rowIndex, row] of input.rows.entries()) {
-        const matches = await connection.query<ExistingContactRow>(
-          // Указатель на главного важен: после объединения у дубля остаются те признаки,
-          // которых у главного не было пусто, и без coalesce импорт положил бы человека на
-          // надгробие. Distinct нужен там же — два признака, ведущие на два дубля одного
-          // человека, спором уже не являются.
-          `select distinct coalesce(contact.merged_into_contact_id, contact.id) as id
-           from public.outreach_contacts contact
-           where ($1::text is not null and contact.phone_e164 = $1)
-              or ($2::text is not null and contact.telegram_username_normalized = $2)
-              or ($3::text is not null and contact.max_identifier_normalized = $3)
-              or ($4::text is not null and contact.email_normalized = $4)
-           limit 2`,
-          [
-            row.phoneE164,
-            row.telegramUsernameNormalized,
-            row.maxIdentifierNormalized,
-            row.emailNormalized
-          ]
-        );
-        if (matches.rows.length > 1) {
-          // Телефон ведёт на один контакт, ник на другой. Какой из них правильный, знает
-          // только человек, поэтому строку пропускаем и называем её номер — но соседние
-          // сто пятьдесят из-за неё не теряем.
-          if (!input.skipAmbiguous) {
-            throw new Error("Outreach contact identifiers belong to different contacts");
-          }
+        const upserted = await upsertImportedContact(connection, {
+          row,
+          createdByAdminId: input.createdByAdminId,
+          skipAmbiguous: input.skipAmbiguous,
+          now: input.now
+        });
+        if (upserted === null) {
           ambiguousRowIndexes.push(rowIndex);
           continue;
         }
-        const existing = matches.rows[0];
-        const contactId = existing?.id ?? row.contactId;
-        if (existing) {
-          await updateContact(connection, contactId, row, input.now);
-          updatedContacts += 1;
-        } else {
-          await insertContact(
-            connection,
-            contactId,
-            row,
-            input.createdByAdminId,
-            input.now
-          );
+        const contactId = upserted.contactId;
+        if (upserted.created) {
           createdContacts += 1;
+        } else {
+          updatedContacts += 1;
         }
         const membership = await connection.query<{ readonly id: string }>(
           `insert into public.outreach_campaign_contacts (
@@ -2485,6 +2495,60 @@ export function createAdminOutreachPersistence(
   pool: SqlConnectionPool
 ): AdminOutreachRepository {
   return new PostgresAdminOutreachRepository(pool);
+}
+
+/**
+ * Находит человека по любому из четырёх признаков и обновляет его — либо заводит нового.
+ * Общая часть двух загрузок: в кампанию и просто в базу. Возвращает null, когда признаки
+ * строки ведут на разных людей и решать должен человек.
+ */
+async function upsertImportedContact(
+  connection: SqlConnection,
+  input: {
+    readonly row: NormalizedOutreachImportRow & { readonly contactId: string };
+    readonly createdByAdminId: string;
+    readonly skipAmbiguous: boolean;
+    readonly now: Date;
+  }
+): Promise<{ readonly contactId: string; readonly created: boolean } | null> {
+  const { row } = input;
+  const matches = await connection.query<ExistingContactRow>(
+    // Указатель на главного важен: после объединения у дубля остаются те признаки,
+    // которых у главного не было пусто, и без coalesce импорт положил бы человека на
+    // надгробие. Distinct нужен там же — два признака, ведущие на два дубля одного
+    // человека, спором уже не являются.
+    `select distinct coalesce(contact.merged_into_contact_id, contact.id) as id
+     from public.outreach_contacts contact
+     where ($1::text is not null and contact.phone_e164 = $1)
+        or ($2::text is not null and contact.telegram_username_normalized = $2)
+        or ($3::text is not null and contact.max_identifier_normalized = $3)
+        or ($4::text is not null and contact.email_normalized = $4)
+     limit 2`,
+    [
+      row.phoneE164,
+      row.telegramUsernameNormalized,
+      row.maxIdentifierNormalized,
+      row.emailNormalized
+    ]
+  );
+  if (matches.rows.length > 1) {
+    // Телефон ведёт на один контакт, ник на другой. Какой из них правильный, знает
+    // только человек, поэтому строку пропускаем и называем её номер — но соседние
+    // сто пятьдесят из-за неё не теряем.
+    if (!input.skipAmbiguous) {
+      throw new Error("Outreach contact identifiers belong to different contacts");
+    }
+    return null;
+  }
+
+  const existing = matches.rows[0];
+  const contactId = existing?.id ?? row.contactId;
+  if (existing) {
+    await updateContact(connection, contactId, row, input.now);
+    return { contactId, created: false };
+  }
+  await insertContact(connection, contactId, row, input.createdByAdminId, input.now);
+  return { contactId, created: true };
 }
 
 async function insertContact(

@@ -242,6 +242,57 @@ describe("administrator outreach HTTP contract", () => {
     }
   });
 
+  it("loads a file into the base without a campaign id", async () => {
+    const received: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 600_000,
+      readiness,
+      adminAuth: adminAuth([]),
+      adminOutreach: handler({
+        async importPeople(input) {
+          received.push(input);
+          return {
+            received: 1,
+            createdContacts: 1,
+            updatedContacts: 0,
+            invalidRows: 0,
+            invalidRowIndexes: [],
+            ambiguousRows: 0,
+            ambiguousRowIndexes: []
+          };
+        }
+      })
+    });
+    await app.init();
+    try {
+      const response = await inject(app, {
+        method: "POST",
+        url: "/api/v1/outreach/base/import",
+        payload: { rows: [{ name: "Анна", phone: "+79991234567" }] }
+      });
+      // Ответственного у такой загрузки нет: назначать некого, кампании нет.
+      const withAssignee = await inject(app, {
+        method: "POST",
+        url: "/api/v1/outreach/base/import",
+        payload: {
+          rows: [{ name: "Анна", phone: "+79991234567" }],
+          assignedAdminId: "00000000-0000-4000-8000-000000000101"
+        }
+      });
+      assert.equal(response.statusCode, 201);
+      assert.equal(withAssignee.statusCode, 400);
+      assert.equal(received.length, 1);
+      assert.equal(
+        (received[0] as { readonly rows: readonly { readonly phone: string }[] })
+          .rows[0]?.phone,
+        "+79991234567"
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("passes the email through import and manual entry", async () => {
     const imported: unknown[] = [];
     const created: unknown[] = [];
@@ -363,6 +414,17 @@ function handler(
     async getContact() { return null; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async importPeople() {
+      return {
+        received: 0,
+        createdContacts: 0,
+        updatedContacts: 0,
+        invalidRows: 0,
+        invalidRowIndexes: [],
+        ambiguousRows: 0,
+        ambiguousRowIndexes: []
+      };
+    },
     async updatePerson() { return { status: "updated" as const }; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },

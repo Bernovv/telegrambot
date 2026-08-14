@@ -485,6 +485,22 @@ export interface OutreachImportResult {
   readonly alreadyInCampaign: number;
 }
 
+/**
+ * Итог загрузки прямо в базу. Отдельный тип, а не общий с загрузкой в кампанию: счётчиков
+ * «добавлено в кампанию» здесь нет, и присылать их нулями значит врать.
+ */
+export interface OutreachBaseImportResult {
+  readonly received: number;
+  /** Строки, где не удалось разобрать ни одного признака: пропущены. */
+  readonly invalidRows: number;
+  readonly invalidRowIndexes: readonly number[];
+  /** Строки, чьи признаки ведут на разных людей. Решает человек — см. объединение дублей. */
+  readonly ambiguousRows: number;
+  readonly ambiguousRowIndexes: readonly number[];
+  readonly createdContacts: number;
+  readonly updatedContacts: number;
+}
+
 export interface OutreachCampaignExport {
   readonly filename: string;
   readonly csv: string;
