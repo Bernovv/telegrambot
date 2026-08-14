@@ -314,7 +314,10 @@ export default function EventAccommodationPage() {
             </label>
             <label className="field">
               <span>Телефон</span>
-              <input name="phone" placeholder="+79000000000" pattern="\+[1-9][0-9]{7,14}" />
+              {/* Номер приводит к единому виду сервер — тем же разбором, что и загрузку
+                  файла. Раскладку браузеру не навязываем: она мешала вводить обычное
+                  «8 999 123-45-67». */}
+              <input name="phone" placeholder="8 999 123-45-67" maxLength={100} />
             </label>
             <label className="field">
               <span>Откуда</span>

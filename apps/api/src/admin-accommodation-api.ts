@@ -67,7 +67,9 @@ const fixPlanBody = z.object({
 
 const participantBody = z.object({
   displayName: z.string().trim().min(1).max(200),
-  phone: z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/).optional(),
+  // Человек набирает «8 999 123-45-67», а не E.164. Приводит номер слой приложения тем
+  // же разбором, что и загрузка файла; здесь остаётся только ограничение длины.
+  phone: z.string().trim().max(100).optional(),
   source: z.enum(EVENT_PARTICIPANT_SOURCES),
   ticketTitle: z.string().trim().max(200).optional(),
   adults: z.number().int().min(0).max(100),
@@ -85,7 +87,7 @@ const removeParticipantBody = z.object({
 const updateParticipantBody = z.object({
   participantId: uuid,
   displayName: z.string().trim().min(1).max(200).optional(),
-  phone: z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/).nullable().optional(),
+  phone: z.string().trim().max(100).nullable().optional(),
   source: z.enum(EVENT_PARTICIPANT_SOURCES).optional(),
   ticketTitle: z.string().trim().max(200).optional(),
   adults: z.number().int().min(0).max(100).optional(),
@@ -619,6 +621,17 @@ async function execute<T>(work: () => Promise<T>): Promise<T> {
       throw new NotFoundException({
         code: "PARTICIPANT_NOT_FOUND",
         title: "Участник не найден"
+      });
+    }
+    // Про телефон говорим отдельно: общее «данные заполнены неверно» не подсказывает, какое
+    // из десяти полей формы виновато, а телефон — единственное, что разбирается нетривиально.
+    if (
+      error instanceof Error
+      && error.message === "Event participant phone is invalid"
+    ) {
+      throw new BadRequestException({
+        code: "PARTICIPANT_PHONE_INVALID",
+        title: "Не удалось разобрать телефон — проверьте номер"
       });
     }
     if (

@@ -10,8 +10,13 @@ import type {
   EventParticipantFieldType,
   EventParticipantSource
 } from "@ticket-platform/contracts";
-import { planTents, type AccommodationParty } from "@ticket-platform/domain";
+import {
+  normalizeContactInput,
+  planTents,
+  type AccommodationParty
+} from "@ticket-platform/domain";
 import type { IdGenerator } from "./identity.js";
+import type { PhoneNormalizer } from "./phone.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -207,8 +212,37 @@ export class AdminAccommodationService {
   constructor(
     private readonly repository: AdminAccommodationRepository,
     private readonly clock: Clock,
-    private readonly idGenerator: IdGenerator
+    private readonly idGenerator: IdGenerator,
+    /**
+     * Разбор телефона участника. Раньше форма требовала строго «+7…», и набранное человеком
+     * «8 999 123-45-67» отлетало четырёхсотой ошибкой — при том, что тот же номер загрузка
+     * файла принимала спокойно. Одно правило на оба пути.
+     */
+    private readonly phoneNormalizer: PhoneNormalizer
   ) {}
+
+  /** Пусто — телефона нет. Не разобрался — говорим об этом сразу, как в остальных формах. */
+  private normalizeParticipantPhone(raw: string | null): string | null {
+    if (raw === null || raw.trim() === "") {
+      return null;
+    }
+    const { identity, rejections } = normalizeContactInput(
+      { phone: raw },
+      {
+        parsePhone: (candidate) => {
+          try {
+            return this.phoneNormalizer.normalize(candidate);
+          } catch {
+            return null;
+          }
+        }
+      }
+    );
+    if (rejections.some((rejection) => rejection.field === "phone")) {
+      throw new Error("Event participant phone is invalid");
+    }
+    return identity.phoneE164;
+  }
 
   async summary(input: {
     readonly actor: AdminRequestActor;
@@ -266,6 +300,7 @@ export class AdminAccommodationService {
       eventId: input.eventId,
       adminId: input.actor.adminId,
       ...input.participant,
+      phone: this.normalizeParticipantPhone(input.participant.phone),
       displayName: input.participant.displayName.trim()
     });
   }
@@ -322,7 +357,14 @@ export class AdminAccommodationService {
     const updated = await this.repository.updateParticipant({
       eventId: input.eventId,
       participantId: input.participantId,
-      changes
+      changes: {
+        ...changes,
+        // Ключа нет — телефон не трогают. Есть — разбираем тем же правилом, что и при
+        // заведении: исправлять номер и получать отказ на «8 999…» было бы странно.
+        ...(changes.phone === undefined
+          ? {}
+          : { phone: this.normalizeParticipantPhone(changes.phone) })
+      }
     });
     if (!updated) {
       throw new EventParticipantNotFoundError();

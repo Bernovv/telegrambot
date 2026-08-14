@@ -137,11 +137,13 @@ export function ParticipantDrawer({
           </label>
           <label className="field">
             <span>Телефон</span>
+            {/* Номер приводит к единому виду сервер: правя телефон, натыкаться на отказ
+                браузера из-за формы записи не за что. */}
             <input
               name="phone"
               defaultValue={participant.phone ?? ""}
-              pattern="\+[1-9][0-9]{7,14}"
-              placeholder="+79000000000"
+              placeholder="8 999 123-45-67"
+              maxLength={100}
             />
           </label>
           <label className="field">

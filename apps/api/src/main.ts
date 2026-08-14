@@ -288,7 +288,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ? new AdminAccommodationService(
           createAdminAccommodationPersistence(pool),
           { now: () => new Date() },
-          idGenerator
+          idGenerator,
+          new LibPhoneNumberNormalizer(
+            config.telegramWebhook.enabled
+              ? config.telegramWebhook.defaultCountry
+              : "RU"
+          )
         )
       : undefined;
     const adminEventParticipants = adminAuth

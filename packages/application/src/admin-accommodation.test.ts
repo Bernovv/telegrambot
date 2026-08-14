@@ -510,7 +510,18 @@ function serviceWith(repository: AdminAccommodationRepository): AdminAccommodati
   return new AdminAccommodationService(
     repository,
     { now: () => new Date("2026-07-31T09:00:00Z") },
-    { newId: () => `019c7a20-0000-7000-8000-00000000f${(sequence += 1).toString().padStart(3, "0")}` }
+    { newId: () => `019c7a20-0000-7000-8000-00000000f${(sequence += 1).toString().padStart(3, "0")}` },
+    {
+      // Правила российского номера — их достаточно, чтобы проверить, что форма перестала
+      // требовать E.164 и приводит набранное человеком сама.
+      normalize(value: string): string {
+        const digits = value.replace(/\D/g, "");
+        if (/^[78]\d{10}$/.test(digits)) {
+          return `+7${digits.slice(1)}`;
+        }
+        throw new Error("Phone number is invalid");
+      }
+    }
   );
 }
 
@@ -612,6 +623,57 @@ describe("AdminAccommodationService", () => {
         }
       }),
       /accommodation permission is invalid/
+    );
+  });
+
+  it("accepts a phone the way a human types it", async () => {
+    // Форма требовала строго «+7…», и набранное «8 999 123-45-67» отлетало ошибкой — при том
+    // что тот же номер загрузка файла принимала спокойно.
+    const repository = new FakeRepository();
+    const service = serviceWith(repository);
+
+    await service.addParticipant({
+      actor: actor("participants.manage"),
+      eventId: EVENT_ID,
+      participant: {
+        displayName: "Иван",
+        phone: "8 (999) 123-45-67",
+        source: "direct",
+        ticketTitle: "",
+        adults: 1,
+        children: 0,
+        sleepingPlaces: 0,
+        note: "",
+        outreachContactId: null
+      }
+    });
+
+    assert.equal(
+      (repository.createdParticipants[0] as { readonly phone: string }).phone,
+      "+79991234567"
+    );
+  });
+
+  it("still says so when the participant phone is not a phone", async () => {
+    const service = serviceWith(new FakeRepository());
+
+    await assert.rejects(
+      service.addParticipant({
+        actor: actor("participants.manage"),
+        eventId: EVENT_ID,
+        participant: {
+          displayName: "Иван",
+          phone: "мобильный",
+          source: "direct",
+          ticketTitle: "",
+          adults: 1,
+          children: 0,
+          sleepingPlaces: 0,
+          note: "",
+          outreachContactId: null
+        }
+      }),
+      /phone is invalid/
     );
   });
 
