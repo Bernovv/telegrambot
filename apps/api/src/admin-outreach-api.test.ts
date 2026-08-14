@@ -425,6 +425,15 @@ function handler(
         ambiguousRowIndexes: []
       };
     },
+    async startImport() {
+      return { importId: "00000000-0000-4000-8000-000000000701" };
+    },
+    async listImports() { return []; },
+    async listPendingImportRows() { return []; },
+    async retryImportRow() {
+      return { resolved: true, reason: null, contactId: null };
+    },
+    async dismissImportRow() { return true; },
     async updatePerson() { return { status: "updated" as const }; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },

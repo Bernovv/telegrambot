@@ -34,6 +34,8 @@ export function isAllowedAdminApiPath(
       || /^outreach\/campaigns(?:\?includeArchived=(?:true|false))?$/i.test(path)
       || /^outreach\/contacts(?:\?.*)?$/i.test(path)
       || /^outreach\/base(?:\?.*)?$/i.test(path)
+      || /^outreach\/imports(?:\?.*)?$/i.test(path)
+      || /^outreach\/import-rows(?:\?.*)?$/i.test(path)
       || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
       || path === "outreach/managers"
       || path === "outreach/tasks/board"
@@ -60,6 +62,8 @@ export function isAllowedAdminApiPath(
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/(?:archive|restore|import-participants)$/i
         .test(path)
       || path === "outreach/base/import"
+      || path === "outreach/imports"
+      || /^outreach\/import-rows\/[0-9a-f-]{36}\/(?:retry|dismiss)$/i.test(path)
       || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete|merge)$/i.test(path)
       || path === "outreach/custom-fields"
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/(?:add|remove))?$/i.test(path)

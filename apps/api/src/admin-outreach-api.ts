@@ -87,12 +87,35 @@ const importRow = z.object({
 
 const importBody = z.object({
   assignedAdminId: uuid.optional(),
-  rows: z.array(importRow).min(1).max(500)
+  rows: z.array(importRow).min(1).max(500),
+  importId: uuid.optional(),
+  lines: z.array(z.number().int().min(1).max(1_000_000)).max(500).optional()
 }).strict();
 
 // Ответственного здесь нет намеренно: назначать некого, кампании у загрузки нет.
 const importPeopleBody = z.object({
-  rows: z.array(importRow).min(1).max(500)
+  rows: z.array(importRow).min(1).max(500),
+  // Загрузка, к которой относится пачка, и номера строк файла — ради журнала.
+  importId: uuid.optional(),
+  lines: z.array(z.number().int().min(1).max(1_000_000)).max(500).optional()
+}).strict();
+
+const startImportBody = z.object({
+  filename: z.string().trim().max(260).optional(),
+  campaignId: uuid.optional()
+}).strict();
+
+const importsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional()
+}).strict();
+
+const pendingRowsQuery = z.object({
+  importId: uuid.optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
+}).strict();
+
+const retryImportRowBody = z.object({
+  row: importRow
 }).strict();
 
 const peopleQuery = z.object({
@@ -250,6 +273,11 @@ export type AdminOutreachHandler = Pick<
   | "deletePerson"
   | "mergePeople"
   | "importPeople"
+  | "startImport"
+  | "listImports"
+  | "listPendingImportRows"
+  | "retryImportRow"
+  | "dismissImportRow"
   | "importContacts"
   | "createContact"
   | "assignContacts"
@@ -369,6 +397,113 @@ export class AdminOutreachController {
 
   // Загрузка прямо в базу. Соседний campaigns/:id/import кладёт тех же людей ещё и в
   // кампанию; здесь кампании нет, и заводить её ради файла не требуется.
+  @Post("imports")
+  @RequireAdminPermission("outreach.write")
+  startImport(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(startImportBody, body ?? {});
+    return executeOutreach(() =>
+      this.handler.startImport({
+        actor: requireActor(request),
+        ...(parsed.filename === undefined ? {} : { filename: parsed.filename }),
+        ...(parsed.campaignId === undefined
+          ? {}
+          : { campaignId: parsed.campaignId }),
+        now: new Date()
+      })
+    );
+  }
+
+  @Get("imports")
+  @RequireAdminPermission("outreach.read")
+  listImports(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(importsQuery, query);
+    return executeOutreach(() =>
+      this.handler.listImports({
+        actor: requireActor(request),
+        ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
+  }
+
+  @Get("import-rows")
+  @RequireAdminPermission("outreach.read")
+  listPendingImportRows(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(pendingRowsQuery, query);
+    return executeOutreach(() =>
+      this.handler.listPendingImportRows({
+        actor: requireActor(request),
+        ...(parsed.importId === undefined ? {} : { importId: parsed.importId }),
+        ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
+  }
+
+  @Post("import-rows/:id/retry")
+  @RequireAdminPermission("outreach.write")
+  async retryImportRow(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const rowId = parse(uuid, id);
+    const parsed = parse(retryImportRowBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.retryImportRow({
+        actor: requireActor(request),
+        rowId,
+        row: {
+          ...(parsed.row.name === undefined ? {} : { name: parsed.row.name }),
+          ...(parsed.row.phone === undefined ? {} : { phone: parsed.row.phone }),
+          ...(parsed.row.telegram === undefined
+            ? {}
+            : { telegram: parsed.row.telegram }),
+          ...(parsed.row.max === undefined ? {} : { max: parsed.row.max }),
+          ...(parsed.row.email === undefined ? {} : { email: parsed.row.email }),
+          ...(parsed.row.source === undefined
+            ? {}
+            : { source: parsed.row.source }),
+          ...(parsed.row.note === undefined ? {} : { note: parsed.row.note })
+        },
+        now: new Date()
+      })
+    );
+    // Строка легла или нет — обычный ответ: панель показывает причину и даёт править дальше.
+    // 404 только когда строки нет вовсе или её уже разобрали.
+    if (!result.resolved && result.reason === null) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Post("import-rows/:id/dismiss")
+  @RequireAdminPermission("outreach.write")
+  async dismissImportRow(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const rowId = parse(uuid, id);
+    const dismissed = await executeOutreach(() =>
+      this.handler.dismissImportRow({
+        actor: requireActor(request),
+        rowId,
+        now: new Date()
+      })
+    );
+    if (!dismissed) {
+      throw outreachNotFound();
+    }
+    return { dismissed };
+  }
+
   @Post("base/import")
   @RequireAdminPermission("outreach.write")
   importPeople(
@@ -379,6 +514,8 @@ export class AdminOutreachController {
     return executeOutreach(() =>
       this.handler.importPeople({
         actor: requireActor(request),
+        ...(parsed.importId === undefined ? {} : { importId: parsed.importId }),
+        ...(parsed.lines === undefined ? {} : { lines: parsed.lines }),
         rows: parsed.rows.map((row) => ({
           ...(row.name === undefined ? {} : { name: row.name }),
           ...(row.phone === undefined ? {} : { phone: row.phone }),
@@ -899,6 +1036,8 @@ export class AdminOutreachController {
         actor: requireActor(request),
         skipInvalid: true,
         campaignId,
+        ...(parsed.importId === undefined ? {} : { importId: parsed.importId }),
+        ...(parsed.lines === undefined ? {} : { lines: parsed.lines }),
         ...(parsed.assignedAdminId === undefined
           ? {}
           : { assignedAdminId: parsed.assignedAdminId }),

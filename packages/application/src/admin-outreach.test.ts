@@ -266,6 +266,101 @@ describe("AdminOutreachService", () => {
     assert.deepEqual(result.ambiguousRowIndexes, [1]);
   });
 
+  it("writes the rows that did not land into the journal, with their file line numbers", async () => {
+    // Ради этого журнал и заведён: раньше номера непрошедших строк жили только в памяти
+    // браузера — закрыл вкладку, и чинить нечего.
+    let recorded:
+      Parameters<AdminOutreachRepository["recordImportOutcome"]>[0] | undefined;
+    const service = new AdminOutreachService(
+      repository({
+        async importPeople(input) {
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            ambiguousRowIndexes: [0]
+          };
+        },
+        async recordImportOutcome(input) {
+          recorded = input;
+        }
+      }),
+      ruPhones(),
+      countingIds()
+    );
+
+    await service.importPeople({
+      actor: writeActor,
+      rows: [
+        { name: "Пустой" },
+        { name: "Анна", phone: "8 999 123-45-67" },
+        { name: "Борис", phone: "8 999 765-43-21" }
+      ],
+      importId: IMPORT_ID,
+      lines: [7, 8, 9],
+      now
+    });
+
+    assert.equal(recorded?.importId, IMPORT_ID);
+    assert.equal(recorded?.createdContacts, 1);
+    // Строка 7 не разобралась, строка 8 оказалась спорной. Номера — из файла, не из пачки.
+    assert.deepEqual(
+      recorded?.failedRows.map((row) => [row.lineNumber, row.status]),
+      [[7, "invalid"], [8, "ambiguous"]]
+    );
+    assert.equal(recorded?.failedRows[0]?.raw.name, "Пустой");
+  });
+
+  it("does not keep a journal when the import was not started as one", async () => {
+    // Разовое добавление контакта руками в журнале не нужно.
+    let recorded = false;
+    const service = new AdminOutreachService(
+      repository({
+        async importPeople(input) {
+          return {
+            received: input.rows.length,
+            createdContacts: 1,
+            updatedContacts: 0,
+            ambiguousRowIndexes: []
+          };
+        },
+        async recordImportOutcome() {
+          recorded = true;
+        }
+      }),
+      ruPhones(),
+      countingIds()
+    );
+
+    await service.importPeople({
+      actor: writeActor,
+      rows: [{ name: "Анна", phone: "8 999 123-45-67" }],
+      now
+    });
+
+    assert.equal(recorded, false);
+  });
+
+  it("refuses a batch whose line numbers do not match its rows", async () => {
+    // Иначе журнал показал бы человеку не ту строку файла — хуже, чем не показать никакой.
+    const service = new AdminOutreachService(
+      repository({}),
+      ruPhones(),
+      countingIds()
+    );
+
+    await assert.rejects(
+      service.importPeople({
+        actor: writeActor,
+        rows: [{ phone: "8 999 123-45-67" }, { phone: "8 999 765-43-21" }],
+        importId: IMPORT_ID,
+        lines: [7],
+        now
+      }),
+      /line numbers are invalid/
+    );
+  });
+
   it("keeps a row whose phone is junk but whose handle is good", async () => {
     // Раньше такая строка пропадала целиком: разбор телефона ронял её вместе с ником, и из
     // выгрузки на восемь тысяч так терялись живые контакты.
@@ -1127,6 +1222,15 @@ function repository(
         ambiguousRowIndexes: []
       };
     },
+    async startImport() {},
+    async recordImportOutcome() {},
+    async listImports() { return []; },
+    async listPendingImportRows() { return []; },
+    async getPendingImportRow() { return null; },
+    async retryImportRow() {
+      return { resolved: true, reason: null, contactId: CONTACT_ID };
+    },
+    async dismissImportRow() { return true; },
     async updatePerson() { return { status: "not_found" as const }; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },
@@ -1257,6 +1361,7 @@ const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000102";
 const CAMPAIGN_CONTACT_ID = "00000000-0000-4000-8000-000000000103";
 const CAMPAIGN_CONTACT_ID_2 = "00000000-0000-4000-8000-000000000104";
 const CONTACT_ID = "00000000-0000-4000-8000-000000000105";
+const IMPORT_ID = "00000000-0000-4000-8000-000000000106";
 const now = new Date("2026-07-29T12:00:00.000Z");
 
 function personCard() {

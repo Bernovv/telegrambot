@@ -37,6 +37,10 @@ import type {
   DeleteOutreachPersonResult,
   MergeOutreachPeopleResult,
   OutreachBaseImportResult,
+  OutreachImportRowRecord,
+  OutreachImportRun,
+  RetryOutreachImportRowResult,
+  StartOutreachImportRequest,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonUpdateResult,
@@ -836,11 +840,64 @@ export function deleteOutreachPerson(
   );
 }
 
+/**
+ * Заводит загрузку в журнале. Идентификатор потом передаётся с каждой пачкой, чтобы строки,
+ * которые не легли, нашлись и после закрытия вкладки.
+ */
+export function startOutreachImport(
+  input: StartOutreachImportRequest
+): Promise<{ readonly importId: string }> {
+  return requestAdminMutation("outreach/imports", "POST", input);
+}
+
 /** Загрузка прямо в базу: людей заводит и обновляет, ни в какую кампанию не кладёт. */
 export function importOutreachPeople(
-  rows: readonly OutreachImportRow[]
+  rows: readonly OutreachImportRow[],
+  journal?: { readonly importId: string; readonly lines: readonly number[] }
 ): Promise<OutreachBaseImportResult> {
-  return requestAdminMutation("outreach/base/import", "POST", { rows });
+  return requestAdminMutation("outreach/base/import", "POST", {
+    rows,
+    ...(journal ?? {})
+  });
+}
+
+export function listOutreachImports(
+  signal?: AbortSignal
+): Promise<readonly OutreachImportRun[]> {
+  return requestAdminApi("outreach/imports", signal);
+}
+
+export function listPendingOutreachImportRows(
+  importId?: string,
+  signal?: AbortSignal
+): Promise<readonly OutreachImportRowRecord[]> {
+  return requestAdminApi(
+    importId
+      ? `outreach/import-rows?importId=${encodeURIComponent(importId)}`
+      : "outreach/import-rows",
+    signal
+  );
+}
+
+export function retryOutreachImportRow(
+  rowId: string,
+  row: OutreachImportRow
+): Promise<RetryOutreachImportRowResult> {
+  return requestAdminMutation(
+    `outreach/import-rows/${encodeURIComponent(rowId)}/retry`,
+    "POST",
+    { row }
+  );
+}
+
+export function dismissOutreachImportRow(
+  rowId: string
+): Promise<{ readonly dismissed: boolean }> {
+  return requestAdminMutation(
+    `outreach/import-rows/${encodeURIComponent(rowId)}/dismiss`,
+    "POST",
+    {}
+  );
 }
 
 /** contactId — открытая карточка-дубль, targetContactId — главный. */

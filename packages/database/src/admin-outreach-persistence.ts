@@ -17,6 +17,9 @@ import type {
   MoveOutreachContactsResult,
   OutreachBaseContact,
   OutreachImportRow,
+  OutreachImportRowRecord,
+  OutreachImportRun,
+  RetryOutreachImportRowResult,
   DeleteOutreachPersonResult,
   MergeOutreachPeopleResult,
   OutreachDeleteBlocker,
@@ -333,6 +336,32 @@ function refusedMerge(
     movedParticipations: 0,
     takenIdentifiers: []
   };
+}
+
+interface ImportRunRow {
+  readonly id: string;
+  readonly filename: string | null;
+  readonly campaign_id: string | null;
+  readonly campaign_name: string | null;
+  readonly created_by_name: string;
+  readonly received: number;
+  readonly created_contacts: number;
+  readonly updated_contacts: number;
+  readonly invalid_rows: number;
+  readonly ambiguous_rows: number;
+  readonly pending_rows: string;
+  readonly created_at: Date | string;
+}
+
+interface ImportRowRecordRow {
+  readonly id: string;
+  readonly import_id: string;
+  readonly filename: string | null;
+  readonly line_number: number;
+  readonly status: OutreachImportRowRecord["status"];
+  readonly reason: string | null;
+  readonly raw: OutreachImportRow;
+  readonly created_at: Date | string;
 }
 
 interface ParticipationAnswerRow {
@@ -1958,6 +1987,225 @@ implements AdminOutreachRepository {
           answers: participationAnswers.get(participation.participant_id) ?? []
         }))
       };
+    });
+  }
+
+  startImport(
+    input: Parameters<AdminOutreachRepository["startImport"]>[0]
+  ): Promise<void> {
+    return this.write(async (connection) => {
+      await connection.query(
+        `insert into public.outreach_imports (
+           id, created_by_admin_id, filename, campaign_id, created_at, updated_at
+         ) values ($1::uuid, $2::uuid, $3::text, $4::uuid, $5::timestamptz, $5::timestamptz)`,
+        [
+          input.importId,
+          input.createdByAdminId,
+          input.filename,
+          input.campaignId,
+          input.now
+        ]
+      );
+    });
+  }
+
+  /**
+   * Дописывает итог одной пачки к загрузке и запоминает строки, которые не легли. Пачек на
+   * восьми тысячах строк полсотни, поэтому счётчики именно прибавляются, а не переписываются.
+   */
+  recordImportOutcome(
+    input: Parameters<AdminOutreachRepository["recordImportOutcome"]>[0]
+  ): Promise<void> {
+    return this.write(async (connection) => {
+      await connection.query(
+        `update public.outreach_imports
+            set received = received + $2::integer,
+                created_contacts = created_contacts + $3::integer,
+                updated_contacts = updated_contacts + $4::integer,
+                invalid_rows = invalid_rows + $5::integer,
+                ambiguous_rows = ambiguous_rows + $6::integer,
+                updated_at = $7::timestamptz
+          where id = $1::uuid`,
+        [
+          input.importId,
+          input.received,
+          input.createdContacts,
+          input.updatedContacts,
+          input.failedRows.filter((row) => row.status === "invalid").length,
+          input.failedRows.filter((row) => row.status === "ambiguous").length,
+          input.now
+        ]
+      );
+      for (const row of input.failedRows) {
+        await connection.query(
+          `insert into public.outreach_import_rows (
+             id, import_id, line_number, raw, status, reason, created_at
+           ) values (
+             $1::uuid, $2::uuid, $3::integer, $4::jsonb, $5::text, $6::text, $7::timestamptz
+           )`,
+          [
+            row.id,
+            input.importId,
+            row.lineNumber,
+            JSON.stringify(row.raw),
+            row.status,
+            row.reason,
+            input.now
+          ]
+        );
+      }
+    });
+  }
+
+  listImports(limit: number): Promise<readonly OutreachImportRun[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<ImportRunRow>(
+        `select
+           run.id, run.filename, run.campaign_id,
+           campaign.name as campaign_name,
+           coalesce(admin.display_name, admin.email_normalized, 'Администратор')
+             as created_by_name,
+           run.received, run.created_contacts, run.updated_contacts,
+           run.invalid_rows, run.ambiguous_rows, run.created_at,
+           (
+             select count(*)::text
+               from public.outreach_import_rows pending
+              where pending.import_id = run.id
+                and pending.status in ('invalid', 'ambiguous')
+           ) as pending_rows
+         from public.outreach_imports run
+         join public.admin_accounts admin on admin.id = run.created_by_admin_id
+         left join public.outreach_campaigns campaign on campaign.id = run.campaign_id
+         order by run.created_at desc, run.id desc
+         limit $1`,
+        [limit]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        filename: row.filename,
+        campaignId: row.campaign_id,
+        campaignName: row.campaign_name,
+        createdByName: row.created_by_name,
+        received: row.received,
+        createdContacts: row.created_contacts,
+        updatedContacts: row.updated_contacts,
+        invalidRows: row.invalid_rows,
+        ambiguousRows: row.ambiguous_rows,
+        pendingRows: Number(row.pending_rows),
+        createdAt: toIso(row.created_at)
+      }));
+    });
+  }
+
+  /** Неразобранные строки. Без importId — по всем загрузкам: вопрос обычно звучит именно так. */
+  listPendingImportRows(input: {
+    readonly importId: string | null;
+    readonly limit: number;
+  }): Promise<readonly OutreachImportRowRecord[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<ImportRowRecordRow>(
+        `select row.id, row.import_id, run.filename, row.line_number,
+                row.status, row.reason, row.raw, row.created_at
+           from public.outreach_import_rows row
+           join public.outreach_imports run on run.id = row.import_id
+          where row.status in ('invalid', 'ambiguous')
+            and ($1::uuid is null or row.import_id = $1::uuid)
+          order by row.created_at desc, row.line_number
+          limit $2`,
+        [input.importId, input.limit]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        importId: row.import_id,
+        filename: row.filename,
+        lineNumber: row.line_number,
+        status: row.status,
+        reason: row.reason,
+        raw: row.raw,
+        createdAt: toIso(row.created_at)
+      }));
+    });
+  }
+
+  getPendingImportRow(rowId: string): Promise<OutreachImportRowRecord | null> {
+    return this.read(async (connection) => {
+      const result = await connection.query<ImportRowRecordRow>(
+        `select row.id, row.import_id, run.filename, row.line_number,
+                row.status, row.reason, row.raw, row.created_at
+           from public.outreach_import_rows row
+           join public.outreach_imports run on run.id = row.import_id
+          where row.id = $1::uuid
+            and row.status in ('invalid', 'ambiguous')`,
+        [rowId]
+      );
+      const row = result.rows[0];
+      return row
+        ? {
+          id: row.id,
+          importId: row.import_id,
+          filename: row.filename,
+          lineNumber: row.line_number,
+          status: row.status,
+          reason: row.reason,
+          raw: row.raw,
+          createdAt: toIso(row.created_at)
+        }
+        : null;
+    });
+  }
+
+  /**
+   * Повторная попытка по исправленной строке. Разбор и запись — те же, что у загрузки файла:
+   * иначе починенная руками строка легла бы по другим правилам, чем её соседки.
+   */
+  retryImportRow(
+    input: Parameters<AdminOutreachRepository["retryImportRow"]>[0]
+  ): Promise<RetryOutreachImportRowResult> {
+    return this.write(async (connection) => {
+      const upserted = await upsertImportedContact(connection, {
+        row: input.row,
+        createdByAdminId: input.actorAdminId,
+        skipAmbiguous: true,
+        now: input.now
+      });
+      if (upserted === null) {
+        // Спор остаётся спором: строку не трогаем, человек сначала объединяет дубли.
+        return {
+          resolved: false,
+          reason: "Признаки ведут на разных людей — сначала объедините их карточки",
+          contactId: null
+        };
+      }
+      await connection.query(
+        `update public.outreach_import_rows
+            set status = 'resolved',
+                resolved_contact_id = $2::uuid,
+                resolved_by_admin_id = $3::uuid,
+                resolved_at = $4::timestamptz
+          where id = $1::uuid and status in ('invalid', 'ambiguous')`,
+        [input.rowId, upserted.contactId, input.actorAdminId, input.now]
+      );
+      return {
+        resolved: true,
+        reason: null,
+        contactId: upserted.contactId
+      };
+    });
+  }
+
+  dismissImportRow(
+    input: Parameters<AdminOutreachRepository["dismissImportRow"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_import_rows
+            set status = 'dismissed',
+                resolved_by_admin_id = $2::uuid,
+                resolved_at = $3::timestamptz
+          where id = $1::uuid and status in ('invalid', 'ambiguous')`,
+        [input.rowId, input.actorAdminId, input.now]
+      );
+      return result.rowCount > 0;
     });
   }
 

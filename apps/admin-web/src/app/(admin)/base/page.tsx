@@ -4,7 +4,9 @@ import { EmptyState, PageError, PageLoading } from "@/components/page-state";
 import {
   AdminApiError,
   importOutreachPeople,
-  listOutreachPeople
+  listOutreachPeople,
+  listPendingOutreachImportRows,
+  startOutreachImport
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
@@ -43,6 +45,7 @@ export default function OutreachBasePage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pendingImportRows, setPendingImportRows] = useState(0);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -77,6 +80,16 @@ export default function OutreachBasePage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Счётчик неразобранных строк грузим молча: без него страница работает, просто без
+  // напоминания о том, что осталось в журнале.
+  useEffect(() => {
+    const controller = new AbortController();
+    void listPendingOutreachImportRows(undefined, controller.signal)
+      .then((items) => setPendingImportRows(items.length))
+      .catch(() => setPendingImportRows(0));
+    return () => controller.abort();
+  }, []);
 
   // Поиск по короткой строке сервер не примет, и это правильно: «ан» найдёт пол-базы.
   function submitSearch(event: React.FormEvent<HTMLFormElement>) {
@@ -117,41 +130,32 @@ export default function OutreachBasePage() {
       }
       let created = 0;
       let updated = 0;
-      const badLines: number[] = [];
-      const mergeLines: number[] = [];
+      let pending = 0;
+      // Загрузка заводится в журнале до первой пачки: тогда строки, которые не лягут,
+      // найдутся и после закрытия вкладки, а не только в этом сообщении.
+      const { importId } = await startOutreachImport({ filename: file.name });
       // Пачками: сервер принимает не больше 500 строк за запрос, а на восьми тысячах
       // контактов это полсотни запросов — показываем, докуда дошли.
       for (let offset = 0; offset < rows.length; offset += 150) {
-        const result = await importOutreachPeople(rows.slice(offset, offset + 150));
+        const result = await importOutreachPeople(
+          rows.slice(offset, offset + 150),
+          { importId, lines: lines.slice(offset, offset + 150) }
+        );
         created += result.createdContacts;
         updated += result.updatedContacts;
-        for (const index of result.invalidRowIndexes ?? []) {
-          const line = lines[offset + index];
-          if (line !== undefined) {
-            badLines.push(line);
-          }
-        }
-        for (const index of result.ambiguousRowIndexes ?? []) {
-          const line = lines[offset + index];
-          if (line !== undefined) {
-            mergeLines.push(line);
-          }
-        }
+        pending += (result.invalidRowIndexes ?? []).length
+          + (result.ambiguousRowIndexes ?? []).length;
         setNotice(
           `Загружаем: ${Math.min(offset + 150, rows.length)} из ${rows.length}…`
         );
       }
-      const badNote = badLines.length > 0
-        ? ` Не разобрались строки: ${badLines.slice(0, 15).join(", ")}.`
-        : "";
-      // Спорные строки теперь есть чем разрешить: в карточке человека кнопка «Это дубль».
-      const mergeNote = mergeLines.length > 0
-        ? ` Признаки ведут на разных людей в строках: ${mergeLines.slice(0, 15).join(", ")}.`
-        + " Найдите обе карточки и объедините их."
+      const pendingNote = pending > 0
+        ? ` Не легло строк: ${pending} — они ждут в журнале загрузок.`
         : "";
       setNotice(
-        `Готово. Заведено: ${created}, обновлено: ${updated}.${badNote}${mergeNote}`
+        `Готово. Заведено: ${created}, обновлено: ${updated}.${pendingNote}`
       );
+      setPendingImportRows(pending);
       setPage(1);
       await load();
     } catch (caught) {
@@ -200,6 +204,12 @@ export default function OutreachBasePage() {
       </div>
 
       {notice ? <div className="page-notice">{notice}</div> : null}
+      {pendingImportRows > 0 ? (
+        <div className="page-warning">
+          Строк из загрузок ждёт разбора: {pendingImportRows}.{" "}
+          <Link href="/base/imports">Открыть журнал загрузок</Link>
+        </div>
+      ) : null}
 
       <section className="data-section">
         <form className="base-search" onSubmit={submitSearch}>

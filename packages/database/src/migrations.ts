@@ -209,5 +209,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260814150000_link_participants_by_handle",
     description: "Link the remaining participants to the contact base by the Telegram handle kept in their note",
     destructive: false
+  },
+  {
+    id: "20260814180000_outreach_import_journal",
+    description: "Keep import runs and the rows that did not land so they survive a closed tab",
+    destructive: false
   }
 ];

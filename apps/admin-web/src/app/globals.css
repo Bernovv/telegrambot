@@ -4250,3 +4250,63 @@ tbody tr:hover {
 .base-import input[type="file"]:disabled {
   cursor: default;
 }
+
+/* Журнал загрузок: строки, которые не легли, правятся прямо здесь. */
+
+.import-rows {
+  display: grid;
+  margin: 0;
+  padding: 14px 18px;
+  gap: 14px;
+  list-style: none;
+}
+
+.import-rows li {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.import-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.import-row-head .muted {
+  font-size: 12px;
+}
+
+.import-row-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.import-row-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.import-row-form label > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.import-row-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.import-row-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  grid-column: 1 / -1;
+}

@@ -501,6 +501,61 @@ export interface OutreachBaseImportResult {
   readonly updatedContacts: number;
 }
 
+/**
+ * Журнал загрузок. Хранит только строки, которые не легли: те, что легли, уже лежат
+ * контактами, и вторая их копия — мусор.
+ */
+export const OUTREACH_IMPORT_ROW_STATUSES = [
+  "invalid",
+  "ambiguous",
+  "resolved",
+  "dismissed"
+] as const;
+
+export type OutreachImportRowStatus =
+  typeof OUTREACH_IMPORT_ROW_STATUSES[number];
+
+export interface OutreachImportRun {
+  readonly id: string;
+  readonly filename: string | null;
+  /** Пусто — грузили прямо в базу. Иначе название кампании. */
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly createdByName: string;
+  readonly received: number;
+  readonly createdContacts: number;
+  readonly updatedContacts: number;
+  readonly invalidRows: number;
+  readonly ambiguousRows: number;
+  /** Сколько строк ещё ждёт разбора — ради них журнал и заведён. */
+  readonly pendingRows: number;
+  readonly createdAt: string;
+}
+
+export interface OutreachImportRowRecord {
+  readonly id: string;
+  readonly importId: string;
+  readonly filename: string | null;
+  readonly lineNumber: number;
+  readonly status: OutreachImportRowStatus;
+  readonly reason: string | null;
+  /** Что было в строке файла — чинить придётся именно это. */
+  readonly raw: OutreachImportRow;
+  readonly createdAt: string;
+}
+
+export interface StartOutreachImportRequest {
+  readonly filename?: string;
+  readonly campaignId?: string;
+}
+
+export interface RetryOutreachImportRowResult {
+  readonly resolved: boolean;
+  /** Строка снова не легла: причина та же, что и при загрузке. */
+  readonly reason: string | null;
+  readonly contactId: string | null;
+}
+
 export interface OutreachCampaignExport {
   readonly filename: string;
   readonly csv: string;

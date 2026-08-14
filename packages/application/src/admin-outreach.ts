@@ -24,6 +24,9 @@ import type {
   DeleteOutreachPersonResult,
   MergeOutreachPeopleResult,
   OutreachBaseImportResult,
+  OutreachImportRowRecord,
+  OutreachImportRun,
+  RetryOutreachImportRowResult,
   OutreachManager,
   OutreachPersonCard,
   OutreachPersonConflict,
@@ -237,6 +240,44 @@ export interface AdminOutreachRepository {
     readonly auditId: string;
     readonly now: Date;
   }): Promise<DeleteOutreachPersonResult>;
+  startImport(input: {
+    readonly importId: string;
+    readonly createdByAdminId: string;
+    readonly filename: string | null;
+    readonly campaignId: string | null;
+    readonly now: Date;
+  }): Promise<void>;
+  recordImportOutcome(input: {
+    readonly importId: string;
+    readonly received: number;
+    readonly createdContacts: number;
+    readonly updatedContacts: number;
+    readonly failedRows: readonly {
+      readonly id: string;
+      readonly lineNumber: number;
+      readonly raw: OutreachImportRow;
+      readonly status: "invalid" | "ambiguous";
+      readonly reason: string | null;
+    }[];
+    readonly now: Date;
+  }): Promise<void>;
+  listImports(limit: number): Promise<readonly OutreachImportRun[]>;
+  listPendingImportRows(input: {
+    readonly importId: string | null;
+    readonly limit: number;
+  }): Promise<readonly OutreachImportRowRecord[]>;
+  getPendingImportRow(rowId: string): Promise<OutreachImportRowRecord | null>;
+  retryImportRow(input: {
+    readonly rowId: string;
+    readonly row: NormalizedOutreachImportRow & { readonly contactId: string };
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }): Promise<RetryOutreachImportRowResult>;
+  dismissImportRow(input: {
+    readonly rowId: string;
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
   /** Загрузка прямо в базу, без кампании. */
   importPeople(input: {
     readonly createdByAdminId: string;
@@ -999,11 +1040,18 @@ export class AdminOutreachService {
   async importPeople(input: {
     readonly actor: AdminRequestActor;
     readonly rows: readonly OutreachImportRow[];
+    /** Загрузка, к которой относится пачка. Без неё журнал не ведётся. */
+    readonly importId?: string;
+    /** Номера строк файла по порядку строк пачки — по ним человек находит строку у себя. */
+    readonly lines?: readonly number[];
     readonly now: Date;
   }): Promise<OutreachBaseImportResult> {
     requirePermission(input.actor, "outreach.write");
     if (input.rows.length < 1 || input.rows.length > 500) {
       throw new Error("Outreach import batch is invalid");
+    }
+    if (input.lines !== undefined && input.lines.length !== input.rows.length) {
+      throw new Error("Outreach import line numbers are invalid");
     }
 
     const rows: (NormalizedOutreachImportRow & {
@@ -1024,6 +1072,17 @@ export class AdminOutreachService {
     });
 
     if (rows.length === 0) {
+      await this.recordImportOutcome({
+        importId: input.importId,
+        rows: input.rows,
+        lines: input.lines,
+        received: input.rows.length,
+        createdContacts: 0,
+        updatedContacts: 0,
+        invalidRowIndexes,
+        ambiguousRowIndexes: [],
+        now: input.now
+      });
       return {
         received: input.rows.length,
         createdContacts: 0,
@@ -1046,17 +1105,172 @@ export class AdminOutreachService {
     const keptIndexes = input.rows
       .map((_, index) => index)
       .filter((index) => !invalidRowIndexes.includes(index));
+    const ambiguousRowIndexes = result.ambiguousRowIndexes
+      .map((index) => keptIndexes[index])
+      .filter((index): index is number => index !== undefined);
+
+    await this.recordImportOutcome({
+      importId: input.importId,
+      rows: input.rows,
+      lines: input.lines,
+      received: input.rows.length,
+      createdContacts: result.createdContacts,
+      updatedContacts: result.updatedContacts,
+      invalidRowIndexes,
+      ambiguousRowIndexes,
+      now: input.now
+    });
+
     return {
       received: input.rows.length,
       createdContacts: result.createdContacts,
       updatedContacts: result.updatedContacts,
       invalidRows: invalidRowIndexes.length,
       invalidRowIndexes,
-      ambiguousRows: result.ambiguousRowIndexes.length,
-      ambiguousRowIndexes: result.ambiguousRowIndexes
-        .map((index) => keptIndexes[index])
-        .filter((index): index is number => index !== undefined)
+      ambiguousRows: ambiguousRowIndexes.length,
+      ambiguousRowIndexes
     };
+  }
+
+  startImport(input: {
+    readonly actor: AdminRequestActor;
+    readonly filename?: string;
+    readonly campaignId?: string;
+    readonly now: Date;
+  }): Promise<{ readonly importId: string }> {
+    requirePermission(input.actor, "outreach.write");
+    if (input.campaignId !== undefined) {
+      requireUuid(input.campaignId);
+    }
+    const importId = this.idGenerator.newId();
+    return this.repository.startImport({
+      importId,
+      createdByAdminId: input.actor.adminId,
+      filename: optionalText(input.filename ?? "", 260),
+      campaignId: input.campaignId ?? null,
+      now: input.now
+    }).then(() => ({ importId }));
+  }
+
+  listImports(input: {
+    readonly actor: AdminRequestActor;
+    readonly limit?: number;
+  }): Promise<readonly OutreachImportRun[]> {
+    requirePermission(input.actor, "outreach.read");
+    const limit = input.limit ?? 30;
+    if (limit < 1 || limit > 100) {
+      throw new Error("Outreach import page is invalid");
+    }
+    return this.repository.listImports(limit);
+  }
+
+  listPendingImportRows(input: {
+    readonly actor: AdminRequestActor;
+    readonly importId?: string;
+    readonly limit?: number;
+  }): Promise<readonly OutreachImportRowRecord[]> {
+    requirePermission(input.actor, "outreach.read");
+    if (input.importId !== undefined) {
+      requireUuid(input.importId);
+    }
+    const limit = input.limit ?? 200;
+    if (limit < 1 || limit > 500) {
+      throw new Error("Outreach import page is invalid");
+    }
+    return this.repository.listPendingImportRows({
+      importId: input.importId ?? null,
+      limit
+    });
+  }
+
+  /**
+   * Повторная попытка по исправленной строке. Разбор строгий, как в ручном вводе: человек
+   * только что её правил и должен сразу узнать, что именно всё ещё не так.
+   */
+  async retryImportRow(input: {
+    readonly actor: AdminRequestActor;
+    readonly rowId: string;
+    readonly row: OutreachImportRow;
+    readonly now: Date;
+  }): Promise<RetryOutreachImportRowResult> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.rowId);
+    const pending = await this.repository.getPendingImportRow(input.rowId);
+    if (!pending) {
+      return { resolved: false, reason: null, contactId: null };
+    }
+    return this.repository.retryImportRow({
+      rowId: input.rowId,
+      row: {
+        ...this.normalizeImportRow(input.row, true),
+        contactId: this.idGenerator.newId()
+      },
+      actorAdminId: input.actor.adminId,
+      now: input.now
+    });
+  }
+
+  dismissImportRow(input: {
+    readonly actor: AdminRequestActor;
+    readonly rowId: string;
+    readonly now: Date;
+  }): Promise<boolean> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.rowId);
+    return this.repository.dismissImportRow({
+      rowId: input.rowId,
+      actorAdminId: input.actor.adminId,
+      now: input.now
+    });
+  }
+
+  /**
+   * Пишет итог пачки в журнал. Без `importId` не делает ничего: журнал ведётся только для
+   * загрузки файла, а разовое добавление контакта руками в нём не нужно.
+   */
+  private async recordImportOutcome(input: {
+    readonly importId: string | undefined;
+    readonly rows: readonly OutreachImportRow[];
+    readonly lines: readonly number[] | undefined;
+    readonly received: number;
+    readonly createdContacts: number;
+    readonly updatedContacts: number;
+    readonly invalidRowIndexes: readonly number[];
+    readonly ambiguousRowIndexes: readonly number[];
+    readonly now: Date;
+  }): Promise<void> {
+    if (input.importId === undefined) {
+      return;
+    }
+    const failedRows = [
+      ...input.invalidRowIndexes.map((index) => ({ index, status: "invalid" as const })),
+      ...input.ambiguousRowIndexes.map((index) => ({ index, status: "ambiguous" as const }))
+    ]
+      .map(({ index, status }) => {
+        const raw = input.rows[index];
+        return raw === undefined
+          ? null
+          : {
+            id: this.idGenerator.newId(),
+            // Без номеров строк нумеруем от единицы внутри пачки: хуже, чем настоящий
+            // номер в файле, но лучше, чем ничего.
+            lineNumber: input.lines?.[index] ?? index + 1,
+            raw,
+            status,
+            reason: IMPORT_FAILURE_REASONS[status]
+          };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((first, second) => first.lineNumber - second.lineNumber);
+
+    await this.repository.recordImportOutcome({
+      importId: input.importId,
+      received: input.received,
+      createdContacts: input.createdContacts,
+      updatedContacts: input.updatedContacts,
+      failedRows,
+      now: input.now
+    });
   }
 
   /**
@@ -1116,6 +1330,10 @@ export class AdminOutreachService {
      * нет — там про плохой телефон надо сказать сразу.
      */
     readonly skipInvalid?: boolean;
+    /** Загрузка, к которой относится пачка. Без неё журнал не ведётся. */
+    readonly importId?: string;
+    /** Номера строк файла по порядку строк пачки. */
+    readonly lines?: readonly number[];
     readonly now: Date;
   }): Promise<OutreachImportResult> {
     requirePermission(input.actor, "outreach.write");
@@ -1147,6 +1365,17 @@ export class AdminOutreachService {
     });
 
     if (rows.length === 0) {
+      await this.recordImportOutcome({
+        importId: input.importId,
+        rows: input.rows,
+        lines: input.lines,
+        received: input.rows.length,
+        createdContacts: 0,
+        updatedContacts: 0,
+        invalidRowIndexes,
+        ambiguousRowIndexes: [],
+        now: input.now
+      });
       return {
         received: input.rows.length,
         createdContacts: 0,
@@ -1173,15 +1402,29 @@ export class AdminOutreachService {
     const keptIndexes = input.rows
       .map((_, index) => index)
       .filter((index) => !invalidRowIndexes.includes(index));
+    const ambiguousRowIndexes = result.ambiguousRowIndexes
+      .map((index) => keptIndexes[index])
+      .filter((index): index is number => index !== undefined);
+
+    await this.recordImportOutcome({
+      importId: input.importId,
+      rows: input.rows,
+      lines: input.lines,
+      received: input.rows.length,
+      createdContacts: result.createdContacts,
+      updatedContacts: result.updatedContacts,
+      invalidRowIndexes,
+      ambiguousRowIndexes,
+      now: input.now
+    });
+
     return {
       ...result,
       received: input.rows.length,
       invalidRows: invalidRowIndexes.length,
       invalidRowIndexes,
-      ambiguousRows: result.ambiguousRowIndexes.length,
-      ambiguousRowIndexes: result.ambiguousRowIndexes
-        .map((index) => keptIndexes[index])
-        .filter((index): index is number => index !== undefined)
+      ambiguousRows: ambiguousRowIndexes.length,
+      ambiguousRowIndexes
     };
   }
 
@@ -1457,6 +1700,11 @@ export class AdminOutreachService {
     };
   }
 }
+
+const IMPORT_FAILURE_REASONS: Record<"invalid" | "ambiguous", string> = {
+  invalid: "Не разобрался ни один признак: ни телефон, ни ник, ни почта",
+  ambiguous: "Признаки ведут на разных людей — сначала объедините их карточки"
+};
 
 const REJECTION_MESSAGES: Record<ContactRejectionReason, string> = {
   not_a_phone_number: "Phone number is invalid",
