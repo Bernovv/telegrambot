@@ -376,6 +376,13 @@ export interface AdminOutreachRepository {
     readonly page: number;
     readonly limit: number;
   }): Promise<AdminSiteRegistrationPage>;
+  markPersonOwn(input: {
+    readonly contactId: string;
+    readonly isOwn: boolean;
+    readonly note: string | null;
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
   createNote(input: {
     readonly id: string;
     readonly contactId: string;
@@ -1690,6 +1697,34 @@ export class AdminOutreachService {
       page,
       limit
     });
+  }
+
+  /**
+   * Помечает человека «своим»: обзванивать его не надо.
+   *
+   * Отдельный признак, а не стадия «закрыт» и не отдельная кампания: человек может быть
+   * одновременно и своим, и участником, и покупателем. Плашка идёт за ним всюду, где его
+   * показывают, и не мешает ему участвовать в чём угодно.
+   */
+  async markPersonOwn(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly isOwn: boolean;
+    readonly note?: string;
+    readonly now: Date;
+  }): Promise<{ readonly updated: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    const note = input.note?.trim();
+    return {
+      updated: await this.repository.markPersonOwn({
+        contactId: input.contactId,
+        isOwn: input.isOwn,
+        note: input.isOwn && note ? optionalText(note, 200) : null,
+        actorAdminId: input.actor.adminId,
+        now: input.now
+      })
+    };
   }
 
   /** Заметка о человеке. Копится рядом с прежними, а не затирает их. */

@@ -69,6 +69,7 @@ interface BaseContactRow {
   readonly telegram_username: string | null;
   readonly max_identifier: string | null;
   readonly source: string | null;
+  readonly is_own: boolean;
   readonly in_campaign: boolean;
   readonly campaign_count: string;
 }
@@ -95,6 +96,7 @@ interface ContactRow {
   readonly source: string | null;
   readonly note: string | null;
   readonly linked_user_id: string | null;
+  readonly is_own: boolean;
   readonly assigned_admin_id: string | null;
   readonly assigned_admin_name: string | null;
   readonly pipeline_stage: OutreachCampaignContactSummary["stage"];
@@ -146,6 +148,7 @@ interface TaskBoardRow {
   readonly contact_phone: string | null;
   readonly contact_telegram_username: string | null;
   readonly contact_max_identifier: string | null;
+  readonly contact_is_own: boolean;
   readonly assigned_admin_id: string;
   readonly assigned_admin_name: string;
   readonly task_type: OutreachTask["type"];
@@ -173,6 +176,7 @@ interface PersonRow {
   readonly email: string | null;
   readonly source: string | null;
   readonly linked_user_id: string | null;
+  readonly is_own: boolean;
   readonly archived_at: Date | string | null;
   readonly created_at: Date | string;
   readonly campaign_count: string | null;
@@ -194,6 +198,10 @@ interface PersonCardRow {
   readonly archived_reason: string | null;
   readonly merged_into_contact_id: string | null;
   readonly merged_into_display_name: string | null;
+  readonly is_own: boolean;
+  readonly own_note: string | null;
+  readonly own_marked_at: Date | string | null;
+  readonly own_marked_by_name: string | null;
   readonly created_by_name: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
@@ -720,6 +728,7 @@ implements AdminOutreachRepository {
            contact.telegram_username,
            contact.max_identifier,
            contact.source,
+           contact.is_own,
            (member.id is not null) as in_campaign,
            (
              select count(*)::text
@@ -758,6 +767,7 @@ implements AdminOutreachRepository {
         telegramUsername: row.telegram_username,
         maxIdentifier: row.max_identifier,
         source: row.source,
+        isOwn: row.is_own,
         inCampaign: row.in_campaign,
         campaignCount: Number(row.campaign_count)
       }));
@@ -1217,6 +1227,7 @@ implements AdminOutreachRepository {
                 contact.phone_e164 as contact_phone,
                 contact.telegram_username as contact_telegram_username,
                 contact.max_identifier as contact_max_identifier,
+                contact.is_own as contact_is_own,
                 task.assigned_admin_id,
                 coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                 task.task_type, task.task_text, task.due_at, task.status
@@ -1249,6 +1260,7 @@ implements AdminOutreachRepository {
         contactPhone: row.contact_phone,
         contactTelegramUsername: row.contact_telegram_username,
         contactMaxIdentifier: row.contact_max_identifier,
+        contactIsOwn: row.contact_is_own,
         assignedAdminId: row.assigned_admin_id,
         assignedAdminName: row.assigned_admin_name,
         type: row.task_type,
@@ -1420,6 +1432,10 @@ implements AdminOutreachRepository {
            contact.source,
            contact.note,
            contact.linked_user_id,
+           contact.is_own,
+           contact.own_note,
+           contact.own_marked_at,
+           coalesce(owner.display_name, owner.email_normalized) as own_marked_by_name,
            contact.archived_at,
            contact.archived_reason,
            contact.merged_into_contact_id,
@@ -1432,6 +1448,8 @@ implements AdminOutreachRepository {
            on master.id = contact.merged_into_contact_id
          left join public.admin_accounts creator
            on creator.id = contact.created_by_admin_id
+         left join public.admin_accounts owner
+           on owner.id = contact.own_marked_by_admin_id
          where contact.id = $1::uuid`,
         [contactId]
       );
@@ -1716,6 +1734,10 @@ implements AdminOutreachRepository {
         source: contact.source,
         note: contact.note,
         linkedUserId: contact.linked_user_id,
+        isOwn: contact.is_own,
+        ownNote: contact.own_note,
+        ownMarkedAt: nullableIso(contact.own_marked_at),
+        ownMarkedByName: contact.own_marked_by_name,
         archivedAt: nullableIso(contact.archived_at),
         archivedReason: contact.archived_reason,
         mergedIntoContactId: contact.merged_into_contact_id,
@@ -3096,6 +3118,30 @@ implements AdminOutreachRepository {
     });
   }
 
+  /**
+   * Помечает человека «своим» или снимает пометку.
+   *
+   * Снятие стирает и объяснение, и автора: иначе в карточке висело бы «отметил Иван» рядом
+   * с отсутствующей плашкой, и понять, действует она или нет, стало бы нельзя.
+   */
+  markPersonOwn(
+    input: Parameters<AdminOutreachRepository["markPersonOwn"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_contacts
+         set is_own = $2::boolean,
+             own_note = case when $2::boolean then $3::text else null end,
+             own_marked_at = case when $2::boolean then $4::timestamptz else null end,
+             own_marked_by_admin_id = case when $2::boolean then $5::uuid else null end,
+             updated_at = $4::timestamptz
+         where id = $1::uuid`,
+        [input.contactId, input.isOwn, input.note, input.now, input.actorAdminId]
+      );
+      return result.rowCount > 0;
+    });
+  }
+
   createNote(
     input: Parameters<AdminOutreachRepository["createNote"]>[0]
   ): Promise<boolean> {
@@ -3459,6 +3505,7 @@ function mapContact(row: ContactRow): OutreachCampaignContactSummary {
     source: row.source,
     note: row.note,
     linkedUserId: row.linked_user_id,
+    isOwn: row.is_own,
     assignedAdminId: row.assigned_admin_id,
     assignedAdminName: row.assigned_admin_name,
     stage: row.pipeline_stage,
@@ -3575,6 +3622,7 @@ function mapPerson(row: PersonRow): OutreachPerson {
     email: row.email,
     source: row.source,
     linkedUserId: row.linked_user_id,
+    isOwn: row.is_own,
     campaignCount: Number(row.campaign_count ?? 0),
     lastActivityAt: nullableIso(row.last_activity_at),
     archivedAt: nullableIso(row.archived_at),
@@ -3817,7 +3865,7 @@ const CONTACT_SUMMARY_SELECT = `
   select campaign_contact.id, contact.id as contact_id,
          contact.display_name, contact.phone_e164,
          contact.telegram_username, contact.max_identifier,
-         contact.source, contact.note, contact.linked_user_id,
+         contact.source, contact.note, contact.linked_user_id, contact.is_own,
          campaign_contact.assigned_admin_id,
          coalesce(assignee.display_name, assignee.email_normalized) as assigned_admin_name,
          campaign_contact.pipeline_stage,

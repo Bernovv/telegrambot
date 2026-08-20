@@ -391,6 +391,13 @@ test("forwards the person-level task, notes and site registration routes", () =>
     ),
     true
   );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/base/00000000-0000-4000-8000-000000000101/own"
+    ),
+    true
+  );
   assert.equal(isAllowedAdminApiPath("GET", "outreach/site-registrations"), true);
   assert.equal(
     isAllowedAdminApiPath("GET", "outreach/site-registrations?needsAttention=true"),

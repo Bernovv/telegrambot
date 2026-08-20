@@ -479,6 +479,7 @@ function handler(
     async listSiteRegistrations() {
       return { items: [], total: 0, page: 1, limit: 50, needsAttention: 0 };
     },
+    async markPersonOwn() { return { updated: false }; },
     async createNote() { return { created: false }; },
     async deleteNote() { return { deleted: false }; },
     async completeTask() { return { completed: false }; },

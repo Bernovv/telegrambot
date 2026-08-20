@@ -2,6 +2,7 @@
 
 import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
 import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
+import { OwnBadge } from "@/components/own-badge";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -11,6 +12,7 @@ import {
   completeOutreachTask,
   createOutreachNote,
   deleteOutreachNote,
+  markOutreachPersonOwn,
   deleteOutreachPerson,
   getOutreachPerson,
   listOutreachCampaigns,
@@ -58,6 +60,7 @@ import {
   PhoneCall,
   RefreshCw,
   Search,
+  ShieldCheck,
   StickyNote,
   Trash2,
   X
@@ -247,6 +250,33 @@ export default function OutreachPersonPage(
     }
   }
 
+  async function toggleOwn() {
+    if (!person) {
+      return;
+    }
+    if (person.isOwn) {
+      await run(
+        () => markOutreachPersonOwn(id, { isOwn: false }),
+        "Пометка снята."
+      );
+      return;
+    }
+    const note = window.prompt(
+      "Пометить человека своим? Менеджеры увидят плашку везде, где он показан,"
+      + " и обзванивать его не будут.\n\nКто это? Можно не заполнять."
+    );
+    if (note === null) {
+      return;
+    }
+    await run(
+      () => markOutreachPersonOwn(id, {
+        isOwn: true,
+        ...(note.trim() ? { note: note.trim() } : {})
+      }),
+      "Человек помечен своим."
+    );
+  }
+
   async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = noteDraft.trim();
@@ -431,6 +461,7 @@ export default function OutreachPersonPage(
           {person.archivedAt ? (
             <StatusPill tone="neutral">В архиве</StatusPill>
           ) : null}
+          {person.isOwn ? <OwnBadge note={person.ownNote} /> : null}
           {singleCampaign ? (
             <button
               className="primary-button"
@@ -469,6 +500,15 @@ export default function OutreachPersonPage(
           >
             <Pencil size={16} />
             {editing ? "Отменить" : "Изменить"}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating}
+            onClick={() => void toggleOwn()}
+          >
+            <ShieldCheck size={16} />
+            {person.isOwn ? "Не свой" : "Это свои"}
           </button>
           <button
             className="secondary-button"
@@ -516,6 +556,18 @@ export default function OutreachPersonPage(
         <div className="page-notice">
           Сюда сведено дублей: {person.mergedDuplicates}. Их звонки, кампании и мероприятия
           показаны ниже вместе со своими.
+        </div>
+      ) : null}
+      {person.isOwn ? (
+        <div className="page-notice">
+          <strong>Свои.</strong>{" "}
+          Обзванивать не надо.
+          {person.ownNote ? ` ${person.ownNote}.` : ""}
+          {person.ownMarkedByName
+            ? ` Отметил ${person.ownMarkedByName}${person.ownMarkedAt
+              ? ` ${formatCompactDate(person.ownMarkedAt)}`
+              : ""}.`
+            : ""}
         </div>
       ) : null}
       {person.archivedAt && person.archivedReason ? (
@@ -1299,9 +1351,11 @@ export default function OutreachPersonPage(
           campaignId={touchCampaign.campaignId}
           targets={[{
             campaignContactId: touchCampaign.campaignContactId,
+            displayName: person.displayName,
             phone: person.phone,
             telegramUsername: person.telegramUsername,
-            maxIdentifier: person.maxIdentifier
+            maxIdentifier: person.maxIdentifier,
+            isOwn: person.isOwn
           }]}
           columns={null}
           onClose={() => setTouchCampaign(null)}

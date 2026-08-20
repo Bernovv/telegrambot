@@ -2105,6 +2105,11 @@ tbody tr:hover {
   cursor: pointer;
 }
 
+.outreach-card-main:hover strong {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
 .outreach-card-main > span:last-child,
 .outreach-card-facts {
   color: var(--muted);
@@ -2413,6 +2418,27 @@ tbody tr:hover {
 
 .outreach-task-create .primary-button {
   justify-self: start;
+}
+
+/* Плашка «свои». Жёлтая, а не красная: это не ошибка и не запрет, а предупреждение —
+   человек в базе по делу, просто звонить ему не надо. */
+.own-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  color: #7a5200;
+  background: #fff4d6;
+  border: 1px solid #f0d089;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.own-badge-compact {
+  padding: 1px 7px;
+  font-size: 11px;
 }
 
 /* «Мой день» и сквозной поиск. Списки здесь короткие и разнородные — таблица на две

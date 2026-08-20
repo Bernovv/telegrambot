@@ -167,6 +167,8 @@ export interface OutreachTaskBoardItem {
   readonly contactMaxIdentifier: string | null;
   /** Человек в общей базе. По нему доска уводит в карточку клиента. */
   readonly contactId: string;
+  /** «Свой»: задача есть, а звонить не надо — плашка нужна и здесь. */
+  readonly contactIsOwn: boolean;
   readonly assignedAdminId: string;
   readonly assignedAdminName: string;
   readonly type: OutreachTaskType;
@@ -186,6 +188,8 @@ export interface OutreachCampaignContactSummary {
   readonly source: string | null;
   readonly note: string | null;
   readonly linkedUserId: string | null;
+  /** «Свой»: обзванивать не надо. Плашка видна на карточке и в списке. */
+  readonly isOwn: boolean;
   readonly assignedAdminId: string | null;
   readonly assignedAdminName: string | null;
   readonly stage: OutreachPipelineStage;
@@ -306,6 +310,7 @@ export interface OutreachPerson {
   readonly source: string | null;
   /** Пользователь бота, если человека узнали по подтверждённому телефону. */
   readonly linkedUserId: string | null;
+  readonly isOwn: boolean;
   /** В скольких кампаниях состоит сейчас — без тех, откуда его убрали. */
   readonly campaignCount: number;
   readonly lastActivityAt: string | null;
@@ -468,6 +473,11 @@ export interface OutreachPersonCard {
   readonly source: string | null;
   readonly note: string | null;
   readonly linkedUserId: string | null;
+  readonly isOwn: boolean;
+  /** Кто это: «жена организатора», «наш подрядчик». Пусто, если объяснять не стали. */
+  readonly ownNote: string | null;
+  readonly ownMarkedAt: string | null;
+  readonly ownMarkedByName: string | null;
   readonly archivedAt: string | null;
   readonly archivedReason: string | null;
   /** Карточка признана дублем: смотреть надо главного, ссылка на него здесь. */
@@ -509,6 +519,17 @@ export interface UpdateOutreachPersonRequest {
   readonly email?: string | null | undefined;
   readonly source?: string | null | undefined;
   readonly note?: string | null | undefined;
+}
+
+/**
+ * Пометка «свой» — и объяснение к ней.
+ *
+ * Снятие приходит тем же запросом с `isOwn: false`: отдельный маршрут ради обратной
+ * операции только развёл бы два пути к одному полю.
+ */
+export interface MarkOutreachPersonOwnRequest {
+  readonly isOwn: boolean;
+  readonly note?: string | undefined;
 }
 
 /** Признак уже занят другим человеком — какой именно и кем. */
@@ -586,6 +607,8 @@ export interface OutreachBaseContact {
   readonly telegramUsername: string | null;
   readonly maxIdentifier: string | null;
   readonly source: string | null;
+  /** «Свой»: видно до того, как он окажется в кампании и кому-то позвонят. */
+  readonly isOwn: boolean;
   /** Уже состоит в этой кампании — добавлять нечего. */
   readonly inCampaign: boolean;
   /** В скольких кампаниях человек уже участвует. */

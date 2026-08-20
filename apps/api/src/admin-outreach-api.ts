@@ -210,6 +210,11 @@ const siteRegistrationsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional()
 }).strict();
 
+const ownBody = z.object({
+  isOwn: z.boolean(),
+  note: z.string().trim().max(200).optional()
+}).strict();
+
 const noteBody = z.object({
   body: z.string().trim().min(1).max(4000)
 }).strict();
@@ -297,6 +302,7 @@ export type AdminOutreachHandler = Pick<
   | "completeTask"
   | "createNote"
   | "deleteNote"
+  | "markPersonOwn"
   | "listSiteRegistrations"
   | "listManagers"
   | "exportCampaign"
@@ -916,6 +922,30 @@ export class AdminOutreachController {
         ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
       })
     );
+  }
+
+  @Post("base/:id/own")
+  @RequireAdminPermission("outreach.write")
+  async markPersonOwn(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(ownBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.markPersonOwn({
+        actor: requireActor(request),
+        contactId,
+        isOwn: parsed.isOwn,
+        ...(parsed.note === undefined ? {} : { note: parsed.note }),
+        now: new Date()
+      })
+    );
+    if (!result.updated) {
+      throw outreachNotFound();
+    }
+    return result;
   }
 
   @Post("base/:id/notes")

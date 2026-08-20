@@ -1291,6 +1291,7 @@ function repository(
     async listSiteRegistrations() {
       return { items: [], total: 0, page: 1, limit: 50, needsAttention: 0 };
     },
+    async markPersonOwn() { return false; },
     async createNote() { return false; },
     async deleteNote() { return false; },
     async completeTask() { return false; },
@@ -1380,6 +1381,10 @@ function personCard() {
     source: "amoCRM",
     note: null,
     linkedUserId: null,
+    isOwn: false,
+    ownNote: null,
+    ownMarkedAt: null,
+    ownMarkedByName: null,
     archivedAt: null,
     archivedReason: null,
     mergedIntoContactId: null,

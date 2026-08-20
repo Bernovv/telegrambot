@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState, PageLoading } from "@/components/page-state";
+import { OwnBadge } from "@/components/own-badge";
 import { StatusPill } from "@/components/status-pill";
 import {
   listOrders,
@@ -130,7 +131,12 @@ export default function GlobalSearchPage() {
               <tbody>
                 {found.people.map((person) => (
                   <tr key={person.contactId}>
-                    <td><strong>{person.displayName ?? "Без имени"}</strong></td>
+                    <td>
+                      <div className="stacked-cell">
+                        <strong>{person.displayName ?? "Без имени"}</strong>
+                        {person.isOwn ? <OwnBadge compact /> : null}
+                      </div>
+                    </td>
                     <td>{person.phone ?? <span className="muted">не знаем</span>}</td>
                     <td>
                       {[

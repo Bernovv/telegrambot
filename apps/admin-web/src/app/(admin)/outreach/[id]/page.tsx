@@ -5,6 +5,7 @@ import {
   type OutreachTouchTarget
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
+import { OwnBadge } from "@/components/own-badge";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -345,9 +346,11 @@ export default function OutreachCampaignPage() {
       // касание по тому, кого менеджер выбрал.
       return {
         campaignContactId: targetId,
+        displayName: found?.displayName ?? null,
         phone: found?.phone ?? null,
         telegramUsername: found?.telegramUsername ?? null,
-        maxIdentifier: found?.maxIdentifier ?? null
+        maxIdentifier: found?.maxIdentifier ?? null,
+        isOwn: found?.isOwn ?? false
       };
     });
   }
@@ -1182,17 +1185,22 @@ export default function OutreachCampaignPage() {
                         onDragStart={() => setDraggedId(contact.id)}
                         onDragEnd={() => setDraggedId(null)}
                       >
-                        <button
+                        {/* Имя всюду ведёт в карточку клиента: одна дверь к человеку,
+                            а не сокращённый показ в одном месте и полный в другом. */}
+                        <Link
                           className="outreach-card-main"
-                          type="button"
-                          onClick={() => void openDetail(contact.id)}
+                          href={`/base/${contact.contactId}`}
+                          // Ссылку браузер тащит сам, и перетаскивание карточки по
+                          // воронке начиналось бы с перетаскивания адреса.
+                          draggable={false}
                         >
                           <span className="outreach-card-title">
                             <GripVertical size={15} aria-hidden="true" />
                             <strong>{contact.displayName ?? "Без имени"}</strong>
                           </span>
                           <span>{primaryContact(contact)}</span>
-                        </button>
+                        </Link>
+                        {contact.isOwn ? <OwnBadge compact /> : null}
                         <div className="outreach-card-facts">
                           <span>{contact.assignedAdminName ?? "Без ответственного"}</span>
                           {contact.source ? <span>{contact.source}</span> : null}
@@ -1206,6 +1214,14 @@ export default function OutreachCampaignPage() {
                             onClick={() => setAction([contact.id])}
                           >
                             <PhoneCall size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Работа по кампании"
+                            title="Этап, ответственный, задача"
+                            onClick={() => void openDetail(contact.id)}
+                          >
+                            <Settings2 size={15} />
                           </button>
                           {contact.linkedUserId ? (
                             <span title="Пользователь уже в боте">
@@ -1258,14 +1274,14 @@ export default function OutreachCampaignPage() {
                         />
                       </td>
                       <td>
-                        <button
+                        <Link
                           className="outreach-contact-link"
-                          type="button"
-                          onClick={() => void openDetail(contact.id)}
+                          href={`/base/${contact.contactId}`}
                         >
                           <strong>{contact.displayName ?? "Без имени"}</strong>
                           <span>{primaryContact(contact)}</span>
-                        </button>
+                        </Link>
+                        {contact.isOwn ? <OwnBadge compact /> : null}
                         {contact.linkedUserId ? (
                           <span className="outreach-linked">
                             <UserRoundCheck size={13} /> В боте
@@ -1292,6 +1308,10 @@ export default function OutreachCampaignPage() {
                           <button type="button" onClick={() => setAction([contact.id])}>
                             <PhoneCall size={16} />
                             Связаться
+                          </button>
+                          <button type="button" onClick={() => void openDetail(contact.id)}>
+                            <Settings2 size={16} />
+                            В воронке
                           </button>
                         </div>
                       </td>
@@ -1667,6 +1687,7 @@ export default function OutreachCampaignPage() {
                       />
                       <strong>{contact.displayName ?? "Без имени"}</strong>
                     </label>
+                    {contact.isOwn ? <OwnBadge compact /> : null}
                     <span className="outreach-field-type">
                       {contact.phone ?? contact.telegramUsername ?? contact.maxIdentifier ?? "—"}
                     </span>
@@ -1698,8 +1719,15 @@ export default function OutreachCampaignPage() {
           <aside className="outreach-drawer outreach-lead-drawer" onMouseDown={(event) => event.stopPropagation()}>
             <div className="section-title-row">
               <div>
-                <h2>{detail.displayName ?? "Без имени"}</h2>
-                <span>{primaryContact(detail)}</span>
+                <h2>
+                  <Link href={`/base/${detail.contactId}`}>
+                    {detail.displayName ?? "Без имени"}
+                  </Link>
+                </h2>
+                <span>
+                  {primaryContact(detail)}
+                  {detail.isOwn ? " · свои" : ""}
+                </span>
               </div>
               <button className="icon-button" type="button" aria-label="Закрыть" onClick={() => setDetail(null)}>
                 <X size={18} />

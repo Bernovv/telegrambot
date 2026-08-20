@@ -6,6 +6,7 @@ import {
   type OutreachTouchTarget
 } from "@/components/outreach-touch-dialog";
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
+import { OwnBadge } from "@/components/own-badge";
 import {
   AdminApiError,
   completeOutreachTask,
@@ -46,9 +47,11 @@ function touchTargetFor(task: OutreachTaskBoardItem): {
     campaignId: task.campaignId,
     target: {
       campaignContactId: task.campaignContactId,
+      displayName: task.contactName,
       phone: task.contactPhone,
       telegramUsername: task.contactTelegramUsername,
-      maxIdentifier: task.contactMaxIdentifier
+      maxIdentifier: task.contactMaxIdentifier,
+      isOwn: task.contactIsOwn
     }
   };
 }
@@ -196,13 +199,11 @@ export default function OutreachTasksPage() {
               <div className="outreach-column-cards">
                 {column.items.map((task) => (
                   <article className="outreach-lead-card outreach-task-card" key={task.id}>
-                    {/* Ссылка ведёт прямо в шторку контакта: раньше она открывала кампанию
-                        целиком, и нужного человека приходилось искать глазами в воронке. */}
+                    {/* Имя всюду ведёт в карточку клиента. Работа по кампании — отдельной
+                        ссылкой ниже: там своя воронка, а здесь нужен человек. */}
                     <Link
                       className="outreach-card-main"
-                      href={task.campaignId
-                        ? `/outreach/${task.campaignId}?contact=${task.campaignContactId}`
-                        : `/base/${task.contactId}`}
+                      href={`/base/${task.contactId}`}
                     >
                       <span className="outreach-card-title">
                         {task.type === "call" ? <Phone size={15} aria-hidden="true" /> : null}
@@ -214,6 +215,7 @@ export default function OutreachTasksPage() {
                         {task.contactPhone ?? task.campaignName ?? "Контакт не указан"}
                       </span>
                     </Link>
+                    {task.contactIsOwn ? <OwnBadge compact /> : null}
                     <div className="outreach-card-facts">
                       <span>{task.text}</span>
                     </div>
@@ -222,8 +224,15 @@ export default function OutreachTasksPage() {
                       <span>{formatDateTime(task.dueAt)}</span>
                     </div>
                     <div className="outreach-card-facts">
-                      <Link href={`/base/${task.contactId}`}>Карточка клиента</Link>
-                      <span>{task.campaignName ?? "Без кампании"}</span>
+                      {task.campaignId ? (
+                        <Link
+                          href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+                        >
+                          {task.campaignName}
+                        </Link>
+                      ) : (
+                        <span>Без кампании</span>
+                      )}
                     </div>
                     {task.status === "open" ? (
                       <div className="outreach-card-actions">

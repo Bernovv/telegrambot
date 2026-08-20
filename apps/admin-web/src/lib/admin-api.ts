@@ -26,6 +26,7 @@ import type {
   OutreachChannel,
   AddExistingContactsResult,
   ImportEventParticipantsResult,
+  MarkOutreachPersonOwnRequest,
   MoveOutreachContactsResult,
   OutreachBaseContact,
   OutreachContactStatus,
@@ -1052,6 +1053,18 @@ export function listSiteRegistrations(
       ? `outreach/site-registrations?${suffix}`
       : "outreach/site-registrations",
     signal
+  );
+}
+
+/** Пометка «свой». `isOwn: false` снимает её вместе с объяснением. */
+export function markOutreachPersonOwn(
+  contactId: string,
+  input: MarkOutreachPersonOwnRequest
+): Promise<{ readonly updated: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/own`,
+    "POST",
+    input
   );
 }
 

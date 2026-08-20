@@ -245,6 +245,27 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.deepEqual(pending.values, []);
   });
 
+  it("clears the explanation and the author when the own badge is taken off", async () => {
+    const connection = new RecordingConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.markPersonOwn({
+      contactId: "00000000-0000-4000-8000-000000000401",
+      isOwn: false,
+      note: null,
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      now: new Date("2026-08-21T09:00:00.000Z")
+    });
+
+    const update = connection.queries.find((query) =>
+      query.text.includes("update public.outreach_contacts"));
+    assert.ok(update);
+    // Иначе в карточке осталось бы «отметил Иван» рядом с отсутствующей плашкой, и понять,
+    // действует она или нет, стало бы нельзя.
+    assert.match(update.text, /own_note = case when \$2::boolean then \$3::text else null end/);
+    assert.match(update.text, /own_marked_by_admin_id = case when \$2::boolean/);
+  });
+
   it("reports stage_in_use instead of throwing when a stage delete violates the contacts foreign key", async () => {
     const connection = new ForeignKeyViolationOnDeleteConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
@@ -739,6 +760,10 @@ class PersonCardConnection implements SqlConnection {
           source: null,
           note: null,
           linked_user_id: null,
+          is_own: false,
+          own_note: null,
+          own_marked_at: null,
+          own_marked_by_name: null,
           archived_at: null,
           created_at: new Date("2026-08-01T10:00:00.000Z"),
           updated_at: new Date("2026-08-01T10:00:00.000Z")
@@ -856,6 +881,10 @@ class RichPersonCardConnection implements SqlConnection {
         source: "amoCRM",
         note: null,
         linked_user_id: null,
+        is_own: false,
+        own_note: null,
+        own_marked_at: null,
+        own_marked_by_name: null,
         archived_at: null,
         archived_reason: null,
         merged_into_contact_id: null,

@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
+import { OwnBadge } from "@/components/own-badge";
 import {
   AdminApiError,
   importOutreachPeople,
@@ -296,6 +297,7 @@ export default function OutreachBasePage() {
                             <span className="muted">Без имени</span>
                           )}
                         </strong>
+                        {person.isOwn ? <OwnBadge compact /> : null}
                         {person.source ? (
                           <span className="muted">{person.source}</span>
                         ) : null}

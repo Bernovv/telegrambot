@@ -65,7 +65,7 @@ export function isAllowedAdminApiPath(
       || path === "outreach/base/import"
       || path === "outreach/imports"
       || /^outreach\/import-rows\/[0-9a-f-]{36}\/(?:retry|dismiss)$/i.test(path)
-      || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete|merge|tasks|notes)$/i
+      || /^outreach\/base\/[0-9a-f-]{36}\/(?:archive|restore|delete|merge|tasks|notes|own)$/i
         .test(path)
       || /^outreach\/notes\/[0-9a-f-]{36}\/delete$/i.test(path)
       || path === "outreach/custom-fields"

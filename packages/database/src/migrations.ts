@@ -239,5 +239,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260821090000_outreach_person_tasks_and_notes",
     description: "Let a task belong to a person rather than to a campaign membership, and give managers accumulating notes with an author and a date",
     destructive: false
+  },
+  {
+    id: "20260821140000_outreach_own_contacts",
+    description: "Mark people who must not be cold-called so the badge follows them everywhere they show up",
+    destructive: false
   }
 ];

@@ -29,9 +29,12 @@ import { type FormEvent, useEffect, useState } from "react";
  */
 export interface OutreachTouchTarget {
   readonly campaignContactId: string;
+  readonly displayName: string | null;
   readonly phone: string | null;
   readonly telegramUsername: string | null;
   readonly maxIdentifier: string | null;
+  /** «Свой»: звонить не надо. Диалог не запрещает, но говорит об этом до записи касания. */
+  readonly isOwn: boolean;
 }
 
 /**
@@ -88,6 +91,7 @@ export function OutreachTouchDialog({
   const unreachable = targets.filter(
     (target) => !hasIdentifierFor(target, channel)
   );
+  const own = targets.filter((target) => target.isOwn);
   const outcome = outcomeOf(stage, pipeline);
 
   function switchChannel(next: OutreachChannel) {
@@ -159,6 +163,19 @@ export function OutreachTouchDialog({
             {unreachable.length === targets.length
               ? `Ни у кого из выбранных нет признака для канала «${channelLabel(channel)}».`
               : `Без признака для канала «${channelLabel(channel)}»: ${unreachable.length} из ${targets.length}.`}
+          </div>
+        ) : null}
+        {/* Запретить нельзя: иногда своему как раз и звонят, по делу. Но узнать об этом
+            менеджер должен до разговора, а не после. */}
+        {own.length > 0 ? (
+          <div className="page-warning">
+            <strong>Среди выбранных есть свои.</strong>{" "}
+            {own.length === targets.length
+              ? "Обзванивать их не надо."
+              : `${own.length} из ${targets.length}: `}
+            {own.length !== targets.length
+              ? own.map((target) => target.displayName ?? "без имени").join(", ")
+              : null}
           </div>
         ) : null}
         {error ? <div className="page-warning">{error}</div> : null}
