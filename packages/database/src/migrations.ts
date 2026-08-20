@@ -229,5 +229,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260820120000_site_registration",
     description: "Keep the registrations coming from the site form and let the bot tell the organizers about them",
     destructive: false
+  },
+  {
+    id: "20260820160000_city_event_format_and_auto_campaign",
+    description: "Tell a three-hour city meetup from an overnight trip, let an event be free, and give every event its own outreach campaign",
+    destructive: false
   }
 ];
