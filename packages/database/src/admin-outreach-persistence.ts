@@ -136,9 +136,9 @@ interface CustomFieldDefinitionRow {
 
 interface TaskBoardRow {
   readonly id: string;
-  readonly campaign_contact_id: string;
-  readonly campaign_id: string;
-  readonly campaign_name: string;
+  readonly campaign_contact_id: string | null;
+  readonly campaign_id: string | null;
+  readonly campaign_name: string | null;
   readonly contact_id: string;
   readonly contact_name: string | null;
   readonly contact_phone: string | null;
@@ -198,9 +198,19 @@ interface PersonCardRow {
 }
 
 interface PersonTaskRow extends TaskRow {
-  readonly campaign_contact_id: string;
-  readonly campaign_id: string;
-  readonly campaign_name: string;
+  readonly campaign_contact_id: string | null;
+  readonly campaign_id: string | null;
+  readonly campaign_name: string | null;
+}
+
+interface NoteRow {
+  readonly id: string;
+  readonly body: string;
+  readonly author_admin_id: string;
+  readonly author_name: string;
+  readonly created_at: Date | string;
+  readonly deleted_at: Date | string | null;
+  readonly can_delete: boolean;
 }
 
 interface PersonStageChangeRow extends StageHistoryRow {
@@ -1194,16 +1204,17 @@ implements AdminOutreachRepository {
                 coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                 task.task_type, task.task_text, task.due_at, task.status
          from public.outreach_tasks task
-         join public.outreach_campaign_contacts campaign_contact
+         join public.outreach_contacts contact on contact.id = task.contact_id
+         left join public.outreach_campaign_contacts campaign_contact
            on campaign_contact.id = task.campaign_contact_id
-         join public.outreach_campaigns campaign
+         left join public.outreach_campaigns campaign
            on campaign.id = campaign_contact.campaign_id
-         join public.outreach_contacts contact
-           on contact.id = campaign_contact.contact_id
          join public.admin_accounts assignee
            on assignee.id = task.assigned_admin_id
          where ($1::uuid is null or task.assigned_admin_id = $1)
-           and campaign_contact.removed_at is null
+           -- Убранного из кампании не тревожим, а задачу про человека вообще убирать
+           -- неоткуда: она к кампаниям не привязана и остаётся видна.
+           and (task.campaign_contact_id is null or campaign_contact.removed_at is null)
            and (
              task.status = 'open'
              or (task.status = 'completed' and task.completed_at >= $2::timestamptz)
@@ -1376,7 +1387,10 @@ implements AdminOutreachRepository {
     });
   }
 
-  getPerson(contactId: string): Promise<OutreachPersonCard | null> {
+  getPerson(
+    contactId: string,
+    viewerAdminId: string
+  ): Promise<OutreachPersonCard | null> {
     return this.read(async (connection) => {
       const contactResult = await connection.query<PersonCardRow>(
         `select
@@ -1501,14 +1515,14 @@ implements AdminOutreachRepository {
                 task.task_type, task.task_text, task.due_at, task.status,
                 task.created_at, task.completed_at
          from public.outreach_tasks task
-         join public.outreach_campaign_contacts member
+         left join public.outreach_campaign_contacts member
            on member.id = task.campaign_contact_id
-         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         left join public.outreach_campaigns campaign on campaign.id = member.campaign_id
          join public.admin_accounts assignee on assignee.id = task.assigned_admin_id
          join public.admin_accounts creator on creator.id = task.created_by_admin_id
          left join public.admin_accounts completer
            on completer.id = task.completed_by_admin_id
-         where member.contact_id = any($1::uuid[])
+         where task.contact_id = any($1::uuid[])
          order by
            case when task.status = 'open' then 0 else 1 end,
            task.due_at desc, task.id desc
@@ -1567,6 +1581,21 @@ implements AdminOutreachRepository {
          order by definition.position, definition.id
          limit 100`,
         [chain]
+      );
+
+      // Снятые заметки в карточку не едут: пометка нужна базе, а не менеджеру.
+      const notes = await connection.query<NoteRow>(
+        `select note.id, note.body, note.author_admin_id,
+                coalesce(author.display_name, author.email_normalized, 'Менеджер') as author_name,
+                note.created_at, note.deleted_at,
+                note.author_admin_id = $2::uuid as can_delete
+         from public.outreach_notes note
+         join public.admin_accounts author on author.id = note.author_admin_id
+         where note.contact_id = any($1::uuid[])
+           and note.deleted_at is null
+         order by note.created_at desc, note.id desc
+         limit 200`,
+        [chain, viewerAdminId]
       );
 
       // Заявки с сайта ищем по телефону: человек оставляет там имя и номер, и только по
@@ -1699,6 +1728,15 @@ implements AdminOutreachRepository {
           campaignContactId: row.campaign_contact_id,
           campaignId: row.campaign_id,
           campaignName: row.campaign_name
+        })),
+        notes: notes.rows.map((row) => ({
+          id: row.id,
+          body: row.body,
+          authorAdminId: row.author_admin_id,
+          authorName: row.author_name,
+          createdAt: toIso(row.created_at),
+          deletedAt: nullableIso(row.deleted_at),
+          canDelete: row.can_delete
         })),
         stageChanges: stageChanges.rows.map((row) => ({
           ...mapStageHistory(row),
@@ -2849,54 +2887,102 @@ implements AdminOutreachRepository {
     input: Parameters<AdminOutreachRepository["createTask"]>[0]
   ): Promise<boolean> {
     return this.write(async (connection) => {
-      const contact = await connection.query<{
-        readonly assigned_admin_id: string | null;
-      }>(
-        `select assigned_admin_id
-         from public.outreach_campaign_contacts
+      // Задача внутри кампании берёт человека и ответственного из строки участия: иначе
+      // она попадёт в воронку одного, а в карточку другого.
+      if (input.campaignContactId !== null) {
+        const membership = await connection.query<{
+          readonly contact_id: string;
+          readonly assigned_admin_id: string | null;
+        }>(
+          `select contact_id, assigned_admin_id
+           from public.outreach_campaign_contacts
+           where id = $1::uuid
+           for update`,
+          [input.campaignContactId]
+        );
+        const row = membership.rows[0];
+        if (!row) {
+          return false;
+        }
+        await connection.query(
+          `update public.outreach_tasks
+           set status = 'cancelled'
+           where campaign_contact_id = $1::uuid
+             and status = 'open'`,
+          [input.campaignContactId]
+        );
+        await connection.query(
+          `insert into public.outreach_tasks (
+             id, contact_id, campaign_contact_id, assigned_admin_id,
+             created_by_admin_id, task_type, task_text,
+             due_at, status, created_at
+           ) values (
+             $1::uuid, $2::uuid, $3::uuid, coalesce($4::uuid, $5::uuid, $6::uuid),
+             $6::uuid, $7::text, $8::text,
+             $9::timestamptz, 'open', $10::timestamptz
+           )`,
+          [
+            input.id,
+            row.contact_id,
+            input.campaignContactId,
+            input.assignedAdminId,
+            row.assigned_admin_id,
+            input.createdByAdminId,
+            input.type,
+            input.text,
+            input.dueAt,
+            input.now
+          ]
+        );
+        await connection.query(
+          `update public.outreach_campaign_contacts
+           set next_contact_at = $2::timestamptz,
+               updated_at = $3::timestamptz
+           where id = $1::uuid`,
+          [input.campaignContactId, input.dueAt, input.now]
+        );
+        return true;
+      }
+
+      const contact = await connection.query<{ readonly id: string }>(
+        `select id from public.outreach_contacts
          where id = $1::uuid
          for update`,
-        [input.campaignContactId]
+        [input.contactId]
       );
-      const row = contact.rows[0];
-      if (!row) {
+      if (!contact.rows[0]) {
         return false;
       }
+      // Заменяем только задачу про человека вообще. Задачи по кампаниям — отдельная работа,
+      // и гасить их из карточки значило бы тихо отменить чужой запланированный звонок.
       await connection.query(
         `update public.outreach_tasks
          set status = 'cancelled'
-         where campaign_contact_id = $1::uuid
+         where contact_id = $1::uuid
+           and campaign_contact_id is null
            and status = 'open'`,
-        [input.campaignContactId]
+        [input.contactId]
       );
       await connection.query(
         `insert into public.outreach_tasks (
-           id, campaign_contact_id, assigned_admin_id,
+           id, contact_id, campaign_contact_id, assigned_admin_id,
            created_by_admin_id, task_type, task_text,
            due_at, status, created_at
          ) values (
-           $1::uuid, $2::uuid, coalesce($3::uuid, $4::uuid, $5::uuid),
-           $5::uuid, $6::text, $7::text,
-           $8::timestamptz, 'open', $9::timestamptz
+           $1::uuid, $2::uuid, null, coalesce($3::uuid, $4::uuid),
+           $4::uuid, $5::text, $6::text,
+           $7::timestamptz, 'open', $8::timestamptz
          )`,
         [
           input.id,
-          input.campaignContactId,
+          input.contactId,
           input.assignedAdminId,
-          row.assigned_admin_id,
           input.createdByAdminId,
           input.type,
           input.text,
           input.dueAt,
           input.now
         ]
-      );
-      await connection.query(
-        `update public.outreach_campaign_contacts
-         set next_contact_at = $2::timestamptz,
-             updated_at = $3::timestamptz
-         where id = $1::uuid`,
-        [input.campaignContactId, input.dueAt, input.now]
       );
       return true;
     });
@@ -2907,7 +2993,7 @@ implements AdminOutreachRepository {
   ): Promise<boolean> {
     return this.write(async (connection) => {
       const task = await connection.query<{
-        readonly campaign_contact_id: string;
+        readonly campaign_contact_id: string | null;
       }>(
         `update public.outreach_tasks
          set status = 'completed',
@@ -2922,6 +3008,10 @@ implements AdminOutreachRepository {
       if (!row) {
         return false;
       }
+      // У задачи про человека вообще строки участия нет, и обнулять в ней нечего.
+      if (row.campaign_contact_id === null) {
+        return true;
+      }
       await connection.query(
         `update public.outreach_campaign_contacts
          set next_contact_at = null,
@@ -2930,6 +3020,50 @@ implements AdminOutreachRepository {
         [row.campaign_contact_id, input.now]
       );
       return true;
+    });
+  }
+
+  createNote(
+    input: Parameters<AdminOutreachRepository["createNote"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const contact = await connection.query<{ readonly id: string }>(
+        `select id from public.outreach_contacts where id = $1::uuid`,
+        [input.contactId]
+      );
+      if (!contact.rows[0]) {
+        return false;
+      }
+      await connection.query(
+        `insert into public.outreach_notes (
+           id, contact_id, author_admin_id, body, created_at
+         ) values ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::timestamptz)`,
+        [input.id, input.contactId, input.authorAdminId, input.body, input.now]
+      );
+      return true;
+    });
+  }
+
+  /**
+   * Снять заметку может только её автор.
+   *
+   * Не из вредности: заметка подписана именем, и стирать чужую подпись — значит менять то,
+   * что человек сказал. Чужую заметку можно только прокомментировать своей.
+   */
+  deleteNote(
+    input: Parameters<AdminOutreachRepository["deleteNote"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const result = await connection.query(
+        `update public.outreach_notes
+         set deleted_at = $3::timestamptz,
+             deleted_by_admin_id = $2::uuid
+         where id = $1::uuid
+           and author_admin_id = $2::uuid
+           and deleted_at is null`,
+        [input.noteId, input.actorAdminId, input.now]
+      );
+      return result.rowCount > 0;
     });
   }
 

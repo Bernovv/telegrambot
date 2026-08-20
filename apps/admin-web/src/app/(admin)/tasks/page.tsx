@@ -1,7 +1,10 @@
 "use client";
 
 import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
-import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
+import {
+  OutreachTouchDialog,
+  type OutreachTouchTarget
+} from "@/components/outreach-touch-dialog";
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
 import {
   AdminApiError,
@@ -27,6 +30,29 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+/**
+ * Цель касания для задачи. Пусто у задачи про человека вообще: касание записывается по
+ * строке участия в кампании, а её здесь нет — связаться можно из карточки клиента, выбрав
+ * кампанию явно.
+ */
+function touchTargetFor(task: OutreachTaskBoardItem): {
+  readonly campaignId: string;
+  readonly target: OutreachTouchTarget;
+} | null {
+  if (task.campaignId === null || task.campaignContactId === null) {
+    return null;
+  }
+  return {
+    campaignId: task.campaignId,
+    target: {
+      campaignContactId: task.campaignContactId,
+      phone: task.contactPhone,
+      telegramUsername: task.contactTelegramUsername,
+      maxIdentifier: task.contactMaxIdentifier
+    }
+  };
+}
+
 const URGENCY_COLUMNS: readonly {
   readonly key: OutreachTaskUrgency;
   readonly label: string;
@@ -47,7 +73,13 @@ export default function OutreachTasksPage() {
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [touch, setTouch] = useState<OutreachTaskBoardItem | null>(null);
+  // Касание записывается по строке участия в кампании — у задачи про человека вообще её
+  // нет, и связаться с доски по такой задаче не выйдет. Поэтому храним не саму задачу, а
+  // уже разобранную цель: так у диалога нет пустых полей, которые он не знает чем закрыть.
+  const [touch, setTouch] = useState<{
+    readonly campaignId: string;
+    readonly target: OutreachTouchTarget;
+  } | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -168,7 +200,9 @@ export default function OutreachTasksPage() {
                         целиком, и нужного человека приходилось искать глазами в воронке. */}
                     <Link
                       className="outreach-card-main"
-                      href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+                      href={task.campaignId
+                        ? `/outreach/${task.campaignId}?contact=${task.campaignContactId}`
+                        : `/base/${task.contactId}`}
                     >
                       <span className="outreach-card-title">
                         {task.type === "call" ? <Phone size={15} aria-hidden="true" /> : null}
@@ -176,7 +210,9 @@ export default function OutreachTasksPage() {
                         {task.type === "other" ? <Sparkles size={15} aria-hidden="true" /> : null}
                         <strong>{task.contactName ?? "Без имени"}</strong>
                       </span>
-                      <span>{task.contactPhone ?? task.campaignName}</span>
+                      <span>
+                        {task.contactPhone ?? task.campaignName ?? "Контакт не указан"}
+                      </span>
                     </Link>
                     <div className="outreach-card-facts">
                       <span>{task.text}</span>
@@ -187,19 +223,21 @@ export default function OutreachTasksPage() {
                     </div>
                     <div className="outreach-card-facts">
                       <Link href={`/base/${task.contactId}`}>Карточка клиента</Link>
-                      <span>{task.campaignName}</span>
+                      <span>{task.campaignName ?? "Без кампании"}</span>
                     </div>
                     {task.status === "open" ? (
                       <div className="outreach-card-actions">
-                        <button
-                          type="button"
-                          aria-label="Связаться"
-                          title="Связаться"
-                          disabled={mutating}
-                          onClick={() => setTouch(task)}
-                        >
-                          <PhoneCall size={15} />
-                        </button>
+                        {touchTargetFor(task) ? (
+                          <button
+                            type="button"
+                            aria-label="Связаться"
+                            title="Связаться"
+                            disabled={mutating}
+                            onClick={() => setTouch(touchTargetFor(task))}
+                          >
+                            <PhoneCall size={15} />
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           aria-label="Отметить выполненной"
@@ -225,12 +263,7 @@ export default function OutreachTasksPage() {
       {touch ? (
         <OutreachTouchDialog
           campaignId={touch.campaignId}
-          targets={[{
-            campaignContactId: touch.campaignContactId,
-            phone: touch.contactPhone,
-            telegramUsername: touch.contactTelegramUsername,
-            maxIdentifier: touch.contactMaxIdentifier
-          }]}
+          targets={[touch.target]}
           columns={null}
           onClose={() => setTouch(null)}
           onRecorded={async () => {

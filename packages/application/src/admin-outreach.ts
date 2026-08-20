@@ -207,7 +207,11 @@ export interface AdminOutreachRepository {
     readonly page: number;
     readonly limit: number;
   }): Promise<OutreachPersonPage>;
-  getPerson(contactId: string): Promise<OutreachPersonCard | null>;
+  /** `viewerAdminId` нужен заметкам: снять свою может только автор, и знать это карточке. */
+  getPerson(
+    contactId: string,
+    viewerAdminId: string
+  ): Promise<OutreachPersonCard | null>;
   updatePerson(input: {
     readonly contactId: string;
     readonly fields: NormalizedOutreachImportRow;
@@ -350,7 +354,10 @@ export interface AdminOutreachRepository {
   }): Promise<boolean>;
   createTask(input: {
     readonly id: string;
-    readonly campaignContactId: string;
+    /** Человек, к которому относится задача. Заполняется всегда. */
+    readonly contactId: string | null;
+    /** Кампания, в рамках которой она поставлена. Пусто — задача про человека вообще. */
+    readonly campaignContactId: string | null;
     readonly assignedAdminId: string | null;
     readonly createdByAdminId: string;
     readonly type: OutreachTaskType;
@@ -361,6 +368,18 @@ export interface AdminOutreachRepository {
   completeTask(input: {
     readonly taskId: string;
     readonly completedByAdminId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
+  createNote(input: {
+    readonly id: string;
+    readonly contactId: string;
+    readonly authorAdminId: string;
+    readonly body: string;
+    readonly now: Date;
+  }): Promise<boolean>;
+  deleteNote(input: {
+    readonly noteId: string;
+    readonly actorAdminId: string;
     readonly now: Date;
   }): Promise<boolean>;
   listManagers(): Promise<readonly OutreachManager[]>;
@@ -911,7 +930,7 @@ export class AdminOutreachService {
   }): Promise<OutreachPersonCard | null> {
     requirePermission(input.actor, "outreach.read");
     requireUuid(input.contactId);
-    return this.repository.getPerson(input.contactId);
+    return this.repository.getPerson(input.contactId, input.actor.adminId);
   }
 
   async updatePerson(input: {
@@ -923,7 +942,10 @@ export class AdminOutreachService {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.contactId);
 
-    const current = await this.repository.getPerson(input.contactId);
+    const current = await this.repository.getPerson(
+      input.contactId,
+      input.actor.adminId
+    );
     if (!current) {
       return { status: "not_found" };
     }
@@ -1570,9 +1592,17 @@ export class AdminOutreachService {
     };
   }
 
+  /**
+   * Ставит следующий шаг по контакту.
+   *
+   * Кампанию указывать не обязательно: задача принадлежит человеку, а кампания её только
+   * уточняет. Без кампании задачу можно поставить и тому, кто ни в одной не состоит, — из
+   * карточки клиента спрашивают именно это.
+   */
   async createTask(input: {
     readonly actor: AdminRequestActor;
-    readonly campaignContactId: string;
+    readonly contactId?: string;
+    readonly campaignContactId?: string;
     readonly assignedAdminId?: string;
     readonly type: OutreachTaskType;
     readonly text: string;
@@ -1580,7 +1610,15 @@ export class AdminOutreachService {
     readonly now: Date;
   }): Promise<{ readonly created: boolean }> {
     requirePermission(input.actor, "outreach.write");
-    requireUuid(input.campaignContactId);
+    if (!input.campaignContactId && !input.contactId) {
+      throw new Error("Outreach task needs a contact or a campaign contact");
+    }
+    if (input.campaignContactId) {
+      requireUuid(input.campaignContactId);
+    }
+    if (input.contactId) {
+      requireUuid(input.contactId);
+    }
     if (input.assignedAdminId) {
       requireUuid(input.assignedAdminId);
     }
@@ -1590,7 +1628,9 @@ export class AdminOutreachService {
     return {
       created: await this.repository.createTask({
         id: this.idGenerator.newId(),
-        campaignContactId: input.campaignContactId,
+        // Кампания сильнее: по ней и человек, и ответственный берутся из строки участия.
+        contactId: input.campaignContactId ? null : input.contactId ?? null,
+        campaignContactId: input.campaignContactId ?? null,
         assignedAdminId: input.assignedAdminId ?? null,
         createdByAdminId: input.actor.adminId,
         type: input.type,
@@ -1612,6 +1652,46 @@ export class AdminOutreachService {
       completed: await this.repository.completeTask({
         taskId: input.taskId,
         completedByAdminId: input.actor.adminId,
+        now: input.now
+      })
+    };
+  }
+
+  /** Заметка о человеке. Копится рядом с прежними, а не затирает их. */
+  async createNote(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly body: string;
+    readonly now: Date;
+  }): Promise<{ readonly created: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    return {
+      created: await this.repository.createNote({
+        id: this.idGenerator.newId(),
+        contactId: input.contactId,
+        authorAdminId: input.actor.adminId,
+        body: requiredText(input.body, 4000, "Outreach note"),
+        now: input.now
+      })
+    };
+  }
+
+  /**
+   * Снимает свою заметку. Чужую снять нельзя — это отказ, а не «не нашлось»: заметка
+   * подписана именем, и стирать чужую подпись значит менять сказанное другим человеком.
+   */
+  async deleteNote(input: {
+    readonly actor: AdminRequestActor;
+    readonly noteId: string;
+    readonly now: Date;
+  }): Promise<{ readonly deleted: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.noteId);
+    return {
+      deleted: await this.repository.deleteNote({
+        noteId: input.noteId,
+        actorAdminId: input.actor.adminId,
         now: input.now
       })
     };

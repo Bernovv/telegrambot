@@ -1,6 +1,10 @@
 "use client";
 
-import { AdminApiError, createOutreachTask } from "@/lib/admin-api";
+import {
+  AdminApiError,
+  createOutreachPersonTask,
+  createOutreachTask
+} from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import type {
   OutreachManager,
@@ -10,20 +14,32 @@ import type {
 import { type FormEvent, useState } from "react";
 
 /**
+ * К чему привязать задачу.
+ *
+ * Внутри кампании она встаёт в её воронку и наследует ответственного из строки участия.
+ * Без кампании — относится к человеку целиком: так её можно поставить и тому, кто ни в
+ * одной кампании не состоит.
+ */
+export type OutreachTaskTarget =
+  | { readonly kind: "campaign"; readonly campaignContactId: string }
+  | { readonly kind: "person"; readonly contactId: string };
+
+/**
  * Постановка следующего шага по контакту.
  *
- * Форма, а не диалог: в кампании она раскрывается прямо в шторке контакта, на доске задач
- * её оборачивают в модалку. Общего у обоих мест ровно одно — открытая задача на контакте
- * может быть только одна, и новая молча отменяет прежнюю. Об этом здесь и предупреждаем.
+ * Форма, а не диалог: в кампании она раскрывается прямо в шторке контакта, на доске задач и
+ * в карточке клиента её оборачивают в модалку. Общее у всех мест одно — открытая задача на
+ * этой линии работы может быть только одна, и новая молча отменяет прежнюю. Об этом здесь и
+ * предупреждаем.
  */
 export function OutreachTaskForm({
-  campaignContactId,
+  target,
   openTask,
   managers,
   defaultAssignedAdminId,
   onSaved
 }: {
-  readonly campaignContactId: string;
+  readonly target: OutreachTaskTarget;
   readonly openTask: OutreachTask | null;
   readonly managers: readonly OutreachManager[];
   readonly defaultAssignedAdminId: string | null;
@@ -41,12 +57,15 @@ export function OutreachTaskForm({
     setSubmitting(true);
     setError(null);
     try {
-      await createOutreachTask(campaignContactId, {
+      const payload = {
         type: text(data, "type") as OutreachTaskType,
         text: text(data, "text"),
         dueAt: new Date(dueAt).toISOString(),
         ...(assignedAdminId ? { assignedAdminId } : {})
-      });
+      };
+      await (target.kind === "campaign"
+        ? createOutreachTask(target.campaignContactId, payload)
+        : createOutreachPersonTask(target.contactId, payload));
       form.reset();
       await onSaved();
     } catch (caught) {
@@ -62,7 +81,10 @@ export function OutreachTaskForm({
     <form onSubmit={(event) => void submit(event)}>
       {openTask ? (
         <p className="page-warning">
-          Открытая задача уже есть: «{openTask.text}» на {formatDateTime(openTask.dueAt)}.
+          {target.kind === "campaign"
+            ? "Открытая задача по этой кампании уже есть"
+            : "Открытая задача по человеку уже есть"}
+          : «{openTask.text}» на {formatDateTime(openTask.dueAt)}.
           Новая её заменит — прежняя уйдёт в историю как отменённая.
         </p>
       ) : null}

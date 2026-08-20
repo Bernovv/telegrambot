@@ -204,6 +204,10 @@ const taskBody = z.object({
   dueAt: z.iso.datetime({ offset: true })
 }).strict();
 
+const noteBody = z.object({
+  body: z.string().trim().min(1).max(4000)
+}).strict();
+
 const manualContactBody = z.object({
   assignedAdminId: uuid.optional(),
   name: z.string().trim().max(200).optional(),
@@ -285,6 +289,8 @@ export type AdminOutreachHandler = Pick<
   | "updateContactStage"
   | "createTask"
   | "completeTask"
+  | "createNote"
+  | "deleteNote"
   | "listManagers"
   | "exportCampaign"
 >;
@@ -849,6 +855,85 @@ export class AdminOutreachController {
       })
     );
     if (!result.created) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  /**
+   * Задача по человеку, а не по кампании. Соседний маршрут по строке участия остаётся —
+   * там кампания известна и определяет и ответственного, и место задачи в воронке.
+   */
+  @Post("base/:id/tasks")
+  @RequireAdminPermission("outreach.write")
+  async createPersonTask(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(taskBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.createTask({
+        actor: requireActor(request),
+        contactId,
+        ...(parsed.assignedAdminId === undefined
+          ? {}
+          : { assignedAdminId: parsed.assignedAdminId }),
+        type: parsed.type,
+        text: parsed.text,
+        dueAt: new Date(parsed.dueAt),
+        now: new Date()
+      })
+    );
+    if (!result.created) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Post("base/:id/notes")
+  @RequireAdminPermission("outreach.write")
+  async createNote(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(noteBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.createNote({
+        actor: requireActor(request),
+        contactId,
+        body: parsed.body,
+        now: new Date()
+      })
+    );
+    if (!result.created) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  /**
+   * Снять можно только свою заметку. Чужая отвечает «не найдено» намеренно: сообщать, что
+   * заметка есть, но не ваша, значит рассказывать о чужой записи тому, кто её не видел бы.
+   */
+  @Post("notes/:id/delete")
+  @RequireAdminPermission("outreach.write")
+  async deleteNote(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const noteId = parse(uuid, id);
+    const result = await executeOutreach(() =>
+      this.handler.deleteNote({
+        actor: requireActor(request),
+        noteId,
+        now: new Date()
+      })
+    );
+    if (!result.deleted) {
       throw outreachNotFound();
     }
     return result;

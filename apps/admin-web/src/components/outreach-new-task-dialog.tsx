@@ -13,19 +13,18 @@ import type {
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
-  OutreachPersonCampaign
+  OutreachPersonCampaign,
+  OutreachTask
 } from "@ticket-platform/contracts/admin-outreach";
 import { ArrowLeft, Search, X } from "lucide-react";
-import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 /**
  * Постановка задачи «с нуля» — с доски задач или из карточки клиента.
  *
- * Задача в базе висит не на человеке, а на его участии в конкретной кампании, поэтому
- * диалог ведёт по трём шагам: найти человека, выбрать кампанию, назначить шаг. Человека без
- * кампаний он не прячет и не заводит ему кампанию молча — говорит прямо, что задачу поставить
- * не на что, и уводит в карточку.
+ * Два шага: найти человека и назначить шаг. Кампания между ними необязательна — задача
+ * принадлежит человеку, а кампания её только уточняет и ставит в свою воронку. Поэтому
+ * задачу можно поставить и тому, кто ни в одной кампании не состоит.
  */
 export function OutreachNewTaskDialog({
   person,
@@ -44,6 +43,9 @@ export function OutreachNewTaskDialog({
   const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<OutreachPersonCard | null>(null);
   const [membership, setMembership] = useState<OutreachPersonCampaign | null>(null);
+  // Задача по человеку, без кампании: либо кампаний нет вовсе, либо менеджер отказался
+  // привязывать шаг к какой-то одной.
+  const [personTask, setPersonTask] = useState<OutreachPersonCard | null>(null);
   const [contact, setContact] = useState<OutreachCampaignContactDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +57,14 @@ export function OutreachNewTaskDialog({
       const card = await getOutreachPerson(contactId);
       setPicked(card);
       const active = card.campaigns.filter((item) => item.removedAt === null);
-      // Одна кампания — выбирать не из чего, лишний экран только замедляет.
+      // Одна кампания — выбирать не из чего, лишний экран только замедляет. Ни одной —
+      // ставим задачу по человеку и не заставляем заводить кампанию ради звонка.
       if (active.length === 1 && active[0]) {
         await pickMembership(active[0]);
+        return;
+      }
+      if (active.length === 0) {
+        setPersonTask(card);
       }
     } catch (caught) {
       setError(messageFor(caught, "Не удалось открыть карточку человека."));
@@ -107,8 +114,9 @@ export function OutreachNewTaskDialog({
   }
 
   function back() {
-    if (membership) {
+    if (membership || personTask) {
       setMembership(null);
+      setPersonTask(null);
       setContact(null);
       return;
     }
@@ -146,10 +154,10 @@ export function OutreachNewTaskDialog({
           </button>
         </div>
 
-        {picked && !person ? (
+        {picked && (!person || membership || personTask) ? (
           <button className="back-link" type="button" onClick={back}>
             <ArrowLeft size={14} />
-            {membership ? "Другая кампания" : "Другой человек"}
+            {membership || personTask ? "Выбрать иначе" : "Другой человек"}
           </button>
         ) : null}
 
@@ -205,16 +213,12 @@ export function OutreachNewTaskDialog({
           </>
         ) : null}
 
-        {picked && !membership && !busy ? (
-          activeCampaigns.length === 0 ? (
-            <div className="page-warning">
-              <strong>Задачу поставить не на что.</strong>{" "}
-              Задача ставится по контакту в кампании, а этот человек сейчас ни в одной
-              не состоит. Добавьте его в кампанию — из{" "}
-              <Link href={`/base/${picked.contactId}`}>карточки</Link> или из самой
-              кампании.
-            </div>
-          ) : (
+        {picked && !membership && !personTask && !busy ? (
+          <>
+            <p className="muted">
+              К какой кампании отнести задачу? Это влияет только на то, в чьей воронке она
+              будет видна.
+            </p>
             <ul className="merge-candidates">
               {activeCampaigns.map((item) => (
                 <li key={item.campaignContactId}>
@@ -234,8 +238,21 @@ export function OutreachNewTaskDialog({
                   </button>
                 </li>
               ))}
+              <li>
+                <div className="stacked-cell">
+                  <strong>Без кампании</strong>
+                  <span className="muted">задача про человека вообще</span>
+                </div>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => setPersonTask(picked)}
+                >
+                  Выбрать
+                </button>
+              </li>
             </ul>
-          )
+          </>
         ) : null}
 
         {membership ? (
@@ -244,7 +261,10 @@ export function OutreachNewTaskDialog({
               Кампания: {membership.campaignName}
             </p>
             <OutreachTaskForm
-              campaignContactId={membership.campaignContactId}
+              target={{
+                kind: "campaign",
+                campaignContactId: membership.campaignContactId
+              }}
               openTask={contact?.openTask ?? null}
               managers={managers}
               defaultAssignedAdminId={contact?.assignedAdminId ?? null}
@@ -252,9 +272,29 @@ export function OutreachNewTaskDialog({
             />
           </div>
         ) : null}
+
+        {personTask ? (
+          <div className="outreach-task-create">
+            <p className="muted">Без кампании — задача про человека вообще</p>
+            <OutreachTaskForm
+              target={{ kind: "person", contactId: personTask.contactId }}
+              openTask={openPersonTask(personTask)}
+              managers={managers}
+              defaultAssignedAdminId={null}
+              onSaved={onCreated}
+            />
+          </div>
+        ) : null}
       </section>
     </div>
   );
+}
+
+/** Открытая задача про человека вообще. Именно её заменит новая — о чём форма и скажет. */
+function openPersonTask(person: OutreachPersonCard): OutreachTask | null {
+  return person.tasks.find(
+    (task) => task.status === "open" && task.campaignContactId === null
+  ) ?? null;
 }
 
 function messageFor(caught: unknown, fallback: string): string {

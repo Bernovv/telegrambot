@@ -153,9 +153,10 @@ export interface OutreachCustomFieldValue {
 
 export interface OutreachTaskBoardItem {
   readonly id: string;
-  readonly campaignContactId: string;
-  readonly campaignId: string;
-  readonly campaignName: string;
+  /** Пусто — задача про человека вообще, а не про его работу в какой-то кампании. */
+  readonly campaignContactId: string | null;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
   readonly contactName: string | null;
   readonly contactPhone: string | null;
   /**
@@ -337,11 +338,29 @@ export interface OutreachPersonActivity extends OutreachActivity {
   readonly campaignName: string;
 }
 
-/** Задача по человеку. Живёт в кампании, но в карточке важна сама по себе. */
+/** Задача по человеку. Может жить в кампании, а может относиться к человеку целиком. */
 export interface OutreachPersonTask extends OutreachTask {
-  readonly campaignContactId: string;
-  readonly campaignId: string;
-  readonly campaignName: string;
+  readonly campaignContactId: string | null;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+}
+
+/**
+ * Заметка менеджера о человеке.
+ *
+ * Не путать с полем `note` самого контакта: то приезжает из импорта и перезаписывается
+ * целиком. Заметки копятся, у каждой есть автор и дата, и снять свою может только она сама.
+ */
+export interface OutreachNote {
+  readonly id: string;
+  readonly body: string;
+  readonly authorAdminId: string;
+  readonly authorName: string;
+  readonly createdAt: string;
+  /** Автор снял заметку. Такие в карточку не приезжают вовсе. */
+  readonly deletedAt: string | null;
+  /** Смотрящий и есть автор. Чужую заметку снять нельзя — и кнопки для неё быть не должно. */
+  readonly canDelete: boolean;
 }
 
 /** Переход по стадии — с названиями стадий так, как их назвали в той кампании. */
@@ -464,6 +483,7 @@ export interface OutreachPersonCard {
   /** Вся история звонков и сообщений из всех кампаний одной лентой. */
   readonly activities: readonly OutreachPersonActivity[];
   readonly tasks: readonly OutreachPersonTask[];
+  readonly notes: readonly OutreachNote[];
   readonly stageChanges: readonly OutreachPersonStageChange[];
   readonly customFields: readonly OutreachPersonCustomField[];
   readonly participations: readonly OutreachContactParticipation[];

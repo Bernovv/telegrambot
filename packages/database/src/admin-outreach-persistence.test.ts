@@ -108,7 +108,10 @@ describe("PostgreSQL administrator outreach persistence", () => {
     const connection = new RichPersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
 
-    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+    const card = await repository.getPerson(
+      "00000000-0000-4000-8000-000000000401",
+      "00000000-0000-4000-8000-000000000001"
+    );
 
     // 120000 оплаченный + 50000 частично возвращённый + 30000 наличными мимо бота.
     // Исключённый из отчётов и полностью возвращённый в сумму не идут.
@@ -119,7 +122,10 @@ describe("PostgreSQL administrator outreach persistence", () => {
     const connection = new RichPersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
 
-    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+    const card = await repository.getPerson(
+      "00000000-0000-4000-8000-000000000401",
+      "00000000-0000-4000-8000-000000000001"
+    );
 
     const fromOrder = card?.questionnaires.filter(
       (questionnaire) => questionnaire.source === "order");
@@ -136,10 +142,84 @@ describe("PostgreSQL administrator outreach persistence", () => {
     const connection = new RichPersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
 
-    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+    const card = await repository.getPerson(
+      "00000000-0000-4000-8000-000000000401",
+      "00000000-0000-4000-8000-000000000001"
+    );
 
     assert.equal(card?.bot?.userId, "00000000-0000-4000-8000-000000000501");
     assert.equal(card?.bot?.touchpoints.length, 1);
+  });
+
+  it("keeps campaign tasks alone when a task about the person is created", async () => {
+    const connection = new ExistingContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.createTask({
+      id: "00000000-0000-4000-8000-000000000901",
+      contactId: "00000000-0000-4000-8000-000000000401",
+      campaignContactId: null,
+      assignedAdminId: null,
+      createdByAdminId: "00000000-0000-4000-8000-000000000001",
+      type: "call",
+      text: "Перезвонить после отпуска",
+      dueAt: new Date("2026-09-01T09:00:00.000Z"),
+      now: new Date("2026-08-21T09:00:00.000Z")
+    });
+
+    const cancel = connection.queries.find((query) =>
+      query.text.includes("set status = 'cancelled'"));
+    assert.ok(cancel);
+    // Гасим только прежнюю задачу про человека вообще. Задачи по кампаниям — чужая
+    // запланированная работа, и снимать её отсюда нельзя.
+    assert.match(cancel.text, /campaign_contact_id is null/);
+    const insert = connection.queries.find((query) =>
+      query.text.includes("insert into public.outreach_tasks"));
+    assert.ok(insert);
+    assert.match(insert.text, /\$2::uuid, null,/);
+  });
+
+  it("takes the person and the assignee from the membership for a campaign task", async () => {
+    const connection = new CampaignContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.createTask({
+      id: "00000000-0000-4000-8000-000000000901",
+      contactId: null,
+      campaignContactId: "00000000-0000-4000-8000-000000000201",
+      assignedAdminId: null,
+      createdByAdminId: "00000000-0000-4000-8000-000000000002",
+      type: "call",
+      text: "Позвонить",
+      dueAt: new Date("2026-09-01T09:00:00.000Z"),
+      now: new Date("2026-08-21T09:00:00.000Z")
+    });
+
+    const insert = connection.queries.find((query) =>
+      query.text.includes("insert into public.outreach_tasks"));
+    assert.ok(insert);
+    // Человек берётся из строки участия, а не из запроса: иначе задача попала бы в воронку
+    // одного, а в карточку другого.
+    assert.equal(insert.values[1], "00000000-0000-4000-8000-000000000401");
+    assert.equal(insert.values[2], "00000000-0000-4000-8000-000000000201");
+  });
+
+  it("lets only the author take their own note down", async () => {
+    const connection = new RecordingConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.deleteNote({
+      noteId: "00000000-0000-4000-8000-000000000a01",
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      now: new Date("2026-08-21T09:00:00.000Z")
+    });
+
+    const update = connection.queries.find((query) =>
+      query.text.includes("update public.outreach_notes"));
+    assert.ok(update);
+    assert.match(update.text, /author_admin_id = \$2::uuid/);
+    // Снятую второй раз не снимаем: иначе дата и автор снятия переписались бы задним числом.
+    assert.match(update.text, /deleted_at is null/);
   });
 
   it("reports stage_in_use instead of throwing when a stage delete violates the contacts foreign key", async () => {
@@ -425,7 +505,10 @@ describe("PostgreSQL administrator outreach persistence", () => {
     const connection = new PersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
 
-    await repository.getPerson("00000000-0000-4000-8000-000000000301");
+    await repository.getPerson(
+      "00000000-0000-4000-8000-000000000301",
+      "00000000-0000-4000-8000-000000000001"
+    );
 
     const answers = connection.queries.find((query) =>
       query.text.includes("from public.event_participant_field_values")
@@ -441,7 +524,10 @@ describe("PostgreSQL administrator outreach persistence", () => {
     const connection = new PersonCardConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
 
-    await repository.getPerson("00000000-0000-4000-8000-000000000301");
+    await repository.getPerson(
+      "00000000-0000-4000-8000-000000000301",
+      "00000000-0000-4000-8000-000000000001"
+    );
 
     const activities = connection.queries.find((query) =>
       query.text.includes("from public.outreach_activities")
@@ -850,6 +936,30 @@ class RichPersonCardConnection implements SqlConnection {
       }];
     }
     return [];
+  }
+
+  release(): void {
+    this.released = true;
+  }
+}
+
+/** Человек, который в базе есть: без него задача про него молча не создаётся. */
+class ExistingContactConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    if (text.includes("from public.outreach_contacts")) {
+      return {
+        rows: [{ id: "00000000-0000-4000-8000-000000000401" } as TRow],
+        rowCount: 1
+      };
+    }
+    return { rows: [], rowCount: 0 };
   }
 
   release(): void {

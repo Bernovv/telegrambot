@@ -6,9 +6,14 @@ import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
+  addExistingContactsToCampaign,
   archiveOutreachPerson,
+  completeOutreachTask,
+  createOutreachNote,
+  deleteOutreachNote,
   deleteOutreachPerson,
   getOutreachPerson,
+  listOutreachCampaigns,
   listOutreachManagers,
   listOutreachPeople,
   mergeOutreachPeople,
@@ -30,6 +35,7 @@ import {
 } from "@/lib/outreach-labels";
 import type {
   OutreachDeleteBlocker,
+  OutreachCampaignSummary,
   OutreachManager,
   OutreachMergeBlocker,
   OutreachPerson,
@@ -42,6 +48,7 @@ import {
   Bot,
   CalendarClock,
   CalendarDays,
+  CheckCircle2,
   ExternalLink,
   Mail,
   Merge,
@@ -51,12 +58,20 @@ import {
   PhoneCall,
   RefreshCw,
   Search,
+  StickyNote,
   Trash2,
   X
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, use, useCallback, useEffect, useState } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  use,
+  useCallback,
+  useEffect,
+  useState
+} from "react";
 
 const BLOCKER_LABELS: Record<OutreachDeleteBlocker, string> = {
   in_bot: "человек есть в боте — там его согласия и, возможно, оплаты",
@@ -111,6 +126,9 @@ export default function OutreachPersonPage(
   const [touchCampaign, setTouchCampaign] =
     useState<OutreachPersonCampaign | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [campaigns, setCampaigns] =
+    useState<readonly OutreachCampaignSummary[]>([]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -136,13 +154,16 @@ export default function OutreachPersonPage(
     return () => controller.abort();
   }, [load]);
 
-  // Менеджеры нужны только форме постановки задачи — грузим молча: без них карточка
-  // работает, просто ответственного не выбрать вручную.
+  // Менеджеры и кампании нужны только двум действиям — грузим молча: без них карточка
+  // работает, просто ответственного не выбрать и в кампанию отсюда не добавить.
   useEffect(() => {
     const controller = new AbortController();
     void listOutreachManagers(controller.signal)
       .then(setManagers)
       .catch(() => setManagers([]));
+    void listOutreachCampaigns(controller.signal)
+      .then(setCampaigns)
+      .catch(() => setCampaigns([]));
     return () => controller.abort();
   }, []);
 
@@ -221,6 +242,60 @@ export default function OutreachPersonPage(
       await load();
     } catch (caught) {
       setError(messageFor(caught, "Не удалось выполнить действие."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function addNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = noteDraft.trim();
+    if (!body) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await createOutreachNote(id, body);
+      setNoteDraft("");
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить заметку."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeNote(noteId: string) {
+    if (!window.confirm("Снять заметку? В карточке её больше не будет.")) {
+      return;
+    }
+    await run(() => deleteOutreachNote(noteId), "Заметка снята.");
+  }
+
+  async function addToCampaign(event: ChangeEvent<HTMLSelectElement>) {
+    const campaignId = event.target.value;
+    if (!campaignId) {
+      return;
+    }
+    event.target.value = "";
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await addExistingContactsToCampaign({
+        campaignId,
+        contactIds: [id]
+      });
+      // Повтор — не ошибка: менеджер мог не заметить кампанию в списке ниже. Но и молча
+      // отвечать «добавлен» на «уже был» нельзя, иначе непонятно, что произошло.
+      setNotice(result.added > 0
+        ? "Человек добавлен в кампанию."
+        : "Он уже состоит в этой кампании.");
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось добавить в кампанию."));
     } finally {
       setMutating(false);
     }
@@ -329,6 +404,11 @@ export default function OutreachPersonPage(
   // одна, спрашивать нечего; когда их несколько, кнопка живёт в строке каждой.
   const singleCampaign = activeCampaigns.length === 1 ? activeCampaigns[0] : null;
   const timeline = buildPersonTimeline(person);
+  // Кампании, где человека ещё нет. Убранного из кампании в список возвращаем: добавить
+  // его обратно — обычное дело, а прятать эту кампанию значит требовать искать её в другом
+  // разделе.
+  const availableCampaigns = campaigns.filter((campaign) =>
+    !activeCampaigns.some((item) => item.campaignId === campaign.id));
 
   return (
     <>
@@ -655,6 +735,64 @@ export default function OutreachPersonPage(
       <section className="data-section">
         <div className="section-title-row">
           <div>
+            <h2>Заметки</h2>
+            <span>{person.notes.length}</span>
+          </div>
+          {/* Не то же, что комментарий в карточке выше: тот приезжает из импорта и
+              перезаписывается целиком. Заметки копятся и подписаны именем. */}
+          <span className="muted">Что менеджеры узнали о человеке</span>
+        </div>
+        <form className="person-note-form" onSubmit={(event) => void addNote(event)}>
+          <textarea
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            rows={2}
+            maxLength={4000}
+            placeholder="Например: просил не звонить до сентября, едет с женой"
+          />
+          <button
+            className="secondary-button"
+            type="submit"
+            disabled={mutating || noteDraft.trim().length === 0}
+          >
+            <StickyNote size={16} />
+            Записать
+          </button>
+        </form>
+        {person.notes.length === 0 ? (
+          <p className="muted">Заметок пока нет.</p>
+        ) : (
+          <ol className="person-timeline">
+            {person.notes.map((note) => (
+              <li key={note.id}>
+                <div className="person-timeline-head">
+                  <strong>{note.authorName}</strong>
+                  <span className="muted">{formatDateTime(note.createdAt)}</span>
+                  {/* Снять можно только свою: заметка подписана именем, и стирать чужую
+                      подпись значит менять сказанное другим человеком. */}
+                  {note.canDelete ? (
+                    <button
+                      className="icon-button"
+                      type="button"
+                      aria-label="Снять заметку"
+                      title="Снять заметку"
+                      disabled={mutating}
+                      onClick={() => void removeNote(note.id)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ) : null}
+                </div>
+                <p>{note.body}</p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="data-section">
+        <div className="section-title-row">
+          <div>
             <h2>Задачи</h2>
             <span>
               {openTasks.length > 0
@@ -675,6 +813,7 @@ export default function OutreachPersonPage(
                   <th>Ответственный</th>
                   <th>Кампания</th>
                   <th>Состояние</th>
+                  <th><span className="sr-only">Действия</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -689,12 +828,16 @@ export default function OutreachPersonPage(
                     <td>{formatDateTime(task.dueAt)}</td>
                     <td>{task.assignedAdminName}</td>
                     <td>
-                      <Link
-                        className="row-link"
-                        href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
-                      >
-                        {task.campaignName}
-                      </Link>
+                      {task.campaignId ? (
+                        <Link
+                          className="offer-link-inline"
+                          href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+                        >
+                          {task.campaignName}
+                        </Link>
+                      ) : (
+                        <span className="muted">без кампании</span>
+                      )}
                     </td>
                     <td>
                       <StatusPill
@@ -713,6 +856,23 @@ export default function OutreachPersonPage(
                             : "Открыта"}
                       </StatusPill>
                     </td>
+                    <td>
+                      {task.status === "open" ? (
+                        <div className="outreach-row-actions">
+                          <button
+                            type="button"
+                            disabled={mutating}
+                            onClick={() => void run(
+                              () => completeOutreachTask(task.id),
+                              "Задача выполнена."
+                            )}
+                          >
+                            <CheckCircle2 size={16} />
+                            Выполнено
+                          </button>
+                        </div>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -727,6 +887,21 @@ export default function OutreachPersonPage(
             <h2>Кампании</h2>
             <span>{person.campaigns.length}</span>
           </div>
+          {availableCampaigns.length > 0 ? (
+            <label className="select-field outreach-assign">
+              <span>Добавить в кампанию</span>
+              <select
+                defaultValue=""
+                disabled={mutating}
+                onChange={(event) => void addToCampaign(event)}
+              >
+                <option value="">Выберите</option>
+                {availableCampaigns.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
         {person.campaigns.length === 0 ? (
           <p className="muted">Человек ещё ни в одной кампании не участвовал.</p>
@@ -1110,7 +1285,7 @@ export default function OutreachPersonPage(
                   <span className="muted">{formatDateTime(entry.occurredAt)}</span>
                 </div>
                 <div className="person-timeline-meta muted">
-                  {entry.actor} · {entry.campaignName}
+                  {[entry.actor, entry.campaignName].filter(Boolean).join(" · ")}
                 </div>
                 {entry.note ? <p>{entry.note}</p> : null}
               </li>
@@ -1160,7 +1335,7 @@ interface TimelineEntry {
   readonly badge: string | null;
   readonly tone: "positive" | "neutral" | "danger" | "warning" | null;
   readonly actor: string;
-  readonly campaignName: string;
+  readonly campaignName: string | null;
   readonly occurredAt: string;
   readonly note: string | null;
 }

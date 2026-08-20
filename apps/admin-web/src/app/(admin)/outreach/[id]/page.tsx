@@ -1849,7 +1849,7 @@ export default function OutreachCampaignPage() {
               <details className="outreach-task-create" open={!detail.openTask}>
                 <summary>{detail.openTask ? "Заменить задачу" : "Поставить задачу"}</summary>
                 <OutreachTaskForm
-                  campaignContactId={detail.id}
+                  target={{ kind: "campaign", campaignContactId: detail.id }}
                   openTask={detail.openTask}
                   managers={managers}
                   defaultAssignedAdminId={detail.assignedAdminId}

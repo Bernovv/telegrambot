@@ -1008,6 +1008,44 @@ export function createOutreachTask(
   );
 }
 
+/** Задача про человека вообще: без кампании, и потому доступна всем в базе. */
+export function createOutreachPersonTask(
+  contactId: string,
+  input: {
+    readonly assignedAdminId?: string;
+    readonly type: OutreachTaskType;
+    readonly text: string;
+    readonly dueAt: string;
+  }
+): Promise<{ readonly created: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/tasks`,
+    "POST",
+    input
+  );
+}
+
+export function createOutreachNote(
+  contactId: string,
+  body: string
+): Promise<{ readonly created: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/notes`,
+    "POST",
+    { body }
+  );
+}
+
+export function deleteOutreachNote(
+  noteId: string
+): Promise<{ readonly deleted: boolean }> {
+  return requestAdminMutation(
+    `outreach/notes/${encodeURIComponent(noteId)}/delete`,
+    "POST",
+    {}
+  );
+}
+
 export function completeOutreachTask(
   taskId: string
 ): Promise<{ readonly completed: boolean }> {

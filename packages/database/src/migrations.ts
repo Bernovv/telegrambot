@@ -234,5 +234,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260820160000_city_event_format_and_auto_campaign",
     description: "Tell a three-hour city meetup from an overnight trip, let an event be free, and give every event its own outreach campaign",
     destructive: false
+  },
+  {
+    id: "20260821090000_outreach_person_tasks_and_notes",
+    description: "Let a task belong to a person rather than to a campaign membership, and give managers accumulating notes with an author and a date",
+    destructive: false
   }
 ];

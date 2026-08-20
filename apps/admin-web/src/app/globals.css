@@ -2415,6 +2415,28 @@ tbody tr:hover {
   justify-self: start;
 }
 
+.person-note-form {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin-bottom: 16px;
+}
+
+.person-note-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.person-timeline .person-timeline-head .icon-button {
+  margin-left: auto;
+}
+
 .outreach-history {
   padding: 18px;
 }

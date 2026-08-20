@@ -476,6 +476,8 @@ function handler(
     async recordActivities() { return { recorded: 0 }; },
     async updateContactStage() { return { updated: false }; },
     async createTask() { return { created: false }; },
+    async createNote() { return { created: false }; },
+    async deleteNote() { return { deleted: false }; },
     async completeTask() { return { completed: false }; },
     async listManagers() { return []; },
     async exportCampaign() { return null; },
