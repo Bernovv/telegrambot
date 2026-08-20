@@ -49,3 +49,4 @@ export * from "./admin-event-inventory.js";
 export * from "./admin-event-team.js";
 export * from "./admin-event-overview.js";
 export * from "./telegram-access.js";
+export * from "./site-registration.js";

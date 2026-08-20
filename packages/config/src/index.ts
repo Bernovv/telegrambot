@@ -102,7 +102,21 @@ export interface ApiConfig extends AppConfig {
   readonly orderNumberPrefix: string;
   /** Single-event MVP: which published event's catalog "Купить билет" sells from in chat. */
   readonly purchaseEventSlug: string;
+  readonly siteRegistration: SiteRegistrationConfig;
   readonly tbankPayments: TBankPaymentsConfig;
+}
+
+/**
+ * Форма регистрации на сайте.
+ *
+ * Мероприятие не задаётся здесь именем: встречи еженедельные, и переменная, которую надо
+ * менять каждую неделю, однажды не поменяется. Задаётся начало слага — выпуск заводят как
+ * `sreda-2026-08-26`, и запись переезжает на ближайший сама.
+ */
+export interface SiteRegistrationConfig {
+  readonly eventSlugPrefix: string;
+  /** Служебная учётная запись из миграции 20260820120000: от её имени заводится участник. */
+  readonly systemAdminId: string;
 }
 
 export interface WorkerConfig extends AppConfig {
@@ -246,8 +260,25 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     ),
     orderNumberPrefix: parseOrderNumberPrefix(env.ORDER_NUMBER_PREFIX ?? "BP"),
     purchaseEventSlug: env.TELEGRAM_PURCHASE_EVENT_SLUG ?? "business-picnic-2026",
+    siteRegistration: {
+      eventSlugPrefix: parseEventSlugPrefix(
+        env.SITE_REGISTRATION_EVENT_SLUG_PREFIX ?? "sreda"
+      ),
+      systemAdminId: "00000000-0000-4000-8000-000000000001"
+    },
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
+}
+
+function parseEventSlugPrefix(value: string): string {
+  const prefix = value.trim().toLowerCase();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(prefix) || prefix.length < 2) {
+    throw new Error(
+      "SITE_REGISTRATION_EVENT_SLUG_PREFIX must look like the beginning of an event slug"
+    );
+  }
+
+  return prefix;
 }
 
 function loadOfferStorageConfig(env: NodeJS.ProcessEnv): OfferStorageConfig {

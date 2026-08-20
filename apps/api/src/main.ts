@@ -45,6 +45,7 @@ import {
   PublishAdminEventOfferVersionService,
   PublishAdminEventService,
   PublishAdminEventScenarioVersionService,
+  RegisterFromSiteService,
   RequestTelegramTicketRedeliveryService,
   ResumeTelegramScenarioAfterOfferService,
   RequestFullTBankRefundService,
@@ -84,6 +85,7 @@ import {
   createReferralBalancePersistence,
   createTelegramAccessPersistence,
   createScenarioRuntimePersistence,
+  createSiteRegistrationPersistence,
   createPaymentConfirmationPersistence,
   createOrderSalesPersistence,
   createTelegramPurchaseFlowPersistence,
@@ -335,6 +337,25 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           { now: () => new Date() }
         )
       : undefined;
+    // Регистрация с сайта работает без входа в панель: за формой стоит посетитель, а не
+    // администратор. Поэтому она собирается всегда, а не под `adminAuth`.
+    const siteRegistration = (() => {
+      // Одна сборка на все три зависимости: репозиторий, журнал исходящих и транзакция
+      // должны делить одну сессию, иначе запись уйдёт мимо открытой транзакции.
+      const persistence = createSiteRegistrationPersistence(pool);
+      return new RegisterFromSiteService(
+        persistence.repository,
+        new LibPhoneNumberNormalizer(
+          config.telegramWebhook.enabled
+            ? config.telegramWebhook.defaultCountry
+            : "RU"
+        ),
+        persistence.outboxWriter,
+        persistence.unitOfWork,
+        idGenerator,
+        config.siteRegistration
+      );
+    })();
     const orders = adminAuth
       ? (() => {
           const persistence = createOrderSalesPersistence(pool, idGenerator);
@@ -574,6 +595,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),
       ...(adminOverview ? { adminOverview } : {}),
+      siteRegistration: { handler: siteRegistration, logger },
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

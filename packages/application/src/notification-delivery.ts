@@ -9,7 +9,8 @@ export type NotificationDeliveryKind =
   | "ticket_user"
   | "admin_purchase"
   | "event_reminder"
-  | "admin_broadcast";
+  | "admin_broadcast"
+  | "site_registration";
 
 export interface TicketDeliveryContext {
   readonly orderId: string;
@@ -34,6 +35,22 @@ export interface AdminPurchaseContext {
   readonly totalKopecks: bigint;
   readonly walletKopecks: bigint;
   readonly externalKopecks: bigint;
+}
+
+/**
+ * Заявка с сайта в том виде, в каком её показывают организаторам. Мероприятия может не быть:
+ * заявку принимают и тогда, когда встречу ещё не завели, — и именно об этом сообщение обязано
+ * сказать вслух, иначе человек потеряется между сайтом и списком участников.
+ */
+export interface SiteRegistrationContext {
+  readonly registrationId: string;
+  readonly name: string;
+  readonly phone: string;
+  readonly eventTitle: string | null;
+  readonly eventStartsAt: Date | null;
+  readonly assigned: boolean;
+  /** Сколько заявок с сайта уже пришло на эту встречу, вместе с этой. */
+  readonly siteRegistrationCount: number;
 }
 
 export interface ScenarioDeliveryContext {
@@ -126,6 +143,9 @@ export interface NotificationContextRepository {
     ownerUserId: string | null
   ): Promise<TicketDeliveryContext | null>;
   getAdminPurchaseContext(orderId: string): Promise<AdminPurchaseContext | null>;
+  getSiteRegistrationContext(
+    registrationId: string
+  ): Promise<SiteRegistrationContext | null>;
   getScenarioDeliveryContext(userId: string): Promise<ScenarioDeliveryContext | null>;
 }
 
@@ -332,6 +352,11 @@ type NotificationEvent =
       readonly broadcastId: string;
     }
   | {
+      readonly eventType: "SiteRegistrationSubmitted";
+      readonly sourceEventId: string;
+      readonly registrationId: string;
+    }
+  | {
       readonly eventType: string;
       readonly sourceEventId: string;
       readonly ignored: true;
@@ -411,6 +436,9 @@ export class HandleNotificationJobService {
     }
     if (event.eventType === "AdminBroadcastRequested") {
       return this.deliverAdminBroadcast(event, input);
+    }
+    if (event.eventType === "SiteRegistrationSubmitted") {
+      return this.deliverSiteRegistration(event, input);
     }
 
     return this.deliverAdminPurchase(event, input);
@@ -540,6 +568,51 @@ export class HandleNotificationJobService {
         send: () => this.sender.sendText(
           chatId,
           formatAdminPurchaseMessage(context)
+        )
+      });
+      delivered += result === "delivered" ? 1 : 0;
+      duplicates += result === "duplicate" ? 1 : 0;
+    }
+
+    return {
+      eventType: event.eventType,
+      delivered,
+      duplicates,
+      ignored: false
+    };
+  }
+
+  /**
+   * Заявка с формы на сайте — организаторам, в те же чаты, куда приходят покупки.
+   *
+   * Ключ идемпотентности строится по заявке, а не по событию: повторный разбор той же задачи
+   * очереди не должен прислать вторую заявку об одном человеке.
+   */
+  private async deliverSiteRegistration(
+    event: Extract<
+      NotificationEvent,
+      { readonly eventType: "SiteRegistrationSubmitted" }
+    >,
+    input: HandleNotificationJobInput
+  ): Promise<HandleNotificationJobResult> {
+    const context = await this.contexts.getSiteRegistrationContext(event.registrationId);
+    if (!context) {
+      throw new Error("Site registration context was not found");
+    }
+
+    let delivered = 0;
+    let duplicates = 0;
+    for (const chatId of this.adminChatIds) {
+      const result = await this.deliverOnce({
+        event,
+        input,
+        kind: "site_registration",
+        aggregateId: event.registrationId,
+        recipientId: chatId,
+        idempotencyKey: `telegram:site-registration:${event.registrationId}:${chatId}`,
+        send: () => this.sender.sendText(
+          chatId,
+          formatSiteRegistrationMessage(context)
         )
       });
       delivered += result === "delivered" ? 1 : 0;
@@ -794,6 +867,7 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
     && event.type !== "ScenarioPresentationRequested"
     && event.type !== "EventReminderDue"
     && event.type !== "AdminBroadcastRequested"
+    && event.type !== "SiteRegistrationSubmitted"
   ) {
     return { eventType: event.type, sourceEventId, ignored: true };
   }
@@ -813,6 +887,16 @@ function parseNotificationEvent(input: unknown): NotificationEvent {
       eventType: event.type,
       sourceEventId,
       broadcastId: uuid(payload.broadcastId, "Notification broadcast ID is invalid")
+    };
+  }
+  if (event.type === "SiteRegistrationSubmitted") {
+    return {
+      eventType: event.type,
+      sourceEventId,
+      registrationId: uuid(
+        payload.registrationId,
+        "Notification site registration ID is invalid"
+      )
     };
   }
 
@@ -1008,6 +1092,46 @@ function formatAdminPurchaseMessage(context: AdminPurchaseContext): string {
     `Баланс: ${formatKopecks(context.walletKopecks)}`,
     `Внешняя оплата: ${formatKopecks(context.externalKopecks)}`
   ].join("\n");
+}
+
+/**
+ * Заявка организаторам. Первой строкой — что это, дальше имя и телефон: по ним человеку
+ * перезванивают, и они должны читаться с экрана телефона без разворачивания сообщения.
+ */
+function formatSiteRegistrationMessage(context: SiteRegistrationContext): string {
+  const lines = [
+    "Новая заявка с сайта",
+    `Имя: ${singleLine(context.name, 200)}`,
+    `Телефон: ${singleLine(context.phone, 32)}`
+  ];
+
+  if (context.assigned && context.eventTitle) {
+    lines.push(`Встреча: ${singleLine(context.eventTitle, 200)}`);
+    if (context.eventStartsAt) {
+      lines.push(`Дата: ${formatMoscowDateTime(context.eventStartsAt)}`);
+    }
+    lines.push(`Заявок с сайта на эту встречу: ${context.siteRegistrationCount}`);
+  } else {
+    // Заявка принята, но в список участников не попала: ближайшей встречи в панели нет.
+    // Написать об этом прямо — единственный способ, которым организатор об этом узнает.
+    lines.push(
+      "Встреча не определена: в панели нет ближайшей встречи с записью с сайта."
+    );
+    lines.push("Человека нужно занести в список руками.");
+  }
+
+  return lines.join("\n");
+}
+
+/** Время встречи по Москве: организаторы читают заявку с телефона, а не из базы. */
+function formatMoscowDateTime(value: Date): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(value);
 }
 
 const REMINDER_CADENCE_STEPS = ["10d", "7d", "3d", "1d", "day_of"] as const;

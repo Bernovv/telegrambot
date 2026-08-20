@@ -16,6 +16,7 @@ import {
   type ReminderContextRepository,
   type ReminderRecipientContext,
   type ScenarioPaymentContinuation,
+  type SiteRegistrationContext,
   type TicketPngRenderer,
   type TicketDeliveryContext
 } from "./notification-delivery.js";
@@ -118,6 +119,62 @@ describe("HandleNotificationJobService", () => {
       sender.messages.map((message) => message.recipientId).sort(),
       ["376802789", "5596675886"]
     );
+  });
+
+  it("шлёт организаторам заявку с сайта и не повторяет её при перезапуске задачи", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const service = createService(
+      ledger,
+      sender,
+      new RecordingRenderer(),
+      undefined,
+      undefined,
+      undefined,
+      ["376802789", "5596675886"]
+    );
+
+    const first = await service.execute(execution(siteRegistrationJob));
+    const retry = await service.execute(execution(siteRegistrationJob));
+
+    assert.deepEqual(first, {
+      eventType: "SiteRegistrationSubmitted",
+      delivered: 2,
+      duplicates: 0,
+      ignored: false
+    });
+    assert.equal(retry.duplicates, 2);
+    const text = sender.messages[0]?.text ?? "";
+    assert.match(text, /Новая заявка с сайта/);
+    assert.match(text, /Имя: Мария Соколова/);
+    // По телефону человеку перезванивают — он обязан быть в сообщении целиком.
+    assert.match(text, /Телефон: \+79991234567/);
+    assert.match(text, /Встреча: Бизнес-Среда, 26 августа/);
+    assert.match(text, /Заявок с сайта на эту встречу: 7/);
+  });
+
+  it("говорит вслух, когда заявку некуда положить: встречи в панели нет", async () => {
+    const ledger = new MemoryLedger();
+    const sender = new RecordingSender();
+    const service = createService(ledger, sender);
+    const previous = siteRegistrationContext;
+    siteRegistrationContext = {
+      ...previous,
+      eventTitle: null,
+      eventStartsAt: null,
+      assigned: false
+    };
+
+    try {
+      await service.execute(execution(siteRegistrationJob));
+    } finally {
+      siteRegistrationContext = previous;
+    }
+
+    const text = sender.messages[0]?.text ?? "";
+    assert.match(text, /Имя: Мария Соколова/);
+    assert.match(text, /Встреча не определена/);
+    assert.match(text, /занести в список руками/);
   });
 
   it("allows a new owner-bound redelivery request but deduplicates its retry", async () => {
@@ -860,6 +917,9 @@ function createService(
     async getAdminPurchaseContext() {
       return adminContext;
     },
+    async getSiteRegistrationContext() {
+      return siteRegistrationContext;
+    },
     async getScenarioDeliveryContext() {
       return {
         recipientExternalUserId: ticketContext.recipientExternalUserId,
@@ -940,6 +1000,27 @@ const adminContext: AdminPurchaseContext = {
   totalKopecks: 249_000n,
   walletKopecks: 10_000n,
   externalKopecks: 239_000n
+};
+
+let siteRegistrationContext: SiteRegistrationContext = {
+  registrationId: "019c0123-4567-789a-bcde-f0123456780a",
+  name: "Мария Соколова",
+  phone: "+79991234567",
+  eventTitle: "Бизнес-Среда, 26 августа",
+  eventStartsAt: new Date("2026-08-26T16:00:00.000Z"),
+  assigned: true,
+  siteRegistrationCount: 7
+};
+
+const siteRegistrationJob = {
+  jobType: "domain-event",
+  schemaVersion: 1,
+  correlationId: "019c0123-4567-789a-bcde-f0123456780b",
+  event: {
+    type: "SiteRegistrationSubmitted",
+    schemaVersion: 1,
+    payload: { registrationId: siteRegistrationContext.registrationId }
+  }
 };
 
 const ticketJob = {

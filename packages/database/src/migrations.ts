@@ -224,5 +224,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260814210000_event_attendance",
     description: "Record who actually reached the hall, per participant row rather than per ticket",
     destructive: false
+  },
+  {
+    id: "20260820120000_site_registration",
+    description: "Keep the registrations coming from the site form and let the bot tell the organizers about them",
+    destructive: false
   }
 ];

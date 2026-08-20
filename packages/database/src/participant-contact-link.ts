@@ -1,5 +1,5 @@
 import { parseTelegramUsername } from "@ticket-platform/domain";
-import type { SqlConnection } from "./postgres.js";
+import type { SqlExecutor } from "./postgres.js";
 
 /**
  * Связь участника мероприятия с человеком в общей базе.
@@ -41,7 +41,9 @@ export interface ParticipantContactSeed {
  * почты контакт создать нельзя, да и незачем: найти его потом всё равно не выйдет.
  */
 export async function resolveParticipantContact(
-  connection: SqlConnection,
+  // Достаточно уметь выполнять запрос: путей создания участника три, и один из них —
+  // регистрация с сайта — работает внутри транзакции, а не на выданном соединении.
+  connection: SqlExecutor,
   seed: ParticipantContactSeed
 ): Promise<string | null> {
   const telegramUsername = parseTelegramUsername(seed.telegram);

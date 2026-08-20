@@ -43,3 +43,4 @@ export * from "./admin-inventory.js";
 export * from "./admin-organizers.js";
 export * from "./admin-overview.js";
 export * from "./orders.js";
+export * from "./site-registration.js";

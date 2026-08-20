@@ -9,6 +9,7 @@ import type {
   ReminderContextRepository,
   ReminderRecipientContext,
   ScenarioDeliveryContext,
+  SiteRegistrationContext,
   TicketDeliveryContext
 } from "@ticket-platform/application";
 import { ADMIN_BROADCAST_AUDIENCE_LIMIT } from "@ticket-platform/application";
@@ -41,6 +42,16 @@ interface AdminPurchaseContextRow {
   readonly wallet_applied_kopecks: string;
   readonly external_due_kopecks: string;
   readonly phone: string | null;
+}
+
+interface SiteRegistrationContextRow {
+  readonly id: string;
+  readonly display_name: string;
+  readonly phone_e164: string;
+  readonly event_title: string | null;
+  readonly event_starts_at: Date | string | null;
+  readonly participant_id: string | null;
+  readonly site_registration_count: string;
 }
 
 interface DeliveryStateRow {
@@ -265,6 +276,49 @@ implements
       totalKopecks: BigInt(row.total_kopecks),
       walletKopecks: BigInt(row.wallet_applied_kopecks),
       externalKopecks: BigInt(row.external_due_kopecks)
+    };
+  }
+
+  async getSiteRegistrationContext(
+    registrationId: string
+  ): Promise<SiteRegistrationContext | null> {
+    const result = await query<SiteRegistrationContextRow>(
+      this.pool,
+      `select
+         registrations.id,
+         registrations.display_name,
+         registrations.phone_e164,
+         events.title as event_title,
+         events.starts_at as event_starts_at,
+         registrations.participant_id,
+         -- Считаем заявки, которые дошли до списка участников: дубли и заявки без встречи
+         -- в счётчике только мешали бы сверять его со списком в панели.
+         (
+           select count(*)::text
+           from public.site_registrations counted
+           where counted.event_id = registrations.event_id
+             and counted.status = 'registered'
+         ) as site_registration_count
+       from public.site_registrations registrations
+       left join public.events events on events.id = registrations.event_id
+       where registrations.id = $1::uuid`,
+      [registrationId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const count = Number(row.site_registration_count);
+
+    return {
+      registrationId: row.id,
+      name: row.display_name,
+      phone: row.phone_e164,
+      eventTitle: row.event_title,
+      eventStartsAt: row.event_starts_at ? new Date(row.event_starts_at) : null,
+      assigned: row.participant_id !== null,
+      siteRegistrationCount: Number.isSafeInteger(count) && count > 0 ? count : 1
     };
   }
 

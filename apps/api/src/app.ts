@@ -84,6 +84,10 @@ import {
   type AdminOverviewHandler
 } from "./admin-overview-api.js";
 import {
+  SiteRegistrationApiModule,
+  type SiteRegistrationHandler
+} from "./site-registration-api.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -160,6 +164,11 @@ export interface ApiApplicationOptions {
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
   readonly adminOverview?: AdminOverviewHandler;
+  /** Форма регистрации на сайте. Единственный открытый путь записи, кроме вебхуков. */
+  readonly siteRegistration?: {
+    readonly handler: SiteRegistrationHandler;
+    readonly logger: Logger;
+  };
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -226,6 +235,12 @@ class ApiModule {
           : []),
         ...(options.adminOverview
           ? [AdminOverviewApiModule.register(options.adminOverview)]
+          : []),
+        ...(options.siteRegistration
+          ? [SiteRegistrationApiModule.register(
+              options.siteRegistration.handler,
+              options.siteRegistration.logger
+            )]
           : []),
         ...(options.tbankWebhook
           ? [TBankWebhookModule.register(
