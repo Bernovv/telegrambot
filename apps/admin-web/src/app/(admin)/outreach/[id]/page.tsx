@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  OutreachTouchDialog,
+  type OutreachTouchTarget
+} from "@/components/outreach-touch-dialog";
+import { OutreachTaskForm } from "@/components/outreach-task-form";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -9,7 +14,6 @@ import {
   completeOutreachTask,
   createOutreachContact,
   createOutreachCustomFieldDefinition,
-  createOutreachTask,
   deleteOutreachCustomFieldDefinition,
   exportOutreachCampaign,
   getOutreachCampaign,
@@ -26,7 +30,6 @@ import {
   listOutreachCustomFieldDefinitions,
   listOutreachManagers,
   listOutreachPipelineColumns,
-  recordOutreachActivities,
   setOutreachCustomFieldValue,
   updateOutreachCampaign,
   updateOutreachContactStage,
@@ -35,6 +38,15 @@ import {
   type OutreachPipelineColumnDraft
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import {
+  LOST_REASONS,
+  channelLabel,
+  lostReasonLabel,
+  stageLabel,
+  stageTone,
+  statusLabel,
+  taskTypeLabel
+} from "@/lib/outreach-labels";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
 import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
 import type {
@@ -43,8 +55,6 @@ import type {
   OutreachCampaignContactPage,
   OutreachCampaignContactSummary,
   OutreachCampaignSummary,
-  OutreachChannel,
-  OutreachContactStatus,
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
   OutreachLostReason,
@@ -52,8 +62,7 @@ import type {
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
-  OutreachTask,
-  OutreachTaskType
+  OutreachTask
 } from "@ticket-platform/contracts/admin-outreach";
 import {
   ArrowLeft,
@@ -67,8 +76,7 @@ import {
   GripVertical,
   LayoutGrid,
   List,
-  MessageCircle,
-  Phone,
+  PhoneCall,
   Plus,
   RefreshCw,
   Search,
@@ -91,11 +99,6 @@ import {
   useRef,
   useState
 } from "react";
-
-interface ActionTarget {
-  readonly ids: readonly string[];
-  readonly channel: OutreachChannel;
-}
 
 interface StageTarget {
   readonly contactId: string;
@@ -127,11 +130,7 @@ export default function OutreachCampaignPage() {
     limit: 500
   });
   const [selected, setSelected] = useState<readonly string[]>([]);
-  const [action, setAction] = useState<ActionTarget | null>(null);
-  const [activityResult, setActivityResult] =
-    useState<Exclude<OutreachContactStatus, "new">>("sent");
-  const [activityStage, setActivityStage] =
-    useState<OutreachPipelineStage>("first_contact");
+  const [action, setAction] = useState<readonly string[] | null>(null);
   const [stageTarget, setStageTarget] = useState<StageTarget | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OutreachCampaignContactDetail | null>(null);
@@ -316,72 +315,30 @@ export default function OutreachCampaignPage() {
     );
   }
 
-  // Suggests where a touch result should move the card. This only guesses
-  // for the campaign's original default stage ids or by outcome flag
-  // (won/lost); once a manager renames or removes those, the suggestion
-  // simply falls back to leaving the card in its current column, and the
-  // manager drags it manually.
-  function stageForResult(
-    result: Exclude<OutreachContactStatus, "new">
-  ): OutreachPipelineStage {
-    const byId = (stage: string) =>
-      pipelineColumns.find((column) => column.stage === stage)?.stage;
-    const byOutcome = (outcome: OutreachPipelineColumnOutcome) =>
-      pipelineColumns.find((column) => column.outcome === outcome)?.stage;
-    const suggestion: Partial<Record<typeof result, string | undefined>> = {
-      sent: byId("first_contact"),
-      no_answer: byId("first_contact"),
-      answered: byId("dialogue"),
-      callback: byId("follow_up"),
-      interested: byId("interested"),
-      declined: byOutcome("lost"),
-      converted: byOutcome("won"),
-      invalid: byOutcome("lost")
-    };
-    return suggestion[result] ?? pipelineColumns[0]?.stage ?? "new";
-  }
-
-  function beginAction(ids: readonly string[], channel: OutreachChannel) {
-    const result = channel === "phone" ? "no_answer" : "sent";
-    setActivityResult(result);
-    setActivityStage(stageForResult(result));
-    setAction({ ids, channel });
-  }
-
-  async function submitActivity(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!action) {
-      return;
+  // Одна кнопка «Связаться» вместо двух: канал — это подробность разговора, а не отдельное
+  // действие, и менеджеру всё равно приходилось уточнять его в форме. Диалогу нужны признаки
+  // контактов — по ним он предлагает канал и предупреждает, кому этим каналом писать нечем.
+  function touchTargets(
+    ids: readonly string[]
+  ): readonly OutreachTouchTarget[] {
+    const byId = new Map<string, OutreachCampaignContactSummary>();
+    for (const contact of contacts?.items ?? []) {
+      byId.set(contact.id, contact);
     }
-    const data = new FormData(event.currentTarget);
-    const note = formText(data, "note").trim();
-    const nextContactValue = formText(data, "nextContactAt");
-    const lostReason = formText(data, "lostReason") as OutreachLostReason | "";
-    setMutating(true);
-    setError(null);
-    try {
-      const response = await recordOutreachActivities({
-        campaignContactIds: action.ids,
-        channel: action.channel,
-        result: activityResult,
-        stage: activityStage,
-        ...(outcomeFor(activityStage) === "lost" && lostReason ? { lostReason } : {}),
-        ...(note ? { note } : {}),
-        ...(nextContactValue
-          ? { nextContactAt: new Date(nextContactValue).toISOString() }
-          : {})
-      });
-      setNotice(`Касаний записано: ${response.recorded}`);
-      setAction(null);
-      await load();
-      if (detail && action.ids.includes(detail.id)) {
-        setDetail(await getOutreachContact(detail.id));
-      }
-    } catch (caught) {
-      setError(messageFor(caught, "Не удалось записать действие."));
-    } finally {
-      setMutating(false);
+    if (detail) {
+      byId.set(detail.id, detail);
     }
+    return ids.map((targetId) => {
+      const found = byId.get(targetId);
+      // Не нашли — контакт всё равно в пачке: выкинуть его значило бы молча не записать
+      // касание по тому, кого менеджер выбрал.
+      return {
+        campaignContactId: targetId,
+        phone: found?.phone ?? null,
+        telegramUsername: found?.telegramUsername ?? null,
+        maxIdentifier: found?.maxIdentifier ?? null
+      };
+    });
   }
 
   async function assignSelected(event: ChangeEvent<HTMLSelectElement>) {
@@ -707,35 +664,6 @@ export default function OutreachCampaignPage() {
       "lostReason"
     ) as OutreachLostReason;
     await moveStage(stageTarget.contactId, stageTarget.stage, reason);
-  }
-
-  async function submitTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!detail) {
-      return;
-    }
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const dueAt = formText(data, "dueAt");
-    const assignedAdminId = formText(data, "assignedAdminId");
-    setMutating(true);
-    setError(null);
-    try {
-      await createOutreachTask(detail.id, {
-        type: formText(data, "type") as OutreachTaskType,
-        text: formText(data, "text"),
-        dueAt: new Date(dueAt).toISOString(),
-        ...(assignedAdminId ? { assignedAdminId } : {})
-      });
-      setNotice("Задача поставлена.");
-      await load();
-      setDetail(await getOutreachContact(detail.id));
-      form.reset();
-    } catch (caught) {
-      setError(messageFor(caught, "Не удалось поставить задачу."));
-    } finally {
-      setMutating(false);
-    }
   }
 
   async function completeTask(task: OutreachTask) {
@@ -1124,19 +1052,10 @@ export default function OutreachCampaignPage() {
             className="secondary-button"
             type="button"
             disabled={mutating}
-            onClick={() => beginAction(selected, "telegram")}
+            onClick={() => setAction(selected)}
           >
-            <MessageCircle size={16} />
-            Отметить сообщения
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={() => beginAction(selected, "phone")}
-          >
-            <Phone size={16} />
-            Отметить звонки
+            <PhoneCall size={16} />
+            Связаться
           </button>
           {otherCampaigns.length > 0 ? (
             <label className="select-field outreach-assign">
@@ -1271,17 +1190,11 @@ export default function OutreachCampaignPage() {
                         <div className="outreach-card-actions">
                           <button
                             type="button"
-                            aria-label="Отметить сообщение"
-                            onClick={() => beginAction([contact.id], "telegram")}
+                            aria-label="Связаться"
+                            title="Связаться"
+                            onClick={() => setAction([contact.id])}
                           >
-                            <MessageCircle size={15} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="Отметить звонок"
-                            onClick={() => beginAction([contact.id], "phone")}
-                          >
-                            <Phone size={15} />
+                            <PhoneCall size={15} />
                           </button>
                           {contact.linkedUserId ? (
                             <span title="Пользователь уже в боте">
@@ -1365,13 +1278,9 @@ export default function OutreachCampaignPage() {
                       </td>
                       <td>
                         <div className="outreach-row-actions">
-                          <button type="button" onClick={() => beginAction([contact.id], "telegram")}>
-                            <MessageCircle size={16} />
-                            Написал
-                          </button>
-                          <button type="button" onClick={() => beginAction([contact.id], "phone")}>
-                            <Phone size={16} />
-                            Позвонил
+                          <button type="button" onClick={() => setAction([contact.id])}>
+                            <PhoneCall size={16} />
+                            Связаться
                           </button>
                         </div>
                       </td>
@@ -1639,96 +1548,20 @@ export default function OutreachCampaignPage() {
       ) : null}
 
       {action ? (
-        <div className="outreach-modal-backdrop" role="presentation">
-          <section className="outreach-modal" role="dialog" aria-modal="true" aria-labelledby="activity-title">
-            <div className="section-title-row">
-              <div>
-                <h2 id="activity-title">
-                  {action.channel === "phone" ? "Результат звонка" : "Результат сообщения"}
-                </h2>
-                <span>Контактов: {action.ids.length}</span>
-              </div>
-              <button className="icon-button" type="button" aria-label="Закрыть" onClick={() => setAction(null)}>
-                <X size={18} />
-              </button>
-            </div>
-            <form className="outreach-action-form" onSubmit={(event) => void submitActivity(event)}>
-              {action.channel !== "phone" ? (
-                <label>
-                  <span>Канал</span>
-                  <select
-                    value={action.channel}
-                    onChange={(event) => {
-                      const nextChannel = event.target.value as OutreachChannel;
-                      const nextResult = nextChannel === "phone" ? "no_answer" : "sent";
-                      setAction({ ...action, channel: nextChannel });
-                      setActivityResult(nextResult);
-                      setActivityStage(stageForResult(nextResult));
-                    }}
-                  >
-                    <option value="telegram">Telegram</option>
-                    <option value="max">MAX</option>
-                    <option value="whatsapp">WhatsApp</option>
-                    <option value="sms">SMS</option>
-                    <option value="other">Другое</option>
-                  </select>
-                </label>
-              ) : null}
-              <label>
-                <span>Результат касания</span>
-                <select
-                  required
-                  value={activityResult}
-                  onChange={(event) => {
-                    const result = event.target.value as Exclude<OutreachContactStatus, "new">;
-                    setActivityResult(result);
-                    setActivityStage(stageForResult(result));
-                  }}
-                >
-                  {resultsFor(action.channel).map((result) => (
-                    <option key={result} value={result}>{statusLabel(result)}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Переместить в этап</span>
-                <select
-                  value={activityStage}
-                  onChange={(event) => setActivityStage(event.target.value)}
-                >
-                  {pipelineColumns.map((column) => (
-                    <option key={column.stage} value={column.stage}>{column.label}</option>
-                  ))}
-                </select>
-              </label>
-              {outcomeFor(activityStage) === "lost" ? (
-                <label>
-                  <span>Причина закрытия</span>
-                  <select name="lostReason" required defaultValue="declined">
-                    {LOST_REASONS.map((reason) => (
-                      <option key={reason} value={reason}>{lostReasonLabel(reason)}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <label>
-                <span>{activityResult === "callback" ? "Когда связаться" : "Следующая задача (необязательно)"}</span>
-                <input
-                  name="nextContactAt"
-                  type="datetime-local"
-                  required={activityResult === "callback"}
-                />
-              </label>
-              <label>
-                <span>Комментарий</span>
-                <textarea name="note" rows={3} maxLength={2000} />
-              </label>
-              <button className="primary-button" type="submit" disabled={mutating}>
-                {mutating ? "Сохраняем…" : "Записать касание"}
-              </button>
-            </form>
-          </section>
-        </div>
+        <OutreachTouchDialog
+          campaignId={id}
+          targets={touchTargets(action)}
+          columns={pipelineColumns}
+          onClose={() => setAction(null)}
+          onRecorded={async (recorded) => {
+            setNotice(`Касаний записано: ${recorded}`);
+            setAction(null);
+            await load();
+            if (detail && action.includes(detail.id)) {
+              setDetail(await getOutreachContact(detail.id));
+            }
+          }}
+        />
       ) : null}
 
       {stageTarget ? (
@@ -1863,11 +1696,8 @@ export default function OutreachCampaignPage() {
             </div>
 
             <div className="outreach-drawer-actions">
-              <button type="button" onClick={() => beginAction([detail.id], "phone")}>
-                <Phone size={16} /> Звонок
-              </button>
-              <button type="button" onClick={() => beginAction([detail.id], "telegram")}>
-                <MessageCircle size={16} /> Сообщение
+              <button type="button" onClick={() => setAction([detail.id])}>
+                <PhoneCall size={16} /> Связаться
               </button>
             </div>
 
@@ -2007,36 +1837,17 @@ export default function OutreachCampaignPage() {
               )}
               <details className="outreach-task-create" open={!detail.openTask}>
                 <summary>{detail.openTask ? "Заменить задачу" : "Поставить задачу"}</summary>
-                <form onSubmit={(event) => void submitTask(event)}>
-                  <label>
-                    <span>Тип</span>
-                    <select name="type" defaultValue="call">
-                      <option value="call">Позвонить</option>
-                      <option value="message">Написать</option>
-                      <option value="other">Другое</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Срок</span>
-                    <input name="dueAt" type="datetime-local" required />
-                  </label>
-                  <label className="outreach-task-text">
-                    <span>Что сделать</span>
-                    <input name="text" maxLength={500} required defaultValue="Связаться с клиентом" />
-                  </label>
-                  <label className="outreach-task-text">
-                    <span>Ответственный</span>
-                    <select name="assignedAdminId" defaultValue={detail.assignedAdminId ?? ""}>
-                      <option value="">Текущий менеджер</option>
-                      {managers.map((manager) => (
-                        <option key={manager.id} value={manager.id}>{manager.displayName}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button className="primary-button" type="submit" disabled={mutating}>
-                    Сохранить задачу
-                  </button>
-                </form>
+                <OutreachTaskForm
+                  campaignContactId={detail.id}
+                  openTask={detail.openTask}
+                  managers={managers}
+                  defaultAssignedAdminId={detail.assignedAdminId}
+                  onSaved={async () => {
+                    setNotice("Задача поставлена.");
+                    await load();
+                    setDetail(await getOutreachContact(detail.id));
+                  }}
+                />
               </details>
             </section>
 
@@ -2127,39 +1938,9 @@ function primaryContact(contact: OutreachCampaignContactSummary): string {
     ?? "Контакт не указан";
 }
 
-function resultsFor(
-  channel: OutreachChannel
-): readonly Exclude<OutreachContactStatus, "new">[] {
-  return channel === "phone"
-    ? ["no_answer", "answered", "callback", "interested", "declined", "converted", "invalid"]
-    : ["sent", "answered", "callback", "interested", "declined", "converted", "invalid"];
-}
 
-function statusLabel(status: OutreachContactStatus): string {
-  return {
-    new: "Не обрабатывали",
-    sent: "Отправлено",
-    no_answer: "Не ответил",
-    answered: "Ответил",
-    callback: "Перезвонить",
-    interested: "Заинтересован",
-    declined: "Отказ",
-    converted: "Оплатил",
-    invalid: "Неверный контакт"
-  }[status];
-}
 
-function stageLabel(stage: OutreachPipelineStage): string {
-  return (({
-    new: "Новые",
-    first_contact: "Первичный контакт",
-    dialogue: "В диалоге",
-    follow_up: "Думает / перезвонить",
-    interested: "Заинтересован",
-    won: "Оплатил / зарегистрировался",
-    lost: "Закрыто без результата"
-  }) as Record<string, string>)[stage] ?? stage;
-}
+
 
 function fieldTypeLabel(type: OutreachCustomFieldType): string {
   return {
@@ -2170,48 +1951,9 @@ function fieldTypeLabel(type: OutreachCustomFieldType): string {
   }[type];
 }
 
-function lostReasonLabel(reason: OutreachLostReason): string {
-  return {
-    declined: "Отказался",
-    not_relevant: "Неактуально",
-    invalid_contact: "Неверный контакт",
-    duplicate: "Дубль",
-    other: "Другое"
-  }[reason];
-}
 
-function taskTypeLabel(type: OutreachTaskType): string {
-  return {
-    call: "Позвонить",
-    message: "Написать",
-    other: "Другое"
-  }[type];
-}
 
-function channelLabel(channel: OutreachChannel): string {
-  return {
-    phone: "Звонок",
-    telegram: "Telegram",
-    max: "MAX",
-    whatsapp: "WhatsApp",
-    sms: "SMS",
-    other: "Другое"
-  }[channel];
-}
 
-// Individual mid-pipeline stages no longer have fixed meaning once managers
-// can add/remove/rename them, so tone now follows the outcome flag only.
-function stageTone(
-  outcome: OutreachPipelineColumnOutcome
-): "positive" | "warning" | "neutral" | "danger" {
-  if (outcome === "won") {
-    return "positive";
-  }
-  if (outcome === "lost") {
-    return "danger";
-  }
-  return "neutral";
-}
 
 function taskState(dueAt: string): "overdue" | "today" | "future" {
   const due = new Date(dueAt);
@@ -2247,10 +1989,3 @@ const DEFAULT_PIPELINE_COLUMNS: readonly OutreachPipelineColumn[] = [
   { stage: "lost", label: "Закрыто без результата", position: 7, outcome: "lost" }
 ];
 
-const LOST_REASONS: readonly OutreachLostReason[] = [
-  "declined",
-  "not_relevant",
-  "invalid_contact",
-  "duplicate",
-  "other"
-];

@@ -36,6 +36,74 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.equal(connection.released, true);
   });
 
+  it("closes the open task when a touch is recorded without a next step", async () => {
+    const connection = new CampaignContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.recordActivities({
+      activities: [{
+        id: "00000000-0000-4000-8000-000000000301",
+        campaignContactId: "00000000-0000-4000-8000-000000000201",
+        stageHistoryId: null,
+        taskId: null
+      }],
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      action: "call",
+      channel: "phone",
+      result: "answered",
+      note: null,
+      batchId: null,
+      stage: null,
+      lostReason: null,
+      nextContactAt: null,
+      occurredAt: new Date("2026-08-20T12:00:00.000Z")
+    });
+
+    const completion = connection.queries.find((query) =>
+      query.text.includes("update public.outreach_tasks")
+    );
+    assert.ok(completion, "открытая задача должна закрываться и без следующего шага");
+    assert.match(completion.text, /status = 'completed'/);
+    assert.match(completion.text, /completed_by_admin_id = \$3::uuid/);
+    assert.equal(
+      connection.queries.some((query) =>
+        query.text.includes("insert into public.outreach_tasks")),
+      false,
+      "следующей задачи не просили — заводить её нечего"
+    );
+  });
+
+  it("clears the next contact time when a touch leaves no next step", async () => {
+    const connection = new CampaignContactConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.recordActivities({
+      activities: [{
+        id: "00000000-0000-4000-8000-000000000301",
+        campaignContactId: "00000000-0000-4000-8000-000000000201",
+        stageHistoryId: null,
+        taskId: null
+      }],
+      actorAdminId: "00000000-0000-4000-8000-000000000001",
+      action: "message",
+      channel: "telegram",
+      result: "sent",
+      note: null,
+      batchId: null,
+      stage: null,
+      lostReason: null,
+      nextContactAt: null,
+      occurredAt: new Date("2026-08-20T12:00:00.000Z")
+    });
+
+    const update = connection.queries.find((query) =>
+      query.text.includes("update public.outreach_campaign_contacts"));
+    assert.ok(update);
+    // coalesce здесь оставлял бы срок уже закрытой задачи — карточка обещала бы звонок,
+    // которого никто не планировал.
+    assert.match(update.text, /next_contact_at = \$6::timestamptz/);
+  });
+
   it("reports stage_in_use instead of throwing when a stage delete violates the contacts foreign key", async () => {
     const connection = new ForeignKeyViolationOnDeleteConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
@@ -560,6 +628,40 @@ class ForeignKeyViolationOnDeleteConnection implements SqlConnection {
     }
     if (text.trim().startsWith("delete from public.outreach_pipeline_columns")) {
       throw Object.assign(new Error("foreign key violation"), { code: "23503" });
+    }
+    return { rows: [], rowCount: 0 };
+  }
+
+  release(): void {
+    this.released = true;
+  }
+}
+
+/** Контакт кампании, который существует: без него запись касания молча ничего не делает. */
+class CampaignContactConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    if (text.includes("from public.outreach_campaign_contacts")) {
+      return {
+        rows: [{
+          contact_id: "00000000-0000-4000-8000-000000000401",
+          pipeline_stage: "dialogue",
+          assigned_admin_id: "00000000-0000-4000-8000-000000000001"
+        } as TRow],
+        rowCount: 1
+      };
+    }
+    if (text.includes("insert into public.outreach_activities")) {
+      return {
+        rows: [{ id: "00000000-0000-4000-8000-000000000301" } as TRow],
+        rowCount: 1
+      };
     }
     return { rows: [], rowCount: 0 };
   }

@@ -2388,7 +2388,7 @@ implements AdminOutreachRepository {
                  else lost_reason
                end,
                last_activity_at = $5::timestamptz,
-               next_contact_at = coalesce($6::timestamptz, next_contact_at),
+               next_contact_at = $6::timestamptz,
                updated_at = $5::timestamptz
            where id = $1::uuid`,
           [
@@ -2424,14 +2424,19 @@ implements AdminOutreachRepository {
             ]
           );
         }
+        // Касание и есть выполнение задачи «связаться»: менеджер сделал ровно то, что она
+        // просила. Раньше задача закрывалась только заодно с назначением следующей, и тот,
+        // кто позвонил и не наметил следующий шаг, продолжал видеть её в «Просрочено».
+        await connection.query(
+          `update public.outreach_tasks
+           set status = 'completed',
+               completed_at = $2::timestamptz,
+               completed_by_admin_id = $3::uuid
+           where campaign_contact_id = $1::uuid
+             and status = 'open'`,
+          [activity.campaignContactId, input.occurredAt, input.actorAdminId]
+        );
         if (input.nextContactAt && activity.taskId) {
-          await connection.query(
-            `update public.outreach_tasks
-             set status = 'cancelled'
-             where campaign_contact_id = $1::uuid
-               and status = 'open'`,
-            [activity.campaignContactId]
-          );
           await connection.query(
             `insert into public.outreach_tasks (
                id, campaign_contact_id, assigned_admin_id,
