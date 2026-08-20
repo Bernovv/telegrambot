@@ -64,8 +64,23 @@ export class AdminPermissionDeniedError extends Error {
   }
 }
 
+/**
+ * Нужен ли второй фактор.
+ *
+ * Выключение снимает оба требования сразу — и роль, помеченную `requires_mfa`, и список
+ * денежных разрешений ниже. Половинчатое выключение было бы хуже отсутствия: панель
+ * пускала бы в заказы, но отказывала в подтверждении оплаты, и понять, почему именно,
+ * было бы не по чему.
+ */
+export interface AdminAuthorizationOptions {
+  readonly mfaRequired: boolean;
+}
+
 export class AuthorizeAdminRequestService implements AuthorizeAdminRequest {
-  constructor(private readonly principals: AdminPrincipalRepository) {}
+  constructor(
+    private readonly principals: AdminPrincipalRepository,
+    private readonly options: AdminAuthorizationOptions = { mfaRequired: true }
+  ) {}
 
   async execute(
     token: VerifiedAdminToken,
@@ -78,7 +93,8 @@ export class AuthorizeAdminRequestService implements AuthorizeAdminRequest {
     }
 
     if (
-      (principal.requiresMfa || MFA_REQUIRED_PERMISSIONS.has(requiredPermission))
+      this.options.mfaRequired
+      && (principal.requiresMfa || MFA_REQUIRED_PERMISSIONS.has(requiredPermission))
       && token.assuranceLevel !== "aal2"
     ) {
       throw new AdminMfaRequiredError();

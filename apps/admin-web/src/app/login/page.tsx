@@ -1,4 +1,7 @@
-import { getPublicSupabaseConfiguration } from "@/lib/environment";
+import {
+  getPublicSupabaseConfiguration,
+  isAdminMfaRequired
+} from "@/lib/environment";
 import { adminDestinationForAssurance } from "@/lib/mfa";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { LockKeyhole } from "lucide-react";
@@ -14,6 +17,9 @@ export default async function LoginPage() {
   if (supabase) {
     const { data } = await supabase.auth.getUser();
     if (data.user) {
+      if (!isAdminMfaRequired()) {
+        redirect("/users");
+      }
       const { data: assurance, error: assuranceError } =
         await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (assuranceError || !assurance) {
@@ -44,7 +50,7 @@ export default async function LoginPage() {
         </div>
         <div>
           <span className="context-index">02</span>
-          <p>Доступ управляется ролями и политикой MFA.</p>
+          <p>Доступ управляется ролями.</p>
         </div>
         <div>
           <span className="context-index">03</span>

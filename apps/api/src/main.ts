@@ -152,7 +152,8 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             audience: config.adminAuth.audience
           }),
           authorizer: new AuthorizeAdminRequestService(
-            new PostgresAdminPrincipalRepository(pool)
+            new PostgresAdminPrincipalRepository(pool),
+            { mfaRequired: config.adminAuth.mfaRequired }
           )
         }
       : undefined;

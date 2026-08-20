@@ -1,4 +1,5 @@
 import { AdminShell } from "@/components/admin-shell";
+import { isAdminMfaRequired } from "@/lib/environment";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
@@ -16,13 +17,17 @@ export default async function ProtectedLayout({
   if (error || !data.user) {
     redirect("/login");
   }
-  const { data: assurance, error: assuranceError } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (assuranceError) {
-    redirect("/login");
-  }
-  if (assurance.currentLevel !== "aal2") {
-    redirect("/mfa");
+  // Второй фактор выключен — уровень подтверждения не спрашиваем вовсе: запрос к Supabase
+  // ради значения, которое ни на что не влияет, только замедляет каждую страницу панели.
+  if (isAdminMfaRequired()) {
+    const { data: assurance, error: assuranceError } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (assuranceError) {
+      redirect("/login");
+    }
+    if (assurance.currentLevel !== "aal2") {
+      redirect("/mfa");
+    }
   }
 
   return (

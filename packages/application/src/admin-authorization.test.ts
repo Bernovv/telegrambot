@@ -9,6 +9,7 @@ import {
   AdminMfaRequiredError,
   AdminPermissionDeniedError,
   AuthorizeAdminRequestService,
+  type AdminAuthorizationOptions,
   type AdminPrincipal,
   type AdminPrincipalRepository
 } from "./admin-authorization.js";
@@ -71,16 +72,50 @@ describe("AuthorizeAdminRequestService", () => {
       .execute(token("aal2"), "wallet.adjust");
     assert.equal(actor.permission, "wallet.adjust");
   });
+
+  it("с выключенным вторым фактором пускает и роль с требованием, и денежные разрешения", async () => {
+    const role = await serviceFor(
+      principal({ requiresMfa: true }),
+      { mfaRequired: false }
+    ).execute(token("aal1"), "users.read");
+    assert.equal(role.permission, "users.read");
+
+    // Денежные разрешения снимаются вместе с остальными: панель, которая пускает в
+    // заказы и отказывает в подтверждении оплаты, необъяснима для того, кто ей работает.
+    const money = await serviceFor(
+      principal({ permissions: ["wallet.adjust"] }),
+      { mfaRequired: false }
+    ).execute(token("aal1"), "wallet.adjust");
+    assert.equal(money.permission, "wallet.adjust");
+  });
+
+  it("выключенный второй фактор не отменяет остальных проверок", async () => {
+    await assert.rejects(
+      serviceFor(principal({ status: "suspended" }), { mfaRequired: false })
+        .execute(token("aal1"), "users.read"),
+      AdminAuthenticationError
+    );
+    await assert.rejects(
+      serviceFor(principal({ permissions: ["users.read"] }), { mfaRequired: false })
+        .execute(token("aal1"), "users.write"),
+      AdminPermissionDeniedError
+    );
+  });
 });
 
-function serviceFor(value: AdminPrincipal | null) {
+function serviceFor(
+  value: AdminPrincipal | null,
+  options?: AdminAuthorizationOptions
+) {
   const repository: AdminPrincipalRepository = {
     async findByAuthSubject() {
       return value;
     }
   };
 
-  return new AuthorizeAdminRequestService(repository);
+  return options === undefined
+    ? new AuthorizeAdminRequestService(repository)
+    : new AuthorizeAdminRequestService(repository, options);
 }
 
 function principal(overrides: Partial<AdminPrincipal> = {}): AdminPrincipal {

@@ -1,8 +1,16 @@
 export type AdminAuthDestination = "/mfa" | "/users";
 
+/**
+ * Куда вести вошедшего. Когда второй фактор выключен, уровень подтверждения роли не
+ * играет: экран с кодом показывать нечего, и человек идёт сразу в панель.
+ */
 export function adminDestinationForAssurance(
-  currentLevel: string | null
+  currentLevel: string | null,
+  mfaRequired = true
 ): AdminAuthDestination {
+  if (!mfaRequired) {
+    return "/users";
+  }
   return currentLevel === "aal2" ? "/users" : "/mfa";
 }
 

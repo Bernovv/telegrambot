@@ -1,4 +1,5 @@
 import { MfaForm } from "@/components/mfa-form";
+import { isAdminMfaRequired } from "@/lib/environment";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
@@ -8,6 +9,11 @@ export const metadata: Metadata = { title: "Подтверждение вход�
 export const dynamic = "force-dynamic";
 
 export default async function MfaPage() {
+  // Ссылку на этот экран могли сохранить в закладках, а он выключен. Отправлять человека
+  // заводить код, который у него всё равно не спросят, — тупик.
+  if (!isAdminMfaRequired()) {
+    redirect("/users");
+  }
   const supabase = await createServerSupabaseClient();
   if (!supabase) {
     redirect("/login");

@@ -57,6 +57,13 @@ export type AdminAuthConfig =
       readonly enabled: true;
       readonly issuer: string;
       readonly audience: string;
+      /**
+       * Требовать второй фактор. Выключено — пароля достаточно, включая денежные
+       * операции. Смысл держать это переключателем, а не удалённым кодом: механика
+       * входа по коду остаётся на месте и включается обратно одной переменной, без
+       * правки авторизации и повторной проверки того, что она ничего не пропускает.
+       */
+      readonly mfaRequired: boolean;
     };
 
 export type OfferStorageConfig =
@@ -252,7 +259,11 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       ? {
           enabled: true,
           issuer: parseHttpsIssuer(env.ADMIN_AUTH_ISSUER, "ADMIN_AUTH_ISSUER"),
-          audience: parseAudience(env.ADMIN_AUTH_AUDIENCE ?? "authenticated")
+          audience: parseAudience(env.ADMIN_AUTH_AUDIENCE ?? "authenticated"),
+          mfaRequired: parseBoolean(
+            env.ADMIN_MFA_REQUIRED ?? "true",
+            "ADMIN_MFA_REQUIRED"
+          )
         }
       : { enabled: false },
     offerStorage: loadOfferStorageConfig(env),

@@ -131,8 +131,31 @@ describe("loadApiConfig", () => {
     assert.deepEqual(config.adminAuth, {
       enabled: true,
       issuer: "https://project.supabase.co/auth/v1",
-      audience: "authenticated"
+      audience: "authenticated",
+      mfaRequired: true
     });
+  });
+
+  it("второй фактор требуется, пока его явно не выключили", () => {
+    const disabled = loadApiConfig(validEnvironment({
+      ADMIN_AUTH_ENABLED: "true",
+      ADMIN_AUTH_ISSUER: "https://project.supabase.co/auth/v1",
+      ADMIN_MFA_REQUIRED: "false"
+    }));
+    assert.equal(
+      disabled.adminAuth.enabled && disabled.adminAuth.mfaRequired,
+      false
+    );
+
+    // Умолчание намеренно строгое: забытая переменная не должна снимать защиту молча.
+    const byDefault = loadApiConfig(validEnvironment({
+      ADMIN_AUTH_ENABLED: "true",
+      ADMIN_AUTH_ISSUER: "https://project.supabase.co/auth/v1"
+    }));
+    assert.equal(
+      byDefault.adminAuth.enabled && byDefault.adminAuth.mfaRequired,
+      true
+    );
   });
 
   it("loads a bounded server-only immutable offer storage configuration", () => {

@@ -1,6 +1,8 @@
 "use client";
 
+import { isAdminMfaRequired } from "@/lib/environment";
 import { loginErrorMessage } from "@/lib/login-error";
+import { adminDestinationForAssurance } from "@/lib/mfa";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -35,7 +37,8 @@ export function LoginForm({ configured }: { readonly configured: boolean }) {
         setError(loginErrorMessage(signInError));
         return;
       }
-      router.replace("/mfa");
+      // Уровень подтверждения после входа по паролю всегда aal1 — спрашивать его незачем.
+      router.replace(adminDestinationForAssurance("aal1", isAdminMfaRequired()));
       router.refresh();
     } catch {
       setError("Сервис авторизации временно недоступен.");

@@ -13,6 +13,22 @@ PublicSupabaseConfiguration | null {
   return { url, publishableKey };
 }
 
+/**
+ * Требует ли панель второй фактор.
+ *
+ * По умолчанию требует: выключение — это осознанное послабление, и опечатка в имени
+ * переменной не должна снимать защиту молча. Значение подставляется в сборку, поэтому
+ * менять его надо до `pnpm --filter @ticket-platform/admin-web build`, а не после.
+ *
+ * Панель и api читают разные переменные (`NEXT_PUBLIC_ADMIN_MFA_REQUIRED` и
+ * `ADMIN_MFA_REQUIRED`) и должны совпадать. Разойдутся — панель пустит без кода, а api
+ * откажет в денежных операциях: неприятно, но безопасно, а не наоборот.
+ */
+export function isAdminMfaRequired(): boolean {
+  const value = process.env.NEXT_PUBLIC_ADMIN_MFA_REQUIRED?.trim().toLowerCase();
+  return value !== "false" && value !== "0" && value !== "off" && value !== "no";
+}
+
 export function getAdminApiBaseUrl(): string | null {
   const value = process.env.ADMIN_API_BASE_URL;
   if (!value) {
