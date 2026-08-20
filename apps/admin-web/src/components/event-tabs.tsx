@@ -2,6 +2,7 @@
 
 import {
   Boxes,
+  ChartNoAxesColumn,
   ClipboardList,
   DoorOpen,
   HandCoins,
@@ -31,6 +32,7 @@ const TABS = [
   { segment: "", label: "Обзор", icon: LayoutDashboard, offsiteOnly: false },
   { segment: "participants", label: "Участники", icon: Users, offsiteOnly: false },
   { segment: "attendance", label: "Явка", icon: DoorOpen, offsiteOnly: false },
+  { segment: "report", label: "Отчёт", icon: ChartNoAxesColumn, offsiteOnly: false },
   { segment: "questionnaire", label: "Анкеты", icon: ClipboardList, offsiteOnly: false },
   { segment: "accommodation", label: "Логистика", icon: Tent, offsiteOnly: true },
   { segment: "expenses", label: "Расходы", icon: Wallet, offsiteOnly: false },

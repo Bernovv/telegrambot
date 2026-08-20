@@ -81,6 +81,7 @@ import {
 } from "./admin-team-api.js";
 import {
   AdminOverviewApiModule,
+  type AdminEventReportHandler,
   type AdminOverviewHandler
 } from "./admin-overview-api.js";
 import {
@@ -164,6 +165,7 @@ export interface ApiApplicationOptions {
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
   readonly adminOverview?: AdminOverviewHandler;
+  readonly adminEventReport?: AdminEventReportHandler;
   /** Форма регистрации на сайте. Единственный открытый путь записи, кроме вебхуков. */
   readonly siteRegistration?: {
     readonly handler: SiteRegistrationHandler;
@@ -233,8 +235,11 @@ class ApiModule {
         ...(options.adminTeam
           ? [AdminTeamApiModule.register(options.adminTeam)]
           : []),
-        ...(options.adminOverview
-          ? [AdminOverviewApiModule.register(options.adminOverview)]
+        ...(options.adminOverview && options.adminEventReport
+          ? [AdminOverviewApiModule.register(
+              options.adminOverview,
+              options.adminEventReport
+            )]
           : []),
         ...(options.siteRegistration
           ? [SiteRegistrationApiModule.register(

@@ -56,6 +56,9 @@
       "@ticket-platform/contracts/admin-overview": [
         "../../packages/contracts/src/admin-overview.ts"
       ],
+      "@ticket-platform/contracts/admin-event-report": [
+        "../../packages/contracts/src/admin-event-report.ts"
+      ],
       "@ticket-platform/contracts/site-registration": [
         "../../packages/contracts/src/site-registration.ts"
       ]

@@ -9,6 +9,7 @@ import {
   AdminEventInventoryService,
   AdminEventTeamService,
   AdminEventOverviewService,
+  AdminEventReportService,
   AdminCancelOrderService,
   AdminOutreachService,
   AdvanceTelegramScenarioService,
@@ -76,6 +77,7 @@ import {
   createAdminEventInventoryPersistence,
   createAdminEventTeamPersistence,
   createAdminEventOverviewPersistence,
+  createAdminEventReportPersistence,
   PostgresAdminOrderCancellationRepository,
   createAdminOutreachPersistence,
   createNodePostgresPool,
@@ -338,6 +340,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           { now: () => new Date() }
         )
       : undefined;
+    const adminEventReport = adminAuth
+      ? new AdminEventReportService(
+          createAdminEventReportPersistence(pool).repository,
+          { now: () => new Date() }
+        )
+      : undefined;
     // Регистрация с сайта работает без входа в панель: за формой стоит посетитель, а не
     // администратор. Поэтому она собирается всегда, а не под `adminAuth`.
     const siteRegistration = (() => {
@@ -596,6 +604,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),
       ...(adminOverview ? { adminOverview } : {}),
+      ...(adminEventReport ? { adminEventReport } : {}),
       siteRegistration: { handler: siteRegistration, logger },
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank

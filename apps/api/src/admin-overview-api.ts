@@ -10,7 +10,10 @@ import {
   Req,
   UnauthorizedException
 } from "@nestjs/common";
-import type { AdminEventOverviewService } from "@ticket-platform/application";
+import type {
+  AdminEventOverviewService,
+  AdminEventReportService
+} from "@ticket-platform/application";
 import { z } from "zod";
 import {
   RequireAdminPermission,
@@ -18,17 +21,37 @@ import {
 } from "./admin-auth.js";
 
 const ADMIN_OVERVIEW = Symbol("ADMIN_OVERVIEW");
+const ADMIN_EVENT_REPORT = Symbol("ADMIN_EVENT_REPORT");
 
 const uuid = z.string().uuid();
 
 export type AdminOverviewHandler = Pick<AdminEventOverviewService, "summary">;
+export type AdminEventReportHandler = Pick<AdminEventReportService, "execute">;
 
 @Controller("api/v1/events")
 export class AdminOverviewController {
   constructor(
     @Inject(ADMIN_OVERVIEW)
-    private readonly handler: AdminOverviewHandler
+    private readonly handler: AdminOverviewHandler,
+    @Inject(ADMIN_EVENT_REPORT)
+    private readonly reportService: AdminEventReportHandler
   ) {}
+
+  /**
+   * Отчёт закрыт тем же правом, что и обзор: денег в нём нет, а «кто откуда пришёл» — это
+   * то же самое знание о мероприятии, что и список участников.
+   */
+  @Get(":eventId/report")
+  @RequireAdminPermission("events.read")
+  async report(
+    @Param("eventId") eventId: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    requireActor(request);
+    return execute(() =>
+      this.reportService.execute({ eventId: parse(uuid, eventId) })
+    );
+  }
 
   /**
    * Обзор читается по общему праву на мероприятия. Денежный блок внутри закрыт отдельно:
@@ -52,11 +75,17 @@ export class AdminOverviewController {
 
 @Module({})
 export class AdminOverviewApiModule {
-  static register(handler: AdminOverviewHandler): DynamicModule {
+  static register(
+    handler: AdminOverviewHandler,
+    report: AdminEventReportHandler
+  ): DynamicModule {
     return {
       module: AdminOverviewApiModule,
       controllers: [AdminOverviewController],
-      providers: [{ provide: ADMIN_OVERVIEW, useValue: handler }]
+      providers: [
+        { provide: ADMIN_OVERVIEW, useValue: handler },
+        { provide: ADMIN_EVENT_REPORT, useValue: report }
+      ]
     };
   }
 }

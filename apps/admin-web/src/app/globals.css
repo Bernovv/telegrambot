@@ -2420,6 +2420,106 @@ tbody tr:hover {
   justify-self: start;
 }
 
+/* Отчёт по мероприятию. */
+
+.report-body {
+  padding: 16px 18px;
+}
+
+.report-empty,
+.report-hint {
+  font-size: 13px;
+}
+
+.report-hint {
+  margin-top: 14px;
+  max-width: 68ch;
+}
+
+.report-meta {
+  margin-top: 18px;
+  font-size: 12px;
+}
+
+.report-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.report-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.report-swatch-registered {
+  background: #cfe0ec;
+}
+
+.report-swatch-attended {
+  background: var(--blue);
+}
+
+.report-bars {
+  display: grid;
+  gap: 12px;
+}
+
+.report-bars > li {
+  display: grid;
+  align-items: center;
+  gap: 4px 14px;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) minmax(110px, auto);
+}
+
+.report-bar-label {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-bar-track {
+  display: block;
+  height: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.report-bar-registered {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: #cfe0ec;
+  border-radius: 3px;
+}
+
+.report-bar-attended {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 3px;
+}
+
+.report-bar-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* Плашка «свои». Жёлтая, а не красная: это не ошибка и не запрет, а предупреждение —
    человек в базе по делу, просто звонить ему не надо. */
 .own-badge {
@@ -4193,6 +4293,16 @@ tbody tr:hover {
   /* Кнопка «выполнено» на своей строке: рядом с датой и меткой она выдавливает их за край. */
   .today-line .icon-button {
     margin-left: 0;
+  }
+
+  /* Подпись, столбик и число в одну строку на телефоне не помещаются: столбик сжимался бы
+     до полоски, по которой ничего не сравнить. */
+  .report-bars > li {
+    grid-template-columns: minmax(0, 1fr) minmax(110px, auto);
+  }
+
+  .report-bar-label {
+    grid-column: 1 / -1;
   }
 }
 

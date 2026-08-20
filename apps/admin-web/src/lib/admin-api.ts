@@ -97,6 +97,7 @@ import type {
   SetParticipantAttendanceRequest
 } from "@ticket-platform/contracts/admin-participants";
 import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
+import type { EventReport } from "@ticket-platform/contracts/admin-event-report";
 import type { AdminSiteRegistrationPage }
   from "@ticket-platform/contracts/site-registration";
 
@@ -1115,6 +1116,16 @@ export function exportOutreachCampaign(
 ): Promise<OutreachCampaignExport> {
   return requestAdminApi(
     `outreach/campaigns/${encodeURIComponent(campaignId)}/export`
+  );
+}
+
+export function getEventReport(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventReport> {
+  return requestAdminApi(
+    `events/${encodeURIComponent(eventId)}/report`,
+    signal
   );
 }
 

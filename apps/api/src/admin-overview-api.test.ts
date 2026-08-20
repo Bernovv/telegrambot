@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AdminPermission, EventOverview } from "@ticket-platform/contracts";
+import type {
+  AdminPermission,
+  EventOverview,
+  EventReport
+} from "@ticket-platform/contracts";
 import type { FastifyInstance } from "fastify";
-import type { AdminOverviewHandler } from "./admin-overview-api.js";
+import type {
+  AdminEventReportHandler,
+  AdminOverviewHandler
+} from "./admin-overview-api.js";
 import { createApiApplication } from "./app.js";
 
 const EVENT_ID = "019c0123-4567-789a-bcde-f0123456789a";
@@ -27,6 +34,27 @@ describe("event overview HTTP contract", () => {
       assert.equal(response.statusCode, 200);
       assert.deepEqual(permissions, ["events.read"]);
       assert.equal(response.json().people.guests, 12);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves the report behind the same events.read permission", async () => {
+    const permissions: string[] = [];
+    const app = await application(permissions);
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const response = await fastify.inject({
+        method: "GET",
+        url: `/api/v1/events/${EVENT_ID}/report`,
+        headers: { authorization: "Bearer valid-token" }
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(permissions, ["events.read"]);
+      assert.equal(response.json().attended, 2);
     } finally {
       await app.close();
     }
@@ -118,9 +146,31 @@ function application(
     bodyLimitBytes: 262_144,
     readiness,
     adminAuth: adminAuth(permissions),
-    adminOverview: handler(result, onRead)
+    adminOverview: handler(result, onRead),
+    adminEventReport: reportHandler()
   });
 }
+
+function reportHandler(): AdminEventReportHandler {
+  return {
+    async execute() {
+      return report;
+    }
+  };
+}
+
+const report: EventReport = {
+  eventId: EVENT_ID,
+  eventTitle: "Среда",
+  calculatedAt: "2026-08-21T09:00:00.000Z",
+  registered: 3,
+  attended: 2,
+  siteRequests: 4,
+  siteRequestDuplicates: 1,
+  byEntry: [{ key: "site", registered: 3, attended: 2 }],
+  byChannel: [{ key: "Instagram", registered: 3, attended: 2 }],
+  byOutreach: [{ key: "called", registered: 3, attended: 2 }]
+};
 
 function handler(
   result: EventOverview,
