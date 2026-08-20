@@ -2,6 +2,7 @@
 
 import { useEventWorkspace } from "@/components/event-workspace";
 import { PageError, PageLoading } from "@/components/page-state";
+import { ParticipantAddForm } from "@/components/participant-add-form";
 import { ParticipantRowDrawer } from "@/components/participant-row-drawer";
 import { ParticipantsImport } from "@/components/participants-import";
 import { ParticipantsExportButton } from "@/components/participants-export-button";
@@ -26,6 +27,8 @@ import {
   Search,
   Send,
   Tent,
+  UserPlus,
+  PhoneCall,
   X
 } from "lucide-react";
 import Link from "next/link";
@@ -39,6 +42,10 @@ export default function EventParticipantsPage() {
   const [filter, setFilter] = useState<ParticipantsFilter>(EMPTY_PARTICIPANTS_FILTER);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const offsite = event.format === "offsite";
+  const isFree = event.isFree;
+  const paid = !isFree;
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -90,10 +97,12 @@ export default function EventParticipantsPage() {
       <div className="page-heading">
         <div>
           <p className="eyebrow">Участники</p>
-          <h1>Кто едет</h1>
+          <h1>{offsite ? "Кто едет" : "Кто придёт"}</h1>
           <p>
-            Покупатели бота и заведённые руками в одном списке. Посчитано{" "}
-            {formatDateTime(view.calculatedAt)}
+            {offsite
+              ? "Покупатели бота и заведённые руками в одном списке. "
+              : "Заявки с сайта и заведённые руками в одном списке. "}
+            Посчитано {formatDateTime(view.calculatedAt)}
           </p>
         </div>
         <div className="heading-actions">
@@ -108,18 +117,51 @@ export default function EventParticipantsPage() {
             <RefreshCw size={18} />
           </button>
           {view.canManageParticipants ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setImportOpen((current) => !current)}
-            >
-              {importOpen ? <X size={16} /> : <FileSpreadsheet size={16} />}
-              {importOpen ? "Свернуть" : "Загрузить таблицу"}
-            </button>
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setImportOpen((current) => !current)}
+              >
+                {importOpen ? <X size={16} /> : <FileSpreadsheet size={16} />}
+                {importOpen ? "Свернуть" : "Загрузить таблицу"}
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setAddOpen((current) => !current)}
+              >
+                {addOpen ? <X size={16} /> : <UserPlus size={16} />}
+                {addOpen ? "Отменить" : "Добавить участника"}
+              </button>
+            </>
           ) : null}
           <ParticipantsExportButton eventId={event.id} eventSlug={event.slug} />
         </div>
       </div>
+
+      {addOpen && view.canManageParticipants ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Новый участник</h2>
+              <span>
+                Тот, кто записался по телефону, в переписке или на сайте. В кампанию
+                обзвона он попадёт сам.
+              </span>
+            </div>
+          </div>
+          <ParticipantAddForm
+            eventId={event.id}
+            format={event.format}
+            isFree={event.isFree}
+            onAdded={() => {
+              setAddOpen(false);
+              void load();
+            }}
+          />
+        </section>
+      ) : null}
 
       {importOpen ? (
         <ParticipantsImport
@@ -136,8 +178,9 @@ export default function EventParticipantsPage() {
           <span>Человек в списке</span>
           <strong>{view.totals.people}</strong>
           <small className="muted">
-            {view.totals.guests} гостей: {view.totals.adults} взрослых,{" "}
-            {view.totals.children} детей
+            {offsite
+              ? `${view.totals.guests} гостей: ${view.totals.adults} взрослых, ${view.totals.children} детей`
+              : `${view.totals.guests} гостей · ждём ${event.capacity}`}
           </small>
         </div>
         <div>
@@ -148,15 +191,22 @@ export default function EventParticipantsPage() {
         <div>
           <span>Завели руками</span>
           <strong>{view.totals.fromManual}</strong>
-          <small className="muted">MAX, сайт, договорились напрямую</small>
-        </div>
-        <div>
-          <span>Собрано</span>
-          <strong>{formatKopecks(view.totals.amountKopecks)}</strong>
           <small className="muted">
-            спальных мест {view.totals.sleepingPlaces}
-            {" · анкет "}
-            {view.questionnaire.answered} из {view.questionnaire.people}
+            {offsite ? "MAX, сайт, договорились напрямую" : "сайт, телефон, переписка"}
+          </small>
+        </div>
+        {/* У бесплатной встречи денежная плитка всегда показывала ноль. Вместо неё —
+            отметки явки: это то, ради чего в такой список и заглядывают. */}
+        <div>
+          <span>{isFree ? "Пришло" : "Собрано"}</span>
+          <strong>
+            {isFree
+              ? `${view.attendance.attended} из ${view.attendance.registered}`
+              : formatKopecks(view.totals.amountKopecks)}
+          </strong>
+          <small className="muted">
+            {offsite ? `спальных мест ${view.totals.sleepingPlaces} · ` : ""}
+            анкет {view.questionnaire.answered} из {view.questionnaire.people}
           </small>
         </div>
       </div>
@@ -200,37 +250,43 @@ export default function EventParticipantsPage() {
             <option value="other">Другое</option>
           </select>
         </label>
-        <label className="select-field">
-          <span>Тариф</span>
-          <select
-            value={filter.ticketTitle}
-            onChange={(e) => setFilter({ ...filter, ticketTitle: e.target.value })}
-          >
-            <option value="">Все тарифы</option>
-            {titles.map((title) => (
-              <option key={title} value={title}>{title}</option>
-            ))}
-          </select>
-        </label>
-        <label className="checkbox-field">
-          <input
-            type="checkbox"
-            checked={filter.sleepingOnly}
-            onChange={(e) => setFilter({ ...filter, sleepingOnly: e.target.checked })}
-          />
-          <span>С ночёвкой</span>
-        </label>
-        <label className="checkbox-field">
-          <input
-            type="checkbox"
-            checked={filter.withChildrenOnly}
-            onChange={(e) => setFilter({
-              ...filter,
-              withChildrenOnly: e.target.checked
-            })}
-          />
-          <span>С детьми</span>
-        </label>
+        {paid ? (
+          <label className="select-field">
+            <span>Тариф</span>
+            <select
+              value={filter.ticketTitle}
+              onChange={(e) => setFilter({ ...filter, ticketTitle: e.target.value })}
+            >
+              <option value="">Все тарифы</option>
+              {titles.map((title) => (
+                <option key={title} value={title}>{title}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {offsite ? (
+          <>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={filter.sleepingOnly}
+                onChange={(e) => setFilter({ ...filter, sleepingOnly: e.target.checked })}
+              />
+              <span>С ночёвкой</span>
+            </label>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={filter.withChildrenOnly}
+                onChange={(e) => setFilter({
+                  ...filter,
+                  withChildrenOnly: e.target.checked
+                })}
+              />
+              <span>С детьми</span>
+            </label>
+          </>
+        ) : null}
       </form>
 
       <section className="data-section">
@@ -244,10 +300,23 @@ export default function EventParticipantsPage() {
             </span>
           </div>
           <div className="outreach-toolbar-actions">
-            <Link className="secondary-button" href={`/events/${event.id}/accommodation`}>
-              <Tent size={16} />
-              Что везём
-            </Link>
+            {/* Кампания у мероприятия своя, и участники попадают в неё сами. Ссылка нужна
+                затем, что обзванивают людей именно там, а не в этом списке. */}
+            {event.outreachCampaignId ? (
+              <Link
+                className="secondary-button"
+                href={`/outreach/${event.outreachCampaignId}`}
+              >
+                <PhoneCall size={16} />
+                Обзвон
+              </Link>
+            ) : null}
+            {offsite ? (
+              <Link className="secondary-button" href={`/events/${event.id}/accommodation`}>
+                <Tent size={16} />
+                Что везём
+              </Link>
+            ) : null}
           </div>
         </div>
 
@@ -255,8 +324,9 @@ export default function EventParticipantsPage() {
           <div className="outreach-empty">
             <strong>Пока никого нет</strong>
             <span>
-              Здесь появятся покупатели бота, как только пройдёт первая оплата. Тех, кто
-              купил не через бота, заводят на вкладке «Логистика».
+              {offsite
+                ? "Здесь появятся покупатели бота, как только пройдёт первая оплата. Остальных заводят кнопкой «Добавить участника»."
+                : "Заявки с сайта попадают сюда сами. Тех, кто записался по телефону или в переписке, заводят кнопкой «Добавить участника»."}
             </span>
           </div>
         ) : rows.length === 0 ? (
@@ -268,14 +338,16 @@ export default function EventParticipantsPage() {
           <div className="table-wrap">
             <table>
               <thead>
+                {/* Столбцы про деньги и спальные места у бесплатной городской встречи
+                    всегда пустые: показывать колонку прочерков незачем. */}
                 <tr>
                   <th>Участник</th>
                   <th>Канал</th>
-                  <th>Тариф</th>
+                  {paid ? <th>Тариф</th> : null}
                   <th>Гостей</th>
-                  <th>Мест</th>
-                  <th>Сумма</th>
-                  <th>Оплачено</th>
+                  {offsite ? <th>Мест</th> : null}
+                  {paid ? <th>Сумма</th> : null}
+                  {paid ? <th>Оплачено</th> : null}
                   <th>Анкета</th>
                 </tr>
               </thead>
@@ -284,6 +356,8 @@ export default function EventParticipantsPage() {
                   <ParticipantRow
                     key={row.key}
                     row={row}
+                    showSleeping={offsite}
+                    showMoney={paid}
                     onOpen={() => setOpenKey(row.key)}
                   />
                 ))}
@@ -309,8 +383,15 @@ export default function EventParticipantsPage() {
 
 function ParticipantRow({
   row,
+  showSleeping,
+  showMoney,
   onOpen
-}: Readonly<{ row: EventParticipantRow; onOpen: () => void }>) {
+}: Readonly<{
+  row: EventParticipantRow;
+  showSleeping: boolean;
+  showMoney: boolean;
+  onOpen: () => void;
+}>) {
   const answered = row.customFields.some(
     (field) => field.value !== null && field.value !== ""
   );
@@ -336,23 +417,29 @@ function ParticipantRow({
           <span className="muted"> · {row.orderNumber}</span>
         ) : null}
       </td>
-      <td>{row.ticketTitle || "—"}</td>
+      {showMoney ? <td>{row.ticketTitle || "—"}</td> : null}
       <td>
         {row.adults + row.children}
         {row.children > 0 ? (
           <span className="muted"> · детей {row.children}</span>
         ) : null}
       </td>
-      <td>{row.sleepingPlaces > 0 ? row.sleepingPlaces : "—"}</td>
-      <td className="money-cell">
-        {row.amountKopecks ? formatKopecks(row.amountKopecks) : "—"}
-      </td>
-      <td>
-        {row.paidAt ? formatDateTime(row.paidAt) : "—"}
-        {row.paymentMethod ? (
-          <span className="muted"> · {row.paymentMethod}</span>
-        ) : null}
-      </td>
+      {showSleeping ? (
+        <td>{row.sleepingPlaces > 0 ? row.sleepingPlaces : "—"}</td>
+      ) : null}
+      {showMoney ? (
+        <td className="money-cell">
+          {row.amountKopecks ? formatKopecks(row.amountKopecks) : "—"}
+        </td>
+      ) : null}
+      {showMoney ? (
+        <td>
+          {row.paidAt ? formatDateTime(row.paidAt) : "—"}
+          {row.paymentMethod ? (
+            <span className="muted"> · {row.paymentMethod}</span>
+          ) : null}
+        </td>
+      ) : null}
       <td>
         {answered ? (
           <span className="questionnaire-saved">

@@ -132,6 +132,10 @@ export interface WorkerConfig extends AppConfig {
   readonly orderExpiryPollIntervalMs: number;
   readonly reminderBatchSize: number;
   readonly reminderPollIntervalMs: number;
+  readonly eventCampaignSyncBatchSize: number;
+  readonly eventCampaignSyncPollIntervalMs: number;
+  /** Страна по умолчанию при разборе телефонов: та же, что у вебхука Telegram. */
+  readonly phoneDefaultCountry: string;
   readonly tbankReconciliation: TBankReconciliationConfig;
   readonly telegramNotifications:
     | { readonly enabled: false }
@@ -423,6 +427,21 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.EVENT_REMINDER_POLL_INTERVAL_MS ?? "300000",
       "EVENT_REMINDER_POLL_INTERVAL_MS",
       60_000,
+      3_600_000
+    ),
+    phoneDefaultCountry: env.TELEGRAM_DEFAULT_COUNTRY ?? "RU",
+    eventCampaignSyncBatchSize: parseBoundedInteger(
+      env.EVENT_CAMPAIGN_SYNC_BATCH_SIZE ?? "20",
+      "EVENT_CAMPAIGN_SYNC_BATCH_SIZE",
+      1,
+      200
+    ),
+    // Минута: администратор заводит участника руками и почти сразу идёт в кампанию его
+    // обзванивать. Проход дешёвый — кампании без изменений отсекаются одним запросом.
+    eventCampaignSyncPollIntervalMs: parseBoundedInteger(
+      env.EVENT_CAMPAIGN_SYNC_POLL_INTERVAL_MS ?? "60000",
+      "EVENT_CAMPAIGN_SYNC_POLL_INTERVAL_MS",
+      10_000,
       3_600_000
     ),
     tbankReconciliation,

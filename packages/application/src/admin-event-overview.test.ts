@@ -191,7 +191,8 @@ function eventRow(): OverviewEventRow {
     occupiedUnits: 12,
     offerRequired: true,
     hasActiveOffer: true,
-    pricedProductCount: 3
+    pricedProductCount: 3,
+    isFree: false
   };
 }
 

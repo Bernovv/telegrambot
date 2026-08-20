@@ -30,6 +30,7 @@ describe("PostgreSQL administrator event draft management", () => {
 
     const result = await repository.createDraft({
       eventId: EVENT_ID,
+      campaignId: CAMPAIGN_ID,
       event,
       audit
     });
@@ -120,7 +121,12 @@ describe("PostgreSQL administrator event draft management", () => {
       new FakePool(failingConnection)
     );
     await assert.rejects(
-      failingRepository.createDraft({ eventId: EVENT_ID, event, audit }),
+      failingRepository.createDraft({
+        eventId: EVENT_ID,
+        campaignId: CAMPAIGN_ID,
+        event,
+        audit
+      }),
       /audit unavailable/
     );
     assert.equal(failingConnection.queries.at(-1)?.text, "rollback");
@@ -165,6 +171,101 @@ describe("PostgreSQL administrator event draft management", () => {
     assert.equal(auditInsert.values[3], "event.published");
     assert.match(String(auditInsert.values[7]), /"status":"published"/);
     assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
+
+  it("заводит кампанию мероприятия той же транзакцией, что и черновик", async () => {
+    const connection = new FakeConnection(() => affected());
+    const repository = createAdminEventManagementPersistence(
+      new FakePool(connection)
+    );
+
+    await repository.createDraft({
+      eventId: EVENT_ID,
+      campaignId: CAMPAIGN_ID,
+      event,
+      audit
+    });
+
+    const campaign = findQuery(connection, "insert into public.outreach_campaigns");
+    assert.equal(campaign.values[0], CAMPAIGN_ID);
+    assert.equal(campaign.values[4], EVENT_ID);
+    assert.match(campaign.text, /is_event_campaign/);
+    // Транзакция одна: кампания не должна появляться отдельным заходом уже после того,
+    // как мероприятие записалось.
+    assert.equal(connection.queries[0]?.text, "begin");
+    assert.equal(connection.queries.at(-1)?.text, "commit");
+  });
+
+  it("публикует бесплатное мероприятие без тарифов, оферты и сценария", async () => {
+    const connection = new FakeConnection((text) => {
+      if (text.includes("from public.events") && text.includes("for update")) {
+        return rows([{
+          ...eventRow,
+          is_free: true,
+          format: "city",
+          support_contact: null,
+          offer_required: false,
+          active_offer_version_id: null,
+          published_scenario_version_id: null
+        }]);
+      }
+      if (text.includes("from public.ticket_products")) {
+        return rows([{
+          active_product_count: "0",
+          unpriced_active_product_count: "0"
+        }]);
+      }
+      if (text.includes("set status = 'published'")) {
+        return rows([{ lock_version: 3 }]);
+      }
+      return affected();
+    });
+    const repository = createAdminEventManagementPersistence(
+      new FakePool(connection)
+    );
+
+    const result = await repository.publishDraft({
+      eventId: EVENT_ID,
+      expectedLockVersion: 2,
+      audit
+    });
+
+    assert.deepEqual(result, { status: "published", lockVersion: 3 });
+  });
+
+  it("бесплатному мероприятию всё ещё нужны название и дата начала", async () => {
+    const connection = new FakeConnection((text) => {
+      if (text.includes("from public.events") && text.includes("for update")) {
+        return rows([{
+          ...eventRow,
+          is_free: true,
+          format: "city",
+          title: "   ",
+          starts_at: "не дата"
+        }]);
+      }
+      if (text.includes("from public.ticket_products")) {
+        return rows([{
+          active_product_count: "0",
+          unpriced_active_product_count: "0"
+        }]);
+      }
+      return affected();
+    });
+    const repository = createAdminEventManagementPersistence(
+      new FakePool(connection)
+    );
+
+    const result = await repository.publishDraft({
+      eventId: EVENT_ID,
+      expectedLockVersion: 2,
+      audit
+    });
+
+    assert.deepEqual(result, {
+      status: "requirements_failed",
+      issues: ["missing_title", "missing_start"]
+    });
   });
 
   it("returns every unmet publication requirement without mutating the draft", async () => {
@@ -259,12 +360,15 @@ function findQuery(connection: FakeConnection, fragment: string): RecordedQuery 
 }
 
 const EVENT_ID = "00000000-0000-4000-8000-000000000101";
+const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000401";
 const occurredAt = new Date("2026-07-26T10:00:00.000Z");
 
 const event: AdminEventGeneralRecord = {
   slug: "business-picnic",
   title: "Business Picnic",
   description: "Annual event",
+  format: "offsite",
+  isFree: false,
   timezone: "Europe/Moscow",
   startsAt: new Date("2026-08-20T08:00:00.000Z"),
   endsAt: new Date("2026-08-20T18:00:00.000Z"),
@@ -304,6 +408,8 @@ const eventRow = {
   location_address: event.locationAddress,
   support_contact: event.supportContact,
   status: "draft",
+  format: event.format,
+  is_free: event.isFree,
   capacity: event.capacity,
   reservation_ttl_minutes: event.reservationTtlMinutes,
   phone_required_for_purchase: event.phoneRequiredForPurchase,

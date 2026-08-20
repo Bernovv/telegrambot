@@ -11,6 +11,7 @@ import {
   Users,
   Wallet
 } from "lucide-react";
+import type { AdminEventFormat } from "@ticket-platform/contracts/admin-events";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -22,20 +23,26 @@ import { usePathname } from "next/navigation";
  * Список будет расти (участники, анкеты, расходы, инвентарь, команда — см.
  * План_кабинета_мероприятия.md). Пять экранов правки живут под «Настройками», чтобы к концу
  * работ вкладок было восемь, а не двенадцать.
+ *
+ * Расселение и инвентарь — про выезд с ночёвкой. У городской встречи на три часа их не
+ * бывает, и пустые вкладки там только мешают искать нужную.
  */
 const TABS = [
-  { segment: "", label: "Обзор", icon: LayoutDashboard },
-  { segment: "participants", label: "Участники", icon: Users },
-  { segment: "attendance", label: "Явка", icon: DoorOpen },
-  { segment: "questionnaire", label: "Анкеты", icon: ClipboardList },
-  { segment: "accommodation", label: "Логистика", icon: Tent },
-  { segment: "expenses", label: "Расходы", icon: Wallet },
-  { segment: "inventory", label: "Инвентарь", icon: Boxes },
-  { segment: "team", label: "Команда", icon: HandCoins },
-  { segment: "settings", label: "Настройки", icon: Settings2 }
+  { segment: "", label: "Обзор", icon: LayoutDashboard, offsiteOnly: false },
+  { segment: "participants", label: "Участники", icon: Users, offsiteOnly: false },
+  { segment: "attendance", label: "Явка", icon: DoorOpen, offsiteOnly: false },
+  { segment: "questionnaire", label: "Анкеты", icon: ClipboardList, offsiteOnly: false },
+  { segment: "accommodation", label: "Логистика", icon: Tent, offsiteOnly: true },
+  { segment: "expenses", label: "Расходы", icon: Wallet, offsiteOnly: false },
+  { segment: "inventory", label: "Инвентарь", icon: Boxes, offsiteOnly: true },
+  { segment: "team", label: "Команда", icon: HandCoins, offsiteOnly: false },
+  { segment: "settings", label: "Настройки", icon: Settings2, offsiteOnly: false }
 ] as const;
 
-export function EventTabs({ eventId }: Readonly<{ eventId: string }>) {
+export function EventTabs({
+  eventId,
+  format
+}: Readonly<{ eventId: string; format: AdminEventFormat }>) {
   const pathname = usePathname();
   const base = `/events/${eventId}`;
   // Экраны правки открываются из «Настроек» и своей вкладки не имеют — пока мы на них,
@@ -48,7 +55,7 @@ export function EventTabs({ eventId }: Readonly<{ eventId: string }>) {
 
   return (
     <nav className="event-tabs" aria-label="Разделы мероприятия">
-      {TABS.map((tab) => {
+      {TABS.filter((tab) => format === "offsite" || !tab.offsiteOnly).map((tab) => {
         const Icon = tab.icon;
         const href = tab.segment ? `${base}/${tab.segment}` : base;
         const isActive = active === tab.segment;

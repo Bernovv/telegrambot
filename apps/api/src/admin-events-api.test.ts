@@ -181,6 +181,63 @@ describe("administrator events HTTP contract", () => {
     }
   });
 
+  it("принимает формат и бесплатность, а без них считает мероприятие городским платным", async () => {
+    const requests: unknown[] = [];
+    const app = await createApiApplication({
+      appVersion: "test",
+      bodyLimitBytes: 262_144,
+      readiness,
+      adminAuth: adminAuth(),
+      adminEvents: handlers(requests)
+    });
+    await app.init();
+
+    try {
+      const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+      const explicit = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/events",
+        headers: { authorization: "Bearer valid-token" },
+        payload: {
+          ...eventPayload,
+          format: "offsite",
+          isFree: true,
+          reason: "Выездное бесплатное"
+        }
+      });
+      assert.equal(explicit.statusCode, 201);
+
+      // Умолчание нужно старым клиентам: панель присылает поля всегда, но отказывать
+      // из-за их отсутствия значит ломать заведение мероприятия на ровном месте.
+      const implicit = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/events",
+        headers: { authorization: "Bearer valid-token" },
+        payload: { ...eventPayload, reason: "Без формата" }
+      });
+      assert.equal(implicit.statusCode, 201);
+
+      const rejected = await fastify.inject({
+        method: "POST",
+        url: "/api/v1/events",
+        headers: { authorization: "Bearer valid-token" },
+        payload: { ...eventPayload, format: "коворкинг", reason: "Чужой формат" }
+      });
+      assert.equal(rejected.statusCode, 400);
+
+      const sent = requests as readonly {
+        readonly event: { readonly format: string; readonly isFree: boolean };
+      }[];
+      assert.equal(sent.length, 2);
+      assert.deepEqual(
+        sent.map((request) => [request.event.format, request.event.isFree]),
+        [["offsite", true], ["city", false]]
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("validates updates and maps optimistic locking conflicts", async () => {
     const invalidRequests: unknown[] = [];
     const invalidApp = await createApiApplication({

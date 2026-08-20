@@ -195,6 +195,9 @@ export default function EventsPage() {
                       <div className="stacked-cell event-title-cell">
                         <strong>{item.title}</strong>
                         <span className="muted">
+                          {item.format === "city" ? "Городская" : "Выездное"}
+                          {item.isFree ? " · бесплатное" : ""}
+                          {" · "}
                           {item.locationName ?? item.slug}
                         </span>
                       </div>

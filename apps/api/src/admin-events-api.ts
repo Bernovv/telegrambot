@@ -39,6 +39,7 @@ import {
 } from "@ticket-platform/application";
 import {
   ADMIN_EVENT_CONTENT_BLOCK_TYPES,
+  ADMIN_EVENT_FORMATS,
   ADMIN_EVENT_STATUSES,
   ADMIN_PRODUCT_TYPES,
   ADMIN_SCENARIO_NODE_TYPES,
@@ -92,7 +93,12 @@ const eventGeneralSchema = z.object({
   capacity: z.number().int().min(1).max(10_000_000),
   reservationTtlMinutes: z.number().int().min(1).max(1_440),
   phoneRequiredForPurchase: z.boolean(),
-  offerRequired: z.boolean()
+  offerRequired: z.boolean(),
+  // Формат и бесплатность появились позже остальных полей: панель их присылает всегда, а
+  // умолчания оставлены для старых клиентов и сценариев, где карточку правят по частям.
+  // Умолчание «городское платное» повторяет умолчание базы.
+  format: z.enum(ADMIN_EVENT_FORMATS).default("city"),
+  isFree: z.boolean().default(false)
 });
 const createEventSchema = eventGeneralSchema.extend({
   reason: z.string().trim().min(3).max(500)

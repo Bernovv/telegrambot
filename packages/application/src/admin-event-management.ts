@@ -1,8 +1,10 @@
-import type {
-  AdminEventGeneralInput,
-  AdminEventMutationResult,
-  AdminEventPublicationResult,
-  AdminRequestActor
+import {
+  ADMIN_EVENT_FORMATS,
+  type AdminEventFormat,
+  type AdminEventGeneralInput,
+  type AdminEventMutationResult,
+  type AdminEventPublicationResult,
+  type AdminRequestActor
 } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
 
@@ -10,6 +12,8 @@ export interface AdminEventGeneralRecord {
   readonly slug: string;
   readonly title: string;
   readonly description: string;
+  readonly format: AdminEventFormat;
+  readonly isFree: boolean;
   readonly timezone: string;
   readonly startsAt: Date;
   readonly endsAt: Date | null;
@@ -38,6 +42,12 @@ export interface AdminEventAuditContext {
 export interface AdminEventManagementRepository {
   createDraft(input: {
     readonly eventId: string;
+    /**
+     * Кампания обзвона, которую заводим вместе с мероприятием. Идентификатор приходит
+     * сверху, чтобы вся запись легла одной транзакцией: мероприятие без своей кампании
+     * существовать не должно, иначе участники снова окажутся вне обзвона.
+     */
+    readonly campaignId: string;
     readonly event: AdminEventGeneralRecord;
     readonly audit: AdminEventAuditContext;
   }): Promise<"created" | "slug_conflict">;
@@ -148,8 +158,11 @@ export class CreateAdminEventDraftService {
       input.metadata,
       this.idGenerator
     );
+    const campaignId = this.idGenerator.newId();
+    requireAdminEventUuid(campaignId);
     const result = await this.repository.createDraft({
       eventId,
+      campaignId,
       event: parseEvent(input.event),
       audit
     });
@@ -336,8 +349,13 @@ function parseEvent(input: AdminEventGeneralInput): AdminEventGeneralRecord {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length < 2) {
     throw new InvalidAdminEventMutationError();
   }
+  if (!ADMIN_EVENT_FORMATS.includes(input.format)) {
+    throw new InvalidAdminEventMutationError();
+  }
   return {
     slug,
+    format: input.format,
+    isFree: input.isFree,
     title: normalizeRequired(input.title, 250),
     description: normalizeOptional(input.description, 10_000) ?? "",
     timezone,
@@ -351,7 +369,9 @@ function parseEvent(input: AdminEventGeneralInput): AdminEventGeneralRecord {
     capacity: input.capacity,
     reservationTtlMinutes: input.reservationTtlMinutes,
     phoneRequiredForPurchase: input.phoneRequiredForPurchase,
-    offerRequired: input.offerRequired
+    // У бесплатного мероприятия соглашаться не с чем: оферта описывает оплату и возврат.
+    // Флаг гасим здесь, а не в панели, — иначе публикация потребует документ, которого нет.
+    offerRequired: input.isFree ? false : input.offerRequired
   };
 }
 

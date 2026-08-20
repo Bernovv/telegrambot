@@ -100,6 +100,8 @@ const eventOne: AdminEventSummary = {
   slug: "business-picnic",
   title: "Business Picnic",
   status: "published",
+  format: "offsite",
+  isFree: false,
   timezone: "Europe/Moscow",
   startsAt: "2026-08-20T08:00:00.000Z",
   endsAt: "2026-08-20T18:00:00.000Z",

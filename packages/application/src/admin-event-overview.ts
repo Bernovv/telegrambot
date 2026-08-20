@@ -29,6 +29,8 @@ export interface OverviewEventRow {
   readonly offerRequired: boolean;
   readonly hasActiveOffer: boolean;
   readonly pricedProductCount: number;
+  /** Бесплатное мероприятие: пункты чек-листа про цены и оферту к нему не относятся. */
+  readonly isFree: boolean;
 }
 
 export interface AdminEventOverviewRepository {
@@ -177,13 +179,17 @@ function buildReadiness(input: OverviewInput): readonly EventOverviewReadinessIt
     });
   }
 
-  items.push({
-    code: "prices",
-    label: "Цены заданы",
-    done: input.event.pricedProductCount > 0,
-    hint: "Без активного тарифа с ценой заказ не выставить.",
-    tab: "settings"
-  });
+  // У бесплатного мероприятия тарифа нет и не будет: вечно красная строка «цены заданы»
+  // учит не смотреть на чек-лист вообще.
+  if (!input.event.isFree) {
+    items.push({
+      code: "prices",
+      label: "Цены заданы",
+      done: input.event.pricedProductCount > 0,
+      hint: "Без активного тарифа с ценой заказ не выставить.",
+      tab: "settings"
+    });
+  }
 
   items.push({
     code: "estimate",

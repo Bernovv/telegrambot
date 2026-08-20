@@ -162,6 +162,9 @@ importers:
       '@ticket-platform/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@ticket-platform/messenger-core':
+        specifier: workspace:*
+        version: link:../../packages/messenger-core
       '@ticket-platform/messenger-telegram':
         specifier: workspace:*
         version: link:../../packages/messenger-telegram

@@ -12,11 +12,15 @@ import {
   ReconcileTBankRefundsBatchService,
   ResumeTelegramScenarioAfterPaymentService,
   SendEventRemindersBatchService,
+  SyncEventCampaignsBatchService,
+  AdminOutreachService,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
 import type { DomainEventJobV1 } from "@ticket-platform/contracts";
 import {
+  createAdminOutreachPersistence,
+  createEventCampaignSyncPersistence,
   createEventReminderPersistence,
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
@@ -28,6 +32,7 @@ import {
   PostgresOutboxDispatchRepository,
   PostgresWorkerHeartbeatRepository
 } from "@ticket-platform/database";
+import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
 import { createTelegramNotificationSender } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
@@ -85,6 +90,16 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     reminderPersistence.unitOfWork,
     idGenerator
   );
+  // Кампании мероприятий наполняются здесь, а не в панели: участник приходит и с сайта, и
+  // оплаченным заказом, и рукой администратора, а обзванивать его надо в любом случае.
+  const syncEventCampaigns = new SyncEventCampaignsBatchService(
+    createEventCampaignSyncPersistence(pool),
+    new AdminOutreachService(
+      createAdminOutreachPersistence(pool),
+      new LibPhoneNumberNormalizer(config.phoneDefaultCountry),
+      idGenerator
+    )
+  );
   const tbankReconciliation = config.tbankReconciliation.enabled
     ? (() => {
         const provider = new TBankPaymentProvider({
@@ -128,16 +143,20 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextOrderExpirySweepAt = 0;
   let nextReminderSweepAt = 0;
   let nextTBankReconciliationSweepAt = 0;
+  let nextEventCampaignSyncSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
   let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
+  let lastEventCampaignSyncSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
   const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
+  const eventCampaignSyncWorkload = "event-campaign-sync";
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
     reminderWorkload,
+    eventCampaignSyncWorkload,
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -171,7 +190,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           queueDriver: "pg-boss",
           lastOrderExpirySweepAt,
           lastReminderSweepAt,
-          lastTBankReconciliationSweepAt
+          lastTBankReconciliationSweepAt,
+          lastEventCampaignSyncSweepAt
         }
       });
     } catch (error) {
@@ -342,6 +362,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextReminderSweepAt = Date.now() + config.reminderPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextEventCampaignSyncSweepAt) {
+        currentJobId = eventCampaignSyncWorkload;
+
+        try {
+          const result = await syncEventCampaigns.execute({
+            at: new Date(),
+            batchSize: config.eventCampaignSyncBatchSize
+          });
+          lastEventCampaignSyncSweepAt = new Date().toISOString();
+
+          if (result.campaigns > 0) {
+            logger.info("event campaign sync processed", {
+              campaigns: result.campaigns,
+              added: result.added,
+              failed: result.failed
+            });
+          }
+        } catch (error) {
+          logger.error("event campaign sync failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextEventCampaignSyncSweepAt =
+            Date.now() + config.eventCampaignSyncPollIntervalMs;
         }
       }
 

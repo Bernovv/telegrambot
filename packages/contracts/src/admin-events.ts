@@ -9,6 +9,17 @@ export const ADMIN_EVENT_STATUSES = [
 
 export type AdminEventStatus = typeof ADMIN_EVENT_STATUSES[number];
 
+/**
+ * Формат мероприятия. `city` — встреча на несколько часов в городе, их мы проводим каждую
+ * неделю. `offsite` — выезд с ночёвкой, палатками и инвентарём, как Бизнес-Пикник.
+ *
+ * Формат решает только то, какие разделы кабинета и поля формы показывать. Деньги живут
+ * отдельно, в `isFree`: городская встреча бывает платной, а выездная — бесплатной.
+ */
+export const ADMIN_EVENT_FORMATS = ["city", "offsite"] as const;
+
+export type AdminEventFormat = typeof ADMIN_EVENT_FORMATS[number];
+
 export const ADMIN_PRODUCT_TYPES = [
   "adult_standard",
   "adult_vip",
@@ -119,6 +130,9 @@ export interface AdminEventSummary {
   readonly slug: string;
   readonly title: string;
   readonly status: AdminEventStatus;
+  readonly format: AdminEventFormat;
+  /** Участие бесплатное: продаж нет, каталог и оферта не нужны. */
+  readonly isFree: boolean;
   readonly timezone: string;
   readonly startsAt: string;
   readonly endsAt: string | null;
@@ -201,6 +215,12 @@ export interface AdminEventOfferVersion {
 
 export interface AdminEventDetail extends AdminEventSummary {
   readonly description: string;
+  /**
+   * Кампания обзвона этого мероприятия. Заводится вместе с ним и наполняется участниками
+   * сама. Пусто только у мероприятий, заведённых до появления кампаний, — им кампанию
+   * завела миграция, но связь могли снять руками.
+   */
+  readonly outreachCampaignId: string | null;
   readonly locationAddress: string | null;
   readonly supportContact: string | null;
   readonly reservationTtlMinutes: number;
@@ -229,6 +249,12 @@ export interface AdminEventGeneralInput {
   readonly slug: string;
   readonly title: string;
   readonly description: string;
+  readonly format: AdminEventFormat;
+  /**
+   * Бесплатное мероприятие. Влечёт `offerRequired: false` — соглашаться не с чем — и
+   * снимает требование каталога, оферты и сценария при публикации.
+   */
+  readonly isFree: boolean;
   readonly timezone: string;
   readonly startsAt: string;
   readonly endsAt: string | null;

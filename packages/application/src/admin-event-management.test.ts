@@ -23,7 +23,7 @@ describe("administrator event draft management", () => {
     };
     const service = new CreateAdminEventDraftService(
       repository,
-      idGenerator(EVENT_ID, AUDIT_ID)
+      idGenerator(EVENT_ID, AUDIT_ID, CAMPAIGN_ID)
     );
 
     const result = await service.execute({
@@ -50,7 +50,7 @@ describe("administrator event draft management", () => {
     createRepository.createDraft = async () => "slug_conflict";
     const create = new CreateAdminEventDraftService(
       createRepository,
-      idGenerator(EVENT_ID, AUDIT_ID)
+      idGenerator(EVENT_ID, AUDIT_ID, CAMPAIGN_ID)
     );
     await assert.rejects(
       create.execute({ actor, event: eventInput, reason: "Create", metadata }),
@@ -230,6 +230,8 @@ const eventInput = {
   slug: "business-picnic",
   title: "Business Picnic",
   description: "Annual event",
+  format: "offsite" as const,
+  isFree: false,
   timezone: "Europe/Moscow",
   startsAt: "2026-08-20T08:00:00.000Z",
   endsAt: "2026-08-20T18:00:00.000Z",
@@ -252,4 +254,5 @@ const metadata = {
 };
 
 const EVENT_ID = "00000000-0000-4000-8000-000000000101";
+const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000401";
 const AUDIT_ID = "00000000-0000-4000-8000-000000000901";

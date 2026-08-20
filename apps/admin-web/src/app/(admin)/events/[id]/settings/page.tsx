@@ -21,38 +21,46 @@ const SCREENS = [
   {
     segment: "edit",
     label: "Основное",
-    description: "Даты, площадка, ёмкость, окно продаж, поддержка",
-    icon: Pencil
+    description: "Дата, время, площадка, сколько ждём человек",
+    icon: Pencil,
+    salesOnly: false
   },
   {
     segment: "catalog",
     label: "Продукты и тарифы",
     description: "Состав билетов, цены и ценовые правила",
-    icon: PackageOpen
+    icon: PackageOpen,
+    salesOnly: true
   },
   {
     segment: "content",
     label: "Контент",
     description: "Блоки, которые бот показывает участнику",
-    icon: FileText
+    icon: FileText,
+    salesOnly: false
   },
   {
     segment: "scenario",
     label: "Сценарий",
     description: "Шаги диалога и переходы между экранами бота",
-    icon: Workflow
+    icon: Workflow,
+    salesOnly: true
   },
   {
     segment: "offer",
     label: "Оферта",
     description: "Версии документа и то, с чем соглашается покупатель",
-    icon: FileCheck2
+    icon: FileCheck2,
+    salesOnly: true
   }
 ] as const;
 
 export default function EventSettingsPage() {
   const { event } = useEventWorkspace();
   const editable = event.status === "draft";
+  // Тарифы, оферта и сценарий покупки описывают продажу. У бесплатного мероприятия
+  // продажи нет: эти экраны нечем заполнить, и публикация их больше не требует.
+  const screens = SCREENS.filter((screen) => !screen.salesOnly || !event.isFree);
 
   return (
     <>
@@ -64,6 +72,9 @@ export default function EventSettingsPage() {
             {editable
               ? `Черновик, версия ${event.lockVersion}. Правки применяются сразу.`
               : "Мероприятие опубликовано — экраны открыты только на просмотр."}
+            {event.isFree
+              ? " Участие бесплатное: тарифы, оферта и сценарий покупки не нужны."
+              : ""}
           </p>
         </div>
       </div>
@@ -81,7 +92,7 @@ export default function EventSettingsPage() {
 
       <section className="data-section">
         <div className="settings-list">
-          {SCREENS.map((screen) => {
+          {screens.map((screen) => {
             const Icon = screen.icon;
             return (
               <Link

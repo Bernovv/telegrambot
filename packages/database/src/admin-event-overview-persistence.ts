@@ -24,6 +24,7 @@ interface OverviewEventResult {
   readonly capacity: number;
   readonly occupied_units: string;
   readonly offer_required: boolean;
+  readonly is_free: boolean;
   readonly has_active_offer: boolean;
   readonly priced_product_count: string;
 }
@@ -70,6 +71,7 @@ export class PostgresAdminEventOverviewRepository
                 )
            ), 0)::text as occupied_units,
            e.offer_required,
+           e.is_free,
            (e.active_offer_version_id is not null) as has_active_offer,
            coalesce((
              select count(distinct p.id)
@@ -93,6 +95,7 @@ export class PostgresAdminEventOverviewRepository
         capacity: row.capacity,
         occupiedUnits: Number(row.occupied_units),
         offerRequired: row.offer_required,
+        isFree: row.is_free,
         hasActiveOffer: row.has_active_offer,
         pricedProductCount: Number(row.priced_product_count)
       };

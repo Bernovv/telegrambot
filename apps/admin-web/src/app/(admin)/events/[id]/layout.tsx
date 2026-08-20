@@ -83,7 +83,7 @@ export default function EventWorkspaceLayout({
         </div>
       ) : null}
 
-      <EventTabs eventId={id} />
+      <EventTabs eventId={id} format={event?.format ?? "offsite"} />
 
       {loading && !event ? <PageLoading /> : null}
       {error && !event ? (

@@ -23,6 +23,8 @@ interface EventSummaryRow {
   readonly slug: string;
   readonly title: string;
   readonly status: AdminEventSummary["status"];
+  readonly format: AdminEventSummary["format"];
+  readonly is_free: boolean;
   readonly timezone: string;
   readonly starts_at: Date | string;
   readonly ends_at: Date | string | null;
@@ -43,6 +45,7 @@ interface EventSummaryRow {
 
 interface EventDetailRow extends EventSummaryRow {
   readonly description: string;
+  readonly outreach_campaign_id: string | null;
   readonly location_address: string | null;
   readonly support_contact: string | null;
   readonly reservation_ttl_minutes: number;
@@ -391,6 +394,7 @@ export class PostgresAdminEventsRepository implements AdminEventsRepository {
       return {
         ...mapEventSummary(event),
         description: event.description,
+        outreachCampaignId: event.outreach_campaign_id,
         locationAddress: event.location_address,
         supportContact: event.support_contact,
         reservationTtlMinutes: event.reservation_ttl_minutes,
@@ -477,6 +481,8 @@ function mapEventSummary(row: EventSummaryRow): AdminEventSummary {
     slug: row.slug,
     title: row.title,
     status: row.status,
+    format: row.format,
+    isFree: row.is_free,
     timezone: row.timezone,
     startsAt: toIso(row.starts_at),
     endsAt: toNullableIso(row.ends_at),
@@ -647,13 +653,21 @@ function escapeLike(value: string): string {
 
 const EVENT_SUMMARY_SELECT = `
   select events.id, events.slug, events.title, events.description,
-         events.status, events.timezone, events.starts_at, events.ends_at,
+         events.status, events.format, events.is_free,
+         events.timezone, events.starts_at, events.ends_at,
          events.sales_starts_at, events.sales_ends_at, events.location_name,
          events.location_address, events.support_contact, events.capacity,
          events.reservation_ttl_minutes, events.phone_required_for_purchase,
          events.offer_required, events.published_scenario_version_id,
          events.active_offer_version_id, events.published_at,
          events.lock_version, events.created_at, events.updated_at,
+         (
+           select campaign.id
+           from public.outreach_campaigns campaign
+           where campaign.event_id = events.id
+             and campaign.is_event_campaign
+           limit 1
+         ) as outreach_campaign_id,
          (
            select count(*)::text
            from public.ticket_products products

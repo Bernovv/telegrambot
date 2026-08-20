@@ -23,6 +23,8 @@ interface EventGeneralRow {
   readonly location_address: string | null;
   readonly support_contact: string | null;
   readonly status: string;
+  readonly format: string;
+  readonly is_free: boolean;
   readonly capacity: number;
   readonly reservation_ttl_minutes: number;
   readonly phone_required_for_purchase: boolean;
@@ -52,17 +54,24 @@ implements AdminEventManagementRepository {
            id, slug, title, description, timezone, starts_at, ends_at,
            sales_starts_at, sales_ends_at, location_name, location_address,
            support_contact, status, capacity, reservation_ttl_minutes,
-           phone_required_for_purchase, offer_required, lock_version,
-           created_at, updated_at
+           phone_required_for_purchase, offer_required, format, is_free,
+           lock_version, created_at, updated_at
          ) values (
            $1, $2, $3, $4, $5, $6, $7,
            $8, $9, $10, $11,
            $12, 'draft', $13, $14,
-           $15, $16, 1,
-           $17, $17
+           $15, $16, $18, $19,
+           1, $17, $17
          )`,
         eventValues(input.eventId, input.event, input.audit.occurredAt)
       );
+      await createEventCampaign(connection, {
+        campaignId: input.campaignId,
+        eventId: input.eventId,
+        title: input.event.title,
+        createdByAdminId: input.audit.actorAdminId,
+        occurredAt: input.audit.occurredAt
+      });
       await appendAudit(
         connection,
         input.audit,
@@ -113,6 +122,8 @@ implements AdminEventManagementRepository {
              reservation_ttl_minutes = $14,
              phone_required_for_purchase = $15,
              offer_required = $16,
+             format = $18,
+             is_free = $19,
              lock_version = lock_version + 1,
              updated_at = $17
          where id = $1
@@ -254,8 +265,47 @@ function eventValues(
     event.reservationTtlMinutes,
     event.phoneRequiredForPurchase,
     event.offerRequired,
-    occurredAt
+    occurredAt,
+    event.format,
+    event.isFree
   ];
+}
+
+/**
+ * Кампания обзвона заводится вместе с мероприятием и в той же транзакции.
+ *
+ * Иначе получается ровно то, из-за чего это и делается: мероприятие есть, кампании нет,
+ * участники бесплатной встречи в обзвон не попадают, и никто об этом не узнаёт, пока не
+ * понадобится обзвонить список. Стадии воронки кампании засевает триггер базы.
+ */
+async function createEventCampaign(
+  connection: SqlConnection,
+  input: {
+    readonly campaignId: string;
+    readonly eventId: string;
+    readonly title: string;
+    readonly createdByAdminId: string;
+    readonly occurredAt: Date;
+  }
+): Promise<void> {
+  await connection.query(
+    `insert into public.outreach_campaigns (
+       id, name, description, status, created_by_admin_id,
+       created_at, updated_at, event_id, is_event_campaign
+     ) values (
+       $1::uuid, left(btrim($2::text), 200),
+       'Кампания мероприятия. Заведена автоматически вместе с ним.',
+       'active', $3::uuid, $4::timestamptz, $4::timestamptz, $5::uuid, true
+     )
+     on conflict do nothing`,
+    [
+      input.campaignId,
+      input.title,
+      input.createdByAdminId,
+      input.occurredAt,
+      input.eventId
+    ]
+  );
 }
 
 async function lockSlug(
@@ -346,6 +396,8 @@ function eventSnapshot(
     locationAddress: event.locationAddress,
     supportContact: event.supportContact,
     status,
+    format: event.format,
+    isFree: event.isFree,
     capacity: event.capacity,
     reservationTtlMinutes: event.reservationTtlMinutes,
     phoneRequiredForPurchase: event.phoneRequiredForPurchase,
@@ -368,6 +420,8 @@ function rowSnapshot(row: EventGeneralRow): Readonly<Record<string, unknown>> {
     locationAddress: row.location_address,
     supportContact: row.support_contact,
     status: row.status,
+    format: row.format,
+    isFree: row.is_free,
     capacity: row.capacity,
     reservationTtlMinutes: row.reservation_ttl_minutes,
     phoneRequiredForPurchase: row.phone_required_for_purchase,
@@ -388,6 +442,12 @@ function publicationIssues(
   }
   if (Number.isNaN(new Date(event.starts_at).getTime())) {
     issues.push("missing_start");
+  }
+  // Бесплатному мероприятию продавать нечего: ни каталога, ни цен, ни оферты, ни диалога
+  // покупки в боте у него нет. Требовать их при публикации значит требовать завести пустышки
+  // ради галочки — и именно это мешало опубликовать городскую встречу.
+  if (event.is_free) {
+    return issues;
   }
   if (!event.support_contact?.trim()) {
     issues.push("missing_support_contact");
@@ -419,7 +479,7 @@ function toNullableIso(value: Date | string | null): string | null {
 const EVENT_GENERAL_SELECT = `
   select id, slug, title, description, timezone, starts_at, ends_at,
          sales_starts_at, sales_ends_at, location_name, location_address,
-         support_contact, status, capacity, reservation_ttl_minutes,
+         support_contact, status, format, is_free, capacity, reservation_ttl_minutes,
          phone_required_for_purchase, offer_required, active_offer_version_id,
          published_scenario_version_id, lock_version
   from public.events`;

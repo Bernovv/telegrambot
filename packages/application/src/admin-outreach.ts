@@ -298,7 +298,13 @@ export interface AdminOutreachRepository {
   }): Promise<MergeOutreachPeopleResult>;
   importContacts(input: {
     readonly campaignId: string;
-    readonly assignedAdminId: string;
+    /**
+     * Ответственный за добавленные контакты. `null` — оставить без ответственного: так
+     * приходят участники мероприятия, которых заводит работник, а не человек. Записывать
+     * ответственным служебную учётку нельзя — менеджеры фильтруют доску по себе, и чужой
+     * ответственный прячет контакт от всех сразу.
+     */
+    readonly assignedAdminId: string | null;
     readonly createdByAdminId: string;
     readonly rows: readonly (NormalizedOutreachImportRow & {
       readonly contactId: string;
@@ -390,6 +396,11 @@ export class AdminOutreachService {
   async importEventParticipants(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
+    /**
+     * Не передан — ответственным становится тот, кто нажал кнопку. `null` — контакт
+     * остаётся ничьим: так наполняет кампанию работник, у которого хозяина нет.
+     */
+    readonly assignedAdminId?: string | null;
     readonly now: Date;
   }): Promise<ImportEventParticipantsResult> {
     requirePermission(input.actor, "outreach.write");
@@ -432,6 +443,9 @@ export class AdminOutreachService {
       const batch = await this.importContacts({
         actor: input.actor,
         campaignId: input.campaignId,
+        ...(input.assignedAdminId === undefined
+          ? {}
+          : { assignedAdminId: input.assignedAdminId }),
         rows: rows.slice(offset, offset + 500),
         skipInvalid: true,
         now: input.now
@@ -1321,7 +1335,8 @@ export class AdminOutreachService {
   async importContacts(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
-    readonly assignedAdminId?: string;
+    /** Не передан — отвечает тот, кто загружает. `null` — контакт остаётся без ответственного. */
+    readonly assignedAdminId?: string | null;
     readonly rows: readonly OutreachImportRow[];
     /**
      * Пропускать строки с неразбираемым телефоном вместо отказа от всей пачки. Нужно при
@@ -1341,8 +1356,12 @@ export class AdminOutreachService {
     if (input.rows.length < 1 || input.rows.length > 500) {
       throw new Error("Outreach import batch is invalid");
     }
-    const assignedAdminId = input.assignedAdminId ?? input.actor.adminId;
-    requireUuid(assignedAdminId);
+    const assignedAdminId = input.assignedAdminId === undefined
+      ? input.actor.adminId
+      : input.assignedAdminId;
+    if (assignedAdminId !== null) {
+      requireUuid(assignedAdminId);
+    }
 
     const rows: (NormalizedOutreachImportRow & {
       readonly contactId: string;
