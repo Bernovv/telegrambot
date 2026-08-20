@@ -222,6 +222,29 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.match(update.text, /deleted_at is null/);
   });
 
+  it("counts registrations waiting for a human across the whole base, not the page", async () => {
+    const connection = new RecordingConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    await repository.listSiteRegistrations({
+      onlyNeedsAttention: false,
+      page: 2,
+      limit: 50
+    });
+
+    const list = connection.queries.find((query) =>
+      query.text.includes("from public.site_registrations registration"));
+    assert.ok(list);
+    assert.deepEqual(list.values, [false, 50, 50]);
+    // Счётчик «ждут разбора» считается отдельным запросом и без фильтров страницы: он
+    // показывает, сколько их всего, а не сколько попало в текущие пятьдесят строк.
+    const pending = connection.queries.find((query) =>
+      query.text.includes("count(*)::text as total"));
+    assert.ok(pending);
+    assert.match(pending.text, /status <> 'registered'/);
+    assert.deepEqual(pending.values, []);
+  });
+
   it("reports stage_in_use instead of throwing when a stage delete violates the contacts foreign key", async () => {
     const connection = new ForeignKeyViolationOnDeleteConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));

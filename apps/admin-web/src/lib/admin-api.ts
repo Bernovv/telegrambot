@@ -96,6 +96,9 @@ import type {
   SetParticipantAttendanceRequest
 } from "@ticket-platform/contracts/admin-participants";
 import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
+import type { AdminSiteRegistrationPage }
+  from "@ticket-platform/contracts/site-registration";
+
 import type {
   CreateEventOrganizerRequest,
   EventTeamView,
@@ -1022,6 +1025,33 @@ export function createOutreachPersonTask(
     `outreach/base/${encodeURIComponent(contactId)}/tasks`,
     "POST",
     input
+  );
+}
+
+export function listSiteRegistrations(
+  input: {
+    readonly needsAttention?: boolean;
+    readonly page?: number;
+    readonly limit?: number;
+  },
+  signal?: AbortSignal
+): Promise<AdminSiteRegistrationPage> {
+  const query = new URLSearchParams();
+  if (input.needsAttention) {
+    query.set("needsAttention", "true");
+  }
+  if (input.page) {
+    query.set("page", String(input.page));
+  }
+  if (input.limit) {
+    query.set("limit", String(input.limit));
+  }
+  const suffix = query.toString();
+  return requestAdminApi(
+    suffix
+      ? `outreach/site-registrations?${suffix}`
+      : "outreach/site-registrations",
+    signal
   );
 }
 

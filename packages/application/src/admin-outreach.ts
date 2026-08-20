@@ -6,6 +6,7 @@ import {
 import type {
   AddExistingContactsResult,
   AdminRequestActor,
+  AdminSiteRegistrationPage,
   ImportEventParticipantsResult,
   OutreachBaseContact,
   MoveOutreachContactsResult,
@@ -370,6 +371,11 @@ export interface AdminOutreachRepository {
     readonly completedByAdminId: string;
     readonly now: Date;
   }): Promise<boolean>;
+  listSiteRegistrations(input: {
+    readonly onlyNeedsAttention: boolean;
+    readonly page: number;
+    readonly limit: number;
+  }): Promise<AdminSiteRegistrationPage>;
   createNote(input: {
     readonly id: string;
     readonly contactId: string;
@@ -1655,6 +1661,35 @@ export class AdminOutreachService {
         now: input.now
       })
     };
+  }
+
+  /**
+   * Заявки с формы на сайте.
+   *
+   * Отдельный список, а не строчка в участниках мероприятия: у заявки два состояния, при
+   * которых участника не завели вовсе — телефон уже был в списке или встречи не нашлось. В
+   * участниках таких заявок нет по определению, и без этого списка их не видит никто.
+   */
+  listSiteRegistrations(input: {
+    readonly actor: AdminRequestActor;
+    readonly onlyNeedsAttention?: boolean;
+    readonly page?: number;
+    readonly limit?: number;
+  }): Promise<AdminSiteRegistrationPage> {
+    requirePermission(input.actor, "outreach.read");
+    const page = input.page ?? 1;
+    const limit = input.limit ?? 50;
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) {
+      throw new Error("Outreach page is invalid");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("Outreach limit is invalid");
+    }
+    return this.repository.listSiteRegistrations({
+      onlyNeedsAttention: input.onlyNeedsAttention === true,
+      page,
+      limit
+    });
   }
 
   /** Заметка о человеке. Копится рядом с прежними, а не затирает их. */

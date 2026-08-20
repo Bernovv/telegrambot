@@ -55,6 +55,9 @@
       ],
       "@ticket-platform/contracts/admin-overview": [
         "../../packages/contracts/src/admin-overview.ts"
+      ],
+      "@ticket-platform/contracts/site-registration": [
+        "../../packages/contracts/src/site-registration.ts"
       ]
     }
   },

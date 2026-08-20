@@ -4,13 +4,16 @@ import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
   CalendarDays,
   Contact,
+  Globe,
   ListChecks,
   LogOut,
   Megaphone,
   Menu,
   PhoneCall,
   ReceiptText,
+  Search,
   ShieldCheck,
+  Sunrise,
   Users,
   X
 } from "lucide-react";
@@ -19,11 +22,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useState } from "react";
 
 const NAVIGATION = [
+  { href: "/today", label: "Мой день", icon: Sunrise },
+  { href: "/tasks", label: "Задачи", icon: ListChecks },
+  { href: "/search", label: "Поиск", icon: Search },
   { href: "/events", label: "Мероприятия", icon: CalendarDays },
-  { href: "/users", label: "Пользователи", icon: Users },
+  { href: "/registrations", label: "Заявки с сайта", icon: Globe },
   { href: "/base", label: "База контактов", icon: Contact },
   { href: "/outreach", label: "Работа с базой", icon: PhoneCall },
-  { href: "/tasks", label: "Задачи", icon: ListChecks },
+  { href: "/users", label: "Пользователи", icon: Users },
   { href: "/orders", label: "Заказы", icon: ReceiptText },
   { href: "/broadcasts", label: "Рассылки", icon: Megaphone }
 ] as const;

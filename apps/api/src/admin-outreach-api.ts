@@ -204,6 +204,12 @@ const taskBody = z.object({
   dueAt: z.iso.datetime({ offset: true })
 }).strict();
 
+const siteRegistrationsQuery = z.object({
+  needsAttention: z.enum(["true", "false"]).optional(),
+  page: z.coerce.number().int().min(1).max(100_000).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional()
+}).strict();
+
 const noteBody = z.object({
   body: z.string().trim().min(1).max(4000)
 }).strict();
@@ -291,6 +297,7 @@ export type AdminOutreachHandler = Pick<
   | "completeTask"
   | "createNote"
   | "deleteNote"
+  | "listSiteRegistrations"
   | "listManagers"
   | "exportCampaign"
 >;
@@ -890,6 +897,25 @@ export class AdminOutreachController {
       throw outreachNotFound();
     }
     return result;
+  }
+
+  @Get("site-registrations")
+  @RequireAdminPermission("outreach.read")
+  listSiteRegistrations(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const parsed = parse(siteRegistrationsQuery, query);
+    return executeOutreach(() =>
+      this.handler.listSiteRegistrations({
+        actor: requireActor(request),
+        ...(parsed.needsAttention === undefined
+          ? {}
+          : { onlyNeedsAttention: parsed.needsAttention === "true" }),
+        ...(parsed.page === undefined ? {} : { page: parsed.page }),
+        ...(parsed.limit === undefined ? {} : { limit: parsed.limit })
+      })
+    );
   }
 
   @Post("base/:id/notes")

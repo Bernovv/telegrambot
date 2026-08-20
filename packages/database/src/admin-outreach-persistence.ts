@@ -6,6 +6,8 @@ import type {
   OutreachImportCounts
 } from "@ticket-platform/application";
 import type {
+  AdminSiteRegistration,
+  AdminSiteRegistrationPage,
   OutreachActivity,
   OutreachCampaignContactDetail,
   OutreachContactParticipation,
@@ -201,6 +203,21 @@ interface PersonTaskRow extends TaskRow {
   readonly campaign_contact_id: string | null;
   readonly campaign_id: string | null;
   readonly campaign_name: string | null;
+}
+
+interface SiteRegistrationRow {
+  readonly id: string;
+  readonly display_name: string;
+  readonly phone_e164: string;
+  readonly event_id: string | null;
+  readonly event_title: string | null;
+  readonly participant_id: string | null;
+  readonly contact_id: string | null;
+  readonly page: string;
+  readonly status: AdminSiteRegistration["state"];
+  readonly consent_at: Date | string;
+  readonly created_at: Date | string;
+  readonly total_count: string;
 }
 
 interface NoteRow {
@@ -3020,6 +3037,62 @@ implements AdminOutreachRepository {
         [row.campaign_contact_id, input.now]
       );
       return true;
+    });
+  }
+
+  listSiteRegistrations(
+    input: Parameters<AdminOutreachRepository["listSiteRegistrations"]>[0]
+  ): Promise<AdminSiteRegistrationPage> {
+    return this.read(async (connection) => {
+      const offset = (input.page - 1) * input.limit;
+      const result = await connection.query<SiteRegistrationRow>(
+        `select registration.id,
+                registration.display_name,
+                registration.phone_e164,
+                registration.event_id,
+                event.title as event_title,
+                registration.participant_id,
+                contact.id as contact_id,
+                registration.page,
+                registration.status,
+                registration.consent_at,
+                registration.created_at,
+                count(*) over()::text as total_count
+         from public.site_registrations registration
+         left join public.events event on event.id = registration.event_id
+         -- Человек в базе ищется по телефону: заявка с сайта его не знает, а карточка
+         -- клиента — единственное место, где по заявке видно всю историю.
+         left join public.outreach_contacts contact
+           on contact.phone_e164 = registration.phone_e164
+         where $1::boolean is false or registration.status <> 'registered'
+         order by registration.created_at desc, registration.id desc
+         limit $2::int offset $3::int`,
+        [input.onlyNeedsAttention, input.limit, offset]
+      );
+      const pending = await connection.query<{ readonly total: string }>(
+        `select count(*)::text as total
+         from public.site_registrations
+         where status <> 'registered'`
+      );
+      return {
+        items: result.rows.map((row) => ({
+          id: row.id,
+          displayName: row.display_name,
+          phone: row.phone_e164,
+          eventId: row.event_id,
+          eventTitle: row.event_title,
+          participantId: row.participant_id,
+          contactId: row.contact_id,
+          page: row.page,
+          state: row.status,
+          consentAt: toIso(row.consent_at),
+          createdAt: toIso(row.created_at)
+        })),
+        total: Number(result.rows[0]?.total_count ?? "0"),
+        page: input.page,
+        limit: input.limit,
+        needsAttention: Number(pending.rows[0]?.total ?? "0")
+      };
     });
   }
 

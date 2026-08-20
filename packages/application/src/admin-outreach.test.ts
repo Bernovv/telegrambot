@@ -1288,6 +1288,9 @@ function repository(
     async recordActivities() { return 0; },
     async updateContactStage() { return false; },
     async createTask() { return false; },
+    async listSiteRegistrations() {
+      return { items: [], total: 0, page: 1, limit: 50, needsAttention: 0 };
+    },
     async createNote() { return false; },
     async deleteNote() { return false; },
     async completeTask() { return false; },

@@ -2415,6 +2415,61 @@ tbody tr:hover {
   justify-self: start;
 }
 
+/* «Мой день» и сквозной поиск. Списки здесь короткие и разнородные — таблица на две
+   строки выглядела бы тяжелее, чем сами данные. */
+.today-list {
+  display: grid;
+  gap: 2px;
+}
+
+.today-list > li {
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.today-list > li:last-child {
+  border-bottom: 0;
+}
+
+.today-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.today-line .icon-button {
+  margin-left: auto;
+}
+
+.today-line a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.today-line a:hover {
+  color: var(--blue);
+}
+
+.today-empty {
+  padding: 16px 18px;
+}
+
+/* Поиск здесь живёт сам по себе, а не внутри карточки раздела, поэтому берёт вид полосы
+   фильтров: иначе поле висит на пустом фоне. */
+.global-search {
+  margin-top: 30px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.global-search .base-search-field {
+  flex: 1 1 320px;
+}
+
 .person-note-form {
   display: grid;
   gap: 8px;
@@ -4055,6 +4110,63 @@ tbody tr:hover {
 
   .catalog-form-actions button {
     width: 100%;
+  }
+
+  /* Работа с базой и карточка клиента на телефоне. Менеджер звонит с телефона, и полосы,
+     сверстанные в одну строку под ноутбук, здесь просто уезжают за край. */
+  .section-title-row {
+    min-height: auto;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .outreach-bulk-bar,
+  .outreach-toolbar-actions,
+  .outreach-drawer-actions {
+    flex-wrap: wrap;
+  }
+
+  .outreach-bulk-bar .select-field,
+  .outreach-bulk-bar .secondary-button {
+    flex: 1 1 140px;
+  }
+
+  .outreach-task-create form {
+    grid-template-columns: 1fr;
+  }
+
+  .base-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .base-search-field {
+    min-width: 0;
+  }
+
+  .base-search .primary-button,
+  .base-search .secondary-button,
+  .person-note-form button {
+    width: 100%;
+  }
+
+  .merge-candidates > li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .merge-candidates > li .secondary-button {
+    width: 100%;
+  }
+
+  .person-answers {
+    grid-template-columns: 1fr;
+  }
+
+  /* Кнопка «выполнено» на своей строке: рядом с датой и меткой она выдавливает их за край. */
+  .today-line .icon-button {
+    margin-left: 0;
   }
 }
 

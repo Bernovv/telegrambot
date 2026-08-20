@@ -364,6 +364,45 @@ test("allowlists only implemented administrator API methods and paths", () => {
     true
   );
   assert.equal(isAllowedAdminApiPath("POST", "outreach/custom-fields"), true);
+});
+
+test("forwards the person-level task, notes and site registration routes", () => {
+  // Панель ходит в api только через свой прокси, и он пропускает лишь перечисленные пути.
+  // Забытый здесь маршрут отвечает «не найдено» при живом эндпоинте — ошибка, которую
+  // никакая типизация не ловит.
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/base/00000000-0000-4000-8000-000000000101/tasks"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/base/00000000-0000-4000-8000-000000000101/notes"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/notes/00000000-0000-4000-8000-000000000101/delete"
+    ),
+    true
+  );
+  assert.equal(isAllowedAdminApiPath("GET", "outreach/site-registrations"), true);
+  assert.equal(
+    isAllowedAdminApiPath("GET", "outreach/site-registrations?needsAttention=true"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/base/00000000-0000-4000-8000-000000000101/notes/forge"
+    ),
+    false
+  );
   assert.equal(
     isAllowedAdminApiPath(
       "POST",
