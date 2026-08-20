@@ -1,3 +1,5 @@
+import type { AdminOrderStatus } from "./admin-operations.js";
+
 export const OUTREACH_CAMPAIGN_STATUSES = [
   "draft",
   "active",
@@ -252,6 +254,11 @@ export interface OutreachContactParticipation {
   readonly eventTitle: string;
   readonly guests: number;
   readonly sleepingPlaces: number;
+  readonly ticketTitle: string;
+  /** Сколько заплатил помимо бота: ручные оплаты заводятся прямо на участнике. */
+  readonly amountKopecks: string | null;
+  /** Отметка на входе. Пусто — не пришёл или мероприятие ещё не было. */
+  readonly checkedInAt: string | null;
   /**
    * Ответы анкеты этого человека по этому мероприятию. Анкета заполняется на вкладке
    * мероприятия и висит на участнике, а в карточке нужна для ответа на вопрос «что мы про
@@ -330,6 +337,108 @@ export interface OutreachPersonActivity extends OutreachActivity {
   readonly campaignName: string;
 }
 
+/** Задача по человеку. Живёт в кампании, но в карточке важна сама по себе. */
+export interface OutreachPersonTask extends OutreachTask {
+  readonly campaignContactId: string;
+  readonly campaignId: string;
+  readonly campaignName: string;
+}
+
+/** Переход по стадии — с названиями стадий так, как их назвали в той кампании. */
+export interface OutreachPersonStageChange extends OutreachStageHistoryEntry {
+  readonly campaignId: string;
+  readonly campaignName: string;
+  readonly fromLabel: string | null;
+  readonly toLabel: string;
+}
+
+/** Значение дополнительного поля. Поля заводятся по кампаниям, отсюда её название. */
+export interface OutreachPersonCustomField {
+  readonly fieldId: string;
+  readonly label: string;
+  readonly campaignName: string;
+  readonly value: string;
+}
+
+/**
+ * Ответ анкеты. Источников два: анкета участника, заполненная организатором, и анкета к
+ * заказу покупателя бота. Вопросы у них общие, а вопрос «что мы про человека знаем» не
+ * различает, кто вписал ответ, — поэтому в карточке они лежат одним списком.
+ */
+export const OUTREACH_QUESTIONNAIRE_SOURCES = [
+  "participant",
+  "order"
+] as const;
+
+export type OutreachQuestionnaireSource =
+  typeof OUTREACH_QUESTIONNAIRE_SOURCES[number];
+
+export interface OutreachPersonQuestionnaire {
+  readonly source: OutreachQuestionnaireSource;
+  readonly eventId: string | null;
+  readonly eventTitle: string | null;
+  readonly filledAt: string | null;
+  readonly answers: readonly OutreachParticipationAnswer[];
+}
+
+/** Заказ покупателя бота. */
+export interface OutreachPersonOrder {
+  readonly id: string;
+  readonly number: string;
+  readonly status: AdminOrderStatus;
+  readonly eventId: string;
+  readonly eventTitle: string;
+  readonly totalKopecks: string;
+  readonly createdAt: string;
+  readonly paidAt: string | null;
+  /** Заказ исключён из отчётов: тестовый или ошибочный. В сумму оплаченного не идёт. */
+  readonly excludedAt: string | null;
+}
+
+/**
+ * Согласие с офертой. Ссылка ведёт на ту редакцию, с которой человек согласился, а не на
+ * действующую: в этом весь смысл неизменяемых версий.
+ */
+export interface OutreachPersonConsent {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly versionNumber: number;
+  readonly publicUrl: string;
+  readonly acceptedAt: string;
+  readonly channel: string;
+}
+
+/** Заявка с формы на сайте — как её прислали. */
+export interface OutreachPersonSiteRegistration {
+  readonly id: string;
+  readonly eventTitle: string | null;
+  readonly page: string;
+  readonly status: string;
+  readonly consentAt: string;
+  readonly createdAt: string;
+}
+
+/** Откуда человек пришёл в бота: метка источника, кампания и код партнёра из диплинка. */
+export interface OutreachPersonTouchpoint {
+  readonly channel: string;
+  readonly source: string | null;
+  readonly campaign: string | null;
+  readonly partnerCode: string | null;
+  readonly occurredAt: string;
+  readonly isFirstTouch: boolean;
+}
+
+/** Человек как пользователь бота. Пусто, если он в бота не заходил. */
+export interface OutreachPersonBotProfile {
+  readonly userId: string;
+  readonly registeredAt: string;
+  readonly lastSeenAt: string | null;
+  readonly isBlocked: boolean;
+  readonly phoneStatus: string;
+  readonly walletAvailableKopecks: string;
+  readonly touchpoints: readonly OutreachPersonTouchpoint[];
+}
+
 export interface OutreachPersonCard {
   readonly contactId: string;
   readonly displayName: string | null;
@@ -349,10 +458,23 @@ export interface OutreachPersonCard {
   readonly mergedDuplicates: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Кто завёл человека в базе. Пусто, если администратора уже удалили. */
+  readonly createdByName: string | null;
   readonly campaigns: readonly OutreachPersonCampaign[];
   /** Вся история звонков и сообщений из всех кампаний одной лентой. */
   readonly activities: readonly OutreachPersonActivity[];
+  readonly tasks: readonly OutreachPersonTask[];
+  readonly stageChanges: readonly OutreachPersonStageChange[];
+  readonly customFields: readonly OutreachPersonCustomField[];
   readonly participations: readonly OutreachContactParticipation[];
+  readonly questionnaires: readonly OutreachPersonQuestionnaire[];
+  /** Пусто, если человека нет в боте. Тогда нет ни заказов, ни согласий. */
+  readonly bot: OutreachPersonBotProfile | null;
+  readonly orders: readonly OutreachPersonOrder[];
+  /** Сколько человек заплатил всего, без исключённых из отчётов заказов. */
+  readonly paidTotalKopecks: string;
+  readonly consents: readonly OutreachPersonConsent[];
+  readonly siteRegistrations: readonly OutreachPersonSiteRegistration[];
 }
 
 /**

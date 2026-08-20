@@ -2140,6 +2140,17 @@ tbody tr:hover {
   content: "·";
 }
 
+.outreach-card-facts a {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.outreach-card-facts a:hover {
+  text-decoration: underline;
+}
+
 .outreach-card-actions {
   display: flex;
   align-items: center;
@@ -2395,6 +2406,7 @@ tbody tr:hover {
 }
 
 .outreach-task-create .outreach-task-text,
+.outreach-task-create .page-warning,
 .outreach-task-create .primary-button {
   grid-column: 1 / -1;
 }

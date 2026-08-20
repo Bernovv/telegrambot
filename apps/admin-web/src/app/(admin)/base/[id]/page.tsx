@@ -1,5 +1,7 @@
 "use client";
 
+import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
+import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -7,28 +9,46 @@ import {
   archiveOutreachPerson,
   deleteOutreachPerson,
   getOutreachPerson,
+  listOutreachManagers,
   listOutreachPeople,
   mergeOutreachPeople,
   restoreOutreachPerson,
   updateOutreachPerson
 } from "@/lib/admin-api";
-import { formatCompactDate, formatDateTime } from "@/lib/format";
+import {
+  formatCompactDate,
+  formatDateTime,
+  formatKopecks,
+  orderStatusLabel,
+  orderStatusTone
+} from "@/lib/format";
+import {
+  channelLabel,
+  lostReasonLabel,
+  statusLabel,
+  taskTypeLabel
+} from "@/lib/outreach-labels";
 import type {
   OutreachDeleteBlocker,
+  OutreachManager,
   OutreachMergeBlocker,
   OutreachPerson,
+  OutreachPersonCampaign,
   OutreachPersonCard
 } from "@ticket-platform/contracts/admin-outreach";
 import {
   ArchiveRestore,
   ArrowLeft,
   Bot,
+  CalendarClock,
   CalendarDays,
+  ExternalLink,
   Mail,
   Merge,
   MessageSquare,
   Pencil,
   Phone,
+  PhoneCall,
   RefreshCw,
   Search,
   Trash2,
@@ -37,26 +57,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, use, useCallback, useEffect, useState } from "react";
-
-const CHANNEL_LABELS: Record<string, string> = {
-  phone: "Звонок",
-  telegram: "Telegram",
-  max: "MAX",
-  whatsapp: "WhatsApp",
-  sms: "SMS",
-  other: "Другое"
-};
-
-const RESULT_LABELS: Record<string, string> = {
-  sent: "Отправлено",
-  no_answer: "Не ответил",
-  answered: "Ответил",
-  callback: "Перезвонить",
-  interested: "Заинтересован",
-  declined: "Отказ",
-  converted: "Оплатил",
-  invalid: "Неверный контакт"
-};
 
 const BLOCKER_LABELS: Record<OutreachDeleteBlocker, string> = {
   in_bot: "человек есть в боте — там его согласия и, возможно, оплаты",
@@ -69,6 +69,19 @@ const MERGE_BLOCKER_LABELS: Record<OutreachMergeBlocker, string> = {
   already_merged: "Эта карточка уже объединена с другой.",
   target_already_merged:
     "Выбранный контакт сам является дублем. Выберите того, к кому его свели."
+};
+
+const PHONE_STATUS_LABELS: Record<string, string> = {
+  unknown: "не знаем",
+  imported: "из импорта, не подтверждён",
+  verified: "подтверждён в боте",
+  rejected: "человек отказался дать"
+};
+
+const SITE_REGISTRATION_LABELS: Record<string, string> = {
+  registered: "записан на встречу",
+  duplicate: "повтор заявки",
+  unassigned: "встреча не нашлась"
 };
 
 const CONFLICT_FIELDS: Record<string, string> = {
@@ -94,6 +107,10 @@ export default function OutreachPersonPage(
   const [mergeQuery, setMergeQuery] = useState("");
   const [mergeResults, setMergeResults] = useState<readonly OutreachPerson[]>([]);
   const [mergeSearching, setMergeSearching] = useState(false);
+  const [managers, setManagers] = useState<readonly OutreachManager[]>([]);
+  const [touchCampaign, setTouchCampaign] =
+    useState<OutreachPersonCampaign | null>(null);
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -118,6 +135,16 @@ export default function OutreachPersonPage(
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Менеджеры нужны только форме постановки задачи — грузим молча: без них карточка
+  // работает, просто ответственного не выбрать вручную.
+  useEffect(() => {
+    const controller = new AbortController();
+    void listOutreachManagers(controller.signal)
+      .then(setManagers)
+      .catch(() => setManagers([]));
+    return () => controller.abort();
+  }, []);
 
   function messageFor(caught: unknown, fallback: string): string {
     return caught instanceof AdminApiError ? caught.message : fallback;
@@ -297,6 +324,11 @@ export default function OutreachPersonPage(
   }
 
   const activeCampaigns = person.campaigns.filter((item) => !item.removedAt);
+  const openTasks = person.tasks.filter((task) => task.status === "open");
+  // Связаться можно только внутри кампании — касание записывается по ней. Когда кампания
+  // одна, спрашивать нечего; когда их несколько, кнопка живёт в строке каждой.
+  const singleCampaign = activeCampaigns.length === 1 ? activeCampaigns[0] : null;
+  const timeline = buildPersonTimeline(person);
 
   return (
     <>
@@ -319,6 +351,26 @@ export default function OutreachPersonPage(
           {person.archivedAt ? (
             <StatusPill tone="neutral">В архиве</StatusPill>
           ) : null}
+          {singleCampaign ? (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={mutating}
+              onClick={() => setTouchCampaign(singleCampaign)}
+            >
+              <PhoneCall size={16} />
+              Связаться
+            </button>
+          ) : null}
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={mutating}
+            onClick={() => setNewTaskOpen(true)}
+          >
+            <CalendarClock size={16} />
+            Поставить задачу
+          </button>
           <button
             className="icon-button bordered"
             type="button"
@@ -523,6 +575,31 @@ export default function OutreachPersonPage(
         </section>
       ) : null}
 
+      <div className="metrics-strip">
+        <div>
+          <span title="Заказы бота плюс оплаты, заведённые руками. Частичные возвраты не вычтены — их видно в самом заказе.">
+            Принёс всего
+          </span>
+          <strong>{formatKopecks(person.paidTotalKopecks)}</strong>
+        </div>
+        <div>
+          <span>Мероприятий</span>
+          <strong>{person.participations.length}</strong>
+        </div>
+        <div>
+          <span>Касаний</span>
+          <strong>{person.activities.length}</strong>
+        </div>
+        <div>
+          <span>Открытых задач</span>
+          <strong>{openTasks.length}</strong>
+        </div>
+        <div>
+          <span>В базе с</span>
+          <strong>{formatCompactDate(person.createdAt)}</strong>
+        </div>
+      </div>
+
       <section className="data-section">
         <div className="section-title-row">
           <div><h2>Контакты</h2></div>
@@ -568,10 +645,80 @@ export default function OutreachPersonPage(
         {person.note ? <p className="person-note">{person.note}</p> : null}
         <p className="muted person-meta">
           В базе с {formatCompactDate(person.createdAt)}
+          {person.createdByName ? `, завёл ${person.createdByName}` : ""}
           {person.updatedAt !== person.createdAt
             ? `, обновлён ${formatCompactDate(person.updatedAt)}`
             : ""}
         </p>
+      </section>
+
+      <section className="data-section">
+        <div className="section-title-row">
+          <div>
+            <h2>Задачи</h2>
+            <span>
+              {openTasks.length > 0
+                ? `${openTasks.length} открытых`
+                : "открытых нет"}
+            </span>
+          </div>
+        </div>
+        {person.tasks.length === 0 ? (
+          <p className="muted">Задач по человеку не ставили.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Что сделать</th>
+                  <th>Срок</th>
+                  <th>Ответственный</th>
+                  <th>Кампания</th>
+                  <th>Состояние</th>
+                </tr>
+              </thead>
+              <tbody>
+                {person.tasks.map((task) => (
+                  <tr key={task.id}>
+                    <td>
+                      <div className="stacked-cell">
+                        <strong>{task.text}</strong>
+                        <span className="muted">{taskTypeLabel(task.type)}</span>
+                      </div>
+                    </td>
+                    <td>{formatDateTime(task.dueAt)}</td>
+                    <td>{task.assignedAdminName}</td>
+                    <td>
+                      <Link
+                        className="row-link"
+                        href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+                      >
+                        {task.campaignName}
+                      </Link>
+                    </td>
+                    <td>
+                      <StatusPill
+                        tone={
+                          task.status === "completed"
+                            ? "positive"
+                            : task.status === "cancelled"
+                              ? "neutral"
+                              : "warning"
+                        }
+                      >
+                        {task.status === "completed"
+                          ? "Выполнена"
+                          : task.status === "cancelled"
+                            ? "Заменена"
+                            : "Открыта"}
+                      </StatusPill>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="data-section">
@@ -591,7 +738,7 @@ export default function OutreachPersonPage(
                   <th>Кампания</th>
                   <th>Стадия</th>
                   <th>Ответственный</th>
-                  <th><span className="sr-only">Открыть</span></th>
+                  <th><span className="sr-only">Действия</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -612,12 +759,24 @@ export default function OutreachPersonPage(
                       )}
                     </td>
                     <td>
-                      <Link
-                        className="row-link"
-                        href={`/outreach/${membership.campaignId}`}
-                      >
-                        Открыть
-                      </Link>
+                      <div className="outreach-row-actions">
+                        {membership.removedAt ? null : (
+                          <button
+                            type="button"
+                            disabled={mutating}
+                            onClick={() => setTouchCampaign(membership)}
+                          >
+                            <PhoneCall size={16} />
+                            Связаться
+                          </button>
+                        )}
+                        <Link
+                          className="row-link"
+                          href={`/outreach/${membership.campaignId}?contact=${membership.campaignContactId}`}
+                        >
+                          Открыть
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -644,26 +803,283 @@ export default function OutreachPersonPage(
                     {participation.eventTitle}
                   </Link>
                   <span className="muted">
-                    {participation.guests} чел.
-                    {participation.sleepingPlaces > 0
-                      ? `, мест: ${participation.sleepingPlaces}`
+                    {[
+                      `${participation.guests} чел.`,
+                      participation.sleepingPlaces > 0
+                        ? `мест: ${participation.sleepingPlaces}`
+                        : null,
+                      participation.ticketTitle || null,
+                      participation.amountKopecks
+                        ? formatKopecks(participation.amountKopecks)
+                        : null
+                    ].filter(Boolean).join(" · ")}
+                  </span>
+                  {participation.checkedInAt ? (
+                    <StatusPill tone="positive">
+                      Пришёл {formatCompactDate(participation.checkedInAt)}
+                    </StatusPill>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {person.questionnaires.length > 0 ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Анкеты</h2>
+              <span>{person.questionnaires.length}</span>
+            </div>
+            {/* Ради этого раздела карточка и нужна: чтобы вспомнить, чем человек
+                занимается, не надо помнить, на какое мероприятие он ездил. */}
+            <span className="muted">Ответы по всем мероприятиям</span>
+          </div>
+          <ul className="person-events">
+            {person.questionnaires.map((questionnaire, index) => (
+              <li key={`${questionnaire.source}-${questionnaire.eventId ?? index}`}>
+                <div className="person-event-head">
+                  <CalendarDays size={15} />
+                  {questionnaire.eventId ? (
+                    <Link href={`/events/${questionnaire.eventId}/questionnaire`}>
+                      {questionnaire.eventTitle}
+                    </Link>
+                  ) : (
+                    <strong>{questionnaire.eventTitle ?? "Без мероприятия"}</strong>
+                  )}
+                  <span className="muted">
+                    {questionnaire.source === "order"
+                      ? "анкета к заказу"
+                      : "анкета участника"}
+                    {questionnaire.filledAt
+                      ? ` · ${formatCompactDate(questionnaire.filledAt)}`
                       : ""}
                   </span>
                 </div>
-                {/* Анкета заполняется на вкладке мероприятия, а нужна здесь: иначе, чтобы
-                    вспомнить, чем человек занимается, надо помнить, куда он ездил. */}
-                {participation.answers.length > 0 ? (
-                  <dl className="person-answers">
-                    {participation.answers.map((answer) => (
-                      <div key={answer.fieldId}>
-                        <dt>{answer.label}</dt>
-                        <dd>{answer.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : (
-                  <span className="muted person-answers-empty">анкета не заполнена</span>
-                )}
+                <dl className="person-answers">
+                  {questionnaire.answers.map((answer) => (
+                    <div key={answer.fieldId}>
+                      <dt>{answer.label}</dt>
+                      <dd>{answer.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {person.customFields.length > 0 ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Дополнительные поля</h2>
+              <span>{person.customFields.length}</span>
+            </div>
+            <span className="muted">Заводятся по кампаниям</span>
+          </div>
+          <dl className="person-identifiers">
+            {person.customFields.map((field) => (
+              <div key={`${field.fieldId}-${field.campaignName}`}>
+                <dt>{field.label}</dt>
+                <dd>
+                  {field.value}
+                  <span className="muted"> · {field.campaignName}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
+
+      {person.orders.length > 0 || person.consents.length > 0 ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Заказы и согласия</h2>
+              <span>{person.orders.length}</span>
+            </div>
+            <span className="muted">Из бота</span>
+          </div>
+          {person.orders.length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Заказ</th>
+                    <th>Мероприятие</th>
+                    <th>Статус</th>
+                    <th>Сумма</th>
+                    <th>Создан</th>
+                    <th><span className="sr-only">Открыть</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {person.orders.map((order) => (
+                    <tr key={order.id}>
+                      <td>
+                        <div className="stacked-cell">
+                          <strong>{order.number}</strong>
+                          {order.excludedAt ? (
+                            <span className="muted">исключён из отчётов</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>{order.eventTitle}</td>
+                      <td>
+                        <StatusPill tone={orderStatusTone(order.status)}>
+                          {orderStatusLabel(order.status)}
+                        </StatusPill>
+                      </td>
+                      <td className="money-cell">{formatKopecks(order.totalKopecks)}</td>
+                      <td>{formatCompactDate(order.createdAt)}</td>
+                      <td>
+                        <Link
+                          className="row-link"
+                          href={`/orders/${order.id}`}
+                          aria-label={`Открыть заказ ${order.number}`}
+                        >
+                          <ExternalLink size={17} />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {/* Ссылка ведёт на ту редакцию оферты, с которой человек согласился, а не на
+              действующую: ради этого версии и сделаны неизменяемыми. */}
+          {person.consents.length > 0 ? (
+            <ul className="person-events">
+              {person.consents.map((consent) => (
+                <li key={consent.orderId}>
+                  <div className="person-event-head">
+                    <strong>Оферта, редакция {consent.versionNumber}</strong>
+                    <span className="muted">
+                      заказ {consent.orderNumber} · {formatDateTime(consent.acceptedAt)}
+                    </span>
+                    <a
+                      className="offer-link-inline"
+                      href={consent.publicUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Документ
+                      <ExternalLink size={15} />
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
+      {person.bot ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>В боте</h2>
+              <span>
+                {person.bot.isBlocked ? "бот заблокирован" : "активен"}
+              </span>
+            </div>
+            <Link className="row-link" href={`/users/${person.bot.userId}`}>
+              Открыть пользователя
+            </Link>
+          </div>
+          <dl className="person-identifiers">
+            <div>
+              <dt>Зарегистрировался</dt>
+              <dd>{formatDateTime(person.bot.registeredAt)}</dd>
+            </div>
+            <div>
+              <dt>Последний раз заходил</dt>
+              <dd>
+                {person.bot.lastSeenAt
+                  ? formatDateTime(person.bot.lastSeenAt)
+                  : <span className="muted">не заходил после регистрации</span>}
+              </dd>
+            </div>
+            <div>
+              <dt>Телефон</dt>
+              <dd>
+                {PHONE_STATUS_LABELS[person.bot.phoneStatus] ?? person.bot.phoneStatus}
+              </dd>
+            </div>
+            <div>
+              <dt>Кошелёк</dt>
+              <dd>{formatKopecks(person.bot.walletAvailableKopecks)}</dd>
+            </div>
+          </dl>
+          <div className="section-title-row">
+            <div>
+              <h3>Откуда пришёл</h3>
+              <span>
+                {person.bot.touchpoints.length > 0
+                  ? "первое касание сверху"
+                  : "метки источника нет"}
+              </span>
+            </div>
+          </div>
+          {person.bot.touchpoints.length === 0 ? (
+            <p className="muted">
+              Человек открыл бота напрямую, без метки источника и партнёрской ссылки.
+            </p>
+          ) : (
+            <ol className="person-timeline">
+              {person.bot.touchpoints.map((touchpoint) => (
+                <li key={`${touchpoint.channel}-${touchpoint.occurredAt}`}>
+                  <div className="person-timeline-head">
+                    <strong>
+                      {touchpoint.partnerCode
+                        ? `Партнёр ${touchpoint.partnerCode}`
+                        : touchpoint.source ?? "Прямой заход"}
+                    </strong>
+                    {touchpoint.isFirstTouch ? (
+                      <StatusPill tone="neutral">первый переход</StatusPill>
+                    ) : null}
+                    <span className="muted">{formatDateTime(touchpoint.occurredAt)}</span>
+                  </div>
+                  {touchpoint.campaign ? (
+                    <div className="person-timeline-meta muted">
+                      Кампания: {touchpoint.campaign}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      ) : null}
+
+      {person.siteRegistrations.length > 0 ? (
+        <section className="data-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Заявки с сайта</h2>
+              <span>{person.siteRegistrations.length}</span>
+            </div>
+            <span className="muted">Найдены по телефону</span>
+          </div>
+          <ul className="person-events">
+            {person.siteRegistrations.map((registration) => (
+              <li key={registration.id}>
+                <div className="person-event-head">
+                  <strong>{registration.eventTitle ?? "Встреча не определена"}</strong>
+                  <span className="muted">
+                    {[
+                      registration.page || null,
+                      SITE_REGISTRATION_LABELS[registration.status]
+                        ?? registration.status,
+                      formatDateTime(registration.createdAt)
+                    ].filter(Boolean).join(" · ")}
+                  </span>
+                </div>
               </li>
             ))}
           </ul>
@@ -674,42 +1090,136 @@ export default function OutreachPersonPage(
         <div className="section-title-row">
           <div>
             <h2>История</h2>
-            <span>{person.activities.length}</span>
+            <span>{timeline.length}</span>
           </div>
           {/* Ради этой ленты карточка и заведена: раньше история резалась по кампаниям,
               и что человеку уже говорили, целиком не видел никто. */}
-          <span className="muted">Звонки и сообщения из всех кампаний</span>
+          <span className="muted">Звонки, стадии и задачи из всех кампаний</span>
         </div>
-        {person.activities.length === 0 ? (
-          <p className="muted">С человеком ещё не связывались.</p>
+        {timeline.length === 0 ? (
+          <p className="muted">С человеком ещё ничего не происходило.</p>
         ) : (
           <ol className="person-timeline">
-            {person.activities.map((activity) => (
-              <li key={activity.id}>
+            {timeline.map((entry) => (
+              <li key={entry.id}>
                 <div className="person-timeline-head">
-                  <strong>{CHANNEL_LABELS[activity.channel] ?? activity.channel}</strong>
-                  <StatusPill
-                    tone={
-                      activity.result === "converted" || activity.result === "interested"
-                        ? "positive"
-                        : activity.result === "declined" || activity.result === "invalid"
-                          ? "danger"
-                          : "neutral"
-                    }
-                  >
-                    {RESULT_LABELS[activity.result] ?? activity.result}
-                  </StatusPill>
-                  <span className="muted">{formatDateTime(activity.occurredAt)}</span>
+                  <strong>{entry.title}</strong>
+                  {entry.tone ? (
+                    <StatusPill tone={entry.tone}>{entry.badge}</StatusPill>
+                  ) : null}
+                  <span className="muted">{formatDateTime(entry.occurredAt)}</span>
                 </div>
                 <div className="person-timeline-meta muted">
-                  {activity.actorName} · {activity.campaignName}
+                  {entry.actor} · {entry.campaignName}
                 </div>
-                {activity.note ? <p>{activity.note}</p> : null}
+                {entry.note ? <p>{entry.note}</p> : null}
               </li>
             ))}
           </ol>
         )}
       </section>
+
+      {touchCampaign ? (
+        <OutreachTouchDialog
+          campaignId={touchCampaign.campaignId}
+          targets={[{
+            campaignContactId: touchCampaign.campaignContactId,
+            phone: person.phone,
+            telegramUsername: person.telegramUsername,
+            maxIdentifier: person.maxIdentifier
+          }]}
+          columns={null}
+          onClose={() => setTouchCampaign(null)}
+          onRecorded={async () => {
+            setNotice("Касание записано.");
+            setTouchCampaign(null);
+            await load();
+          }}
+        />
+      ) : null}
+
+      {newTaskOpen ? (
+        <OutreachNewTaskDialog
+          person={{ contactId: person.contactId }}
+          managers={managers}
+          onClose={() => setNewTaskOpen(false)}
+          onCreated={async () => {
+            setNotice("Задача поставлена.");
+            setNewTaskOpen(false);
+            await load();
+          }}
+        />
+      ) : null}
     </>
   );
+}
+
+interface TimelineEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly badge: string | null;
+  readonly tone: "positive" | "neutral" | "danger" | "warning" | null;
+  readonly actor: string;
+  readonly campaignName: string;
+  readonly occurredAt: string;
+  readonly note: string | null;
+}
+
+/**
+ * Одна лента на всё, что с человеком происходило: звонки и сообщения, движение по стадиям и
+ * задачи. По отдельности каждый из трёх списков отвечает на свой вопрос, а «что с этим
+ * человеком вообще было» — только все вместе и по времени.
+ */
+function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry[] {
+  const activities: readonly TimelineEntry[] = person.activities.map((activity) => ({
+    id: `activity-${activity.id}`,
+    title: channelLabel(activity.channel),
+    badge: statusLabel(activity.result),
+    tone: activity.result === "converted" || activity.result === "interested"
+      ? "positive"
+      : activity.result === "declined" || activity.result === "invalid"
+        ? "danger"
+        : "neutral",
+    actor: activity.actorName,
+    campaignName: activity.campaignName,
+    occurredAt: activity.occurredAt,
+    note: activity.note
+  }));
+
+  // Заведение карточки в ленту не идёт: первый переход в стадию — это не событие работы с
+  // человеком, а строка, которую создал сам факт добавления в кампанию.
+  const stages: readonly TimelineEntry[] = person.stageChanges
+    .filter((change) => change.fromStage !== null)
+    .map((change) => ({
+      id: `stage-${change.id}`,
+      title: `Этап: ${change.toLabel}`,
+      badge: change.fromLabel ? `из «${change.fromLabel}»` : null,
+      tone: change.fromLabel ? "neutral" : null,
+      actor: change.actorName,
+      campaignName: change.campaignName,
+      occurredAt: change.occurredAt,
+      note: change.lostReason
+        ? `Причина: ${lostReasonLabel(change.lostReason)}`
+        : null
+    }));
+
+  const tasks: readonly TimelineEntry[] = person.tasks.map((task) => ({
+    id: `task-${task.id}`,
+    title: task.status === "completed"
+      ? "Задача выполнена"
+      : task.status === "cancelled"
+        ? "Задача заменена"
+        : "Задача поставлена",
+    badge: taskTypeLabel(task.type),
+    tone: "neutral",
+    actor: task.status === "completed"
+      ? task.completedByAdminName ?? task.createdByAdminName
+      : task.createdByAdminName,
+    campaignName: task.campaignName,
+    occurredAt: task.completedAt ?? task.createdAt,
+    note: `${task.text} · срок ${formatDateTime(task.dueAt)}`
+  }));
+
+  return [...activities, ...stages, ...tasks]
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 }

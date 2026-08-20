@@ -104,6 +104,44 @@ describe("PostgreSQL administrator outreach persistence", () => {
     assert.match(update.text, /next_contact_at = \$6::timestamptz/);
   });
 
+  it("counts what a person paid without excluded and refunded orders", async () => {
+    const connection = new RichPersonCardConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+
+    // 120000 оплаченный + 50000 частично возвращённый + 30000 наличными мимо бота.
+    // Исключённый из отчётов и полностью возвращённый в сумму не идут.
+    assert.equal(card?.paidTotalKopecks, "200000");
+  });
+
+  it("groups questionnaire answers of one order into a single card entry", async () => {
+    const connection = new RichPersonCardConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+
+    const fromOrder = card?.questionnaires.filter(
+      (questionnaire) => questionnaire.source === "order");
+    assert.equal(fromOrder?.length, 1);
+    assert.deepEqual(
+      fromOrder?.[0]?.answers.map((answer) => answer.label),
+      ["Город", "Ниша"]
+    );
+    // Анкету заполняют по частям — в карточке стоит время последней правки.
+    assert.equal(fromOrder?.[0]?.filledAt, "2026-08-02T09:00:00.000Z");
+  });
+
+  it("finds the bot user through the whole chain of merged duplicates", async () => {
+    const connection = new RichPersonCardConnection();
+    const repository = new PostgresAdminOutreachRepository(pool(connection));
+
+    const card = await repository.getPerson("00000000-0000-4000-8000-000000000401");
+
+    assert.equal(card?.bot?.userId, "00000000-0000-4000-8000-000000000501");
+    assert.equal(card?.bot?.touchpoints.length, 1);
+  });
+
   it("reports stage_in_use instead of throwing when a stage delete violates the contacts foreign key", async () => {
     const connection = new ForeignKeyViolationOnDeleteConnection();
     const repository = new PostgresAdminOutreachRepository(pool(connection));
@@ -567,9 +605,9 @@ class DeletableContactConnection implements SqlConnection {
 }
 
 /**
- * Карточка человека выходит из базы за четыре запроса, и первый — сам контакт. Пустой ответ
- * на него означает «такого нет», и остальные три уже не выполняются, поэтому для проверки
- * ленты активностей контакт должен найтись.
+ * Минимальная карточка: только сам контакт. Первый запрос карточки — контакт, и пустой ответ
+ * на него означает «такого нет»; остальные запросы тогда не выполняются вовсе. Для проверок,
+ * которые смотрят на сами запросы, контакт должен найтись, а данные не нужны.
  */
 class PersonCardConnection implements SqlConnection {
   readonly queries: RecordedQuery[] = [];
@@ -664,6 +702,154 @@ class CampaignContactConnection implements SqlConnection {
       };
     }
     return { rows: [], rowCount: 0 };
+  }
+
+  release(): void {
+    this.released = true;
+  }
+}
+
+/**
+ * Карточка человека целиком — с ботом, заказами и анкетами. Отвечает по узнаваемому куску
+ * запроса: у карточки их полтора десятка, и расписывать порядок в каждом тесте бессмысленно.
+ */
+class RichPersonCardConnection implements SqlConnection {
+  readonly queries: RecordedQuery[] = [];
+  released = false;
+
+  async query<TRow>(
+    text: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TRow>> {
+    this.queries.push({ text, values });
+    const rows = this.rowsFor(text) as TRow[];
+    return { rows, rowCount: rows.length };
+  }
+
+  private rowsFor(text: string): unknown[] {
+    if (text.includes("select linked_user_id")) {
+      return [{ linked_user_id: "00000000-0000-4000-8000-000000000501" }];
+    }
+    if (text.includes("with recursive chain")) {
+      return [
+        { id: "00000000-0000-4000-8000-000000000401" },
+        { id: "00000000-0000-4000-8000-000000000402" }
+      ];
+    }
+    if (text.includes("from public.outreach_contacts contact")) {
+      return [{
+        contact_id: "00000000-0000-4000-8000-000000000401",
+        display_name: "Анна",
+        phone_e164: "+79991234567",
+        telegram_username: null,
+        max_identifier: null,
+        email: null,
+        source: "amoCRM",
+        note: null,
+        linked_user_id: null,
+        archived_at: null,
+        archived_reason: null,
+        merged_into_contact_id: null,
+        merged_into_display_name: null,
+        created_by_name: "Ольга",
+        created_at: "2026-07-01T10:00:00.000Z",
+        updated_at: "2026-07-01T10:00:00.000Z"
+      }];
+    }
+    if (text.includes("coalesce(sum(participant.amount_kopecks)")) {
+      return [{ total: "30000" }];
+    }
+    if (text.includes("from public.orders orders")) {
+      return [
+        {
+          id: "00000000-0000-4000-8000-000000000601",
+          number: "BP-1",
+          status: "paid",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          total_kopecks: "120000",
+          created_at: "2026-08-01T10:00:00.000Z",
+          paid_at: "2026-08-01T11:00:00.000Z",
+          excluded_at: null
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000602",
+          number: "BP-2",
+          status: "partially_refunded",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          total_kopecks: "50000",
+          created_at: "2026-08-01T10:00:00.000Z",
+          paid_at: "2026-08-01T11:00:00.000Z",
+          excluded_at: null
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000603",
+          number: "BP-3",
+          status: "paid",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          total_kopecks: "999000",
+          created_at: "2026-08-01T10:00:00.000Z",
+          paid_at: "2026-08-01T11:00:00.000Z",
+          excluded_at: "2026-08-02T10:00:00.000Z"
+        },
+        {
+          id: "00000000-0000-4000-8000-000000000604",
+          number: "BP-4",
+          status: "refunded",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          total_kopecks: "777000",
+          created_at: "2026-08-01T10:00:00.000Z",
+          paid_at: "2026-08-01T11:00:00.000Z",
+          excluded_at: null
+        }
+      ];
+    }
+    if (text.includes("from public.event_order_field_values")) {
+      return [
+        {
+          order_id: "00000000-0000-4000-8000-000000000601",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          field_definition_id: "00000000-0000-4000-8000-000000000801",
+          label: "Город",
+          value_text: "Москва",
+          updated_at: "2026-08-01T09:00:00.000Z"
+        },
+        {
+          order_id: "00000000-0000-4000-8000-000000000601",
+          event_id: "00000000-0000-4000-8000-000000000701",
+          event_title: "Пикник",
+          field_definition_id: "00000000-0000-4000-8000-000000000802",
+          label: "Ниша",
+          value_text: "Кофейни",
+          updated_at: "2026-08-02T09:00:00.000Z"
+        }
+      ];
+    }
+    if (text.includes("from public.users users")) {
+      return [{
+        id: "00000000-0000-4000-8000-000000000501",
+        registered_at: "2026-06-01T10:00:00.000Z",
+        last_seen_at: null,
+        is_blocked: false,
+        phone_status: "verified",
+        wallet_available_kopecks: "10000"
+      }];
+    }
+    if (text.includes("from public.user_touchpoints")) {
+      return [{
+        channel: "telegram",
+        source: "instagram",
+        campaign: null,
+        partner_code: null,
+        occurred_at: "2026-06-01T10:00:00.000Z",
+        is_first_touch: true
+      }];
+    }
+    return [];
   }
 
   release(): void {

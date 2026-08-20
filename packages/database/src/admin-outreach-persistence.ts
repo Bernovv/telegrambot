@@ -8,6 +8,10 @@ import type {
 import type {
   OutreachActivity,
   OutreachCampaignContactDetail,
+  OutreachContactParticipation,
+  OutreachPersonBotProfile,
+  OutreachPersonOrder,
+  OutreachPersonQuestionnaire,
   OutreachCampaignContactSummary,
   OutreachCampaignSummary,
   OutreachCustomFieldDefinition,
@@ -74,6 +78,9 @@ interface ParticipationRow {
   readonly adults: number;
   readonly children: number;
   readonly sleeping_places: number;
+  readonly ticket_title: string;
+  readonly amount_kopecks: string | null;
+  readonly checked_in_at: Date | string | null;
 }
 
 interface ContactRow {
@@ -185,7 +192,86 @@ interface PersonCardRow {
   readonly archived_reason: string | null;
   readonly merged_into_contact_id: string | null;
   readonly merged_into_display_name: string | null;
+  readonly created_by_name: string | null;
   readonly created_at: Date | string;
+  readonly updated_at: Date | string;
+}
+
+interface PersonTaskRow extends TaskRow {
+  readonly campaign_contact_id: string;
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+}
+
+interface PersonStageChangeRow extends StageHistoryRow {
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+  readonly from_label: string | null;
+  readonly to_label: string;
+}
+
+interface PersonCustomFieldRow {
+  readonly field_id: string;
+  readonly label: string;
+  readonly campaign_name: string;
+  readonly value: string;
+}
+
+interface PersonBotRow {
+  readonly id: string;
+  readonly registered_at: Date | string;
+  readonly last_seen_at: Date | string | null;
+  readonly is_blocked: boolean;
+  readonly phone_status: string;
+  readonly wallet_available_kopecks: string;
+}
+
+interface PersonTouchpointRow {
+  readonly channel: string;
+  readonly source: string | null;
+  readonly campaign: string | null;
+  readonly partner_code: string | null;
+  readonly occurred_at: Date | string;
+  readonly is_first_touch: boolean;
+}
+
+interface PersonOrderRow {
+  readonly id: string;
+  readonly number: string;
+  readonly status: OutreachPersonOrder["status"];
+  readonly event_id: string;
+  readonly event_title: string;
+  readonly total_kopecks: string;
+  readonly created_at: Date | string;
+  readonly paid_at: Date | string | null;
+  readonly excluded_at: Date | string | null;
+}
+
+interface PersonConsentRow {
+  readonly order_id: string;
+  readonly order_number: string;
+  readonly version_number: number;
+  readonly public_url: string;
+  readonly accepted_at: Date | string;
+  readonly channel: string;
+}
+
+interface PersonSiteRegistrationRow {
+  readonly id: string;
+  readonly event_title: string | null;
+  readonly page: string;
+  readonly status: string;
+  readonly consent_at: Date | string;
+  readonly created_at: Date | string;
+}
+
+interface PersonOrderAnswerRow {
+  readonly order_id: string;
+  readonly event_id: string;
+  readonly event_title: string;
+  readonly field_definition_id: string;
+  readonly label: string;
+  readonly value_text: string;
   readonly updated_at: Date | string;
 }
 
@@ -1307,11 +1393,14 @@ implements AdminOutreachRepository {
            contact.archived_reason,
            contact.merged_into_contact_id,
            master.display_name as merged_into_display_name,
+           coalesce(creator.display_name, creator.email_normalized) as created_by_name,
            contact.created_at,
            contact.updated_at
          from public.outreach_contacts contact
          left join public.outreach_contacts master
            on master.id = contact.merged_into_contact_id
+         left join public.admin_accounts creator
+           on creator.id = contact.created_by_admin_id
          where contact.id = $1::uuid`,
         [contactId]
       );
@@ -1383,9 +1472,14 @@ implements AdminOutreachRepository {
                 event.title as event_title,
                 participant.adults,
                 participant.children,
-                participant.sleeping_places
+                participant.sleeping_places,
+                participant.ticket_title,
+                participant.amount_kopecks::text as amount_kopecks,
+                attendance.checked_in_at
          from public.event_participants participant
          join public.events event on event.id = participant.event_id
+         left join public.event_attendance attendance
+           on attendance.participant_id = participant.id
          where participant.outreach_contact_id = any($1::uuid[])
            and participant.deleted_at is null
          order by event.starts_at desc
@@ -1394,6 +1488,177 @@ implements AdminOutreachRepository {
       );
 
       const answersByParticipant = await loadParticipationAnswers(connection, chain);
+
+      const tasks = await connection.query<PersonTaskRow>(
+        `select task.id, task.campaign_contact_id,
+                member.campaign_id, campaign.name as campaign_name,
+                task.assigned_admin_id,
+                coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
+                task.created_by_admin_id,
+                coalesce(creator.display_name, creator.email_normalized, 'Менеджер') as created_by_admin_name,
+                task.completed_by_admin_id,
+                coalesce(completer.display_name, completer.email_normalized) as completed_by_admin_name,
+                task.task_type, task.task_text, task.due_at, task.status,
+                task.created_at, task.completed_at
+         from public.outreach_tasks task
+         join public.outreach_campaign_contacts member
+           on member.id = task.campaign_contact_id
+         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         join public.admin_accounts assignee on assignee.id = task.assigned_admin_id
+         join public.admin_accounts creator on creator.id = task.created_by_admin_id
+         left join public.admin_accounts completer
+           on completer.id = task.completed_by_admin_id
+         where member.contact_id = any($1::uuid[])
+         order by
+           case when task.status = 'open' then 0 else 1 end,
+           task.due_at desc, task.id desc
+         limit 100`,
+        [chain]
+      );
+
+      const stageChanges = await connection.query<PersonStageChangeRow>(
+        `select history.id, history.actor_admin_id,
+                coalesce(actor.display_name, actor.email_normalized, 'Система') as actor_name,
+                history.from_stage, history.to_stage, history.lost_reason,
+                history.occurred_at,
+                member.campaign_id, campaign.name as campaign_name,
+                from_column.label as from_label,
+                coalesce(to_column.label, history.to_stage) as to_label
+         from public.outreach_stage_history history
+         join public.outreach_campaign_contacts member
+           on member.id = history.campaign_contact_id
+         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         left join public.admin_accounts actor on actor.id = history.actor_admin_id
+         left join public.outreach_pipeline_columns from_column
+           on from_column.campaign_id = member.campaign_id
+          and from_column.stage = history.from_stage
+         left join public.outreach_pipeline_columns to_column
+           on to_column.campaign_id = member.campaign_id
+          and to_column.stage = history.to_stage
+         where member.contact_id = any($1::uuid[])
+         order by history.occurred_at desc, history.id desc
+         limit 200`,
+        [chain]
+      );
+
+      // Дополнительные поля заводятся по кампаниям, поэтому в карточке человека рядом со
+      // значением всегда стоит кампания: одно и то же поле в двух кампаниях — два ответа.
+      const customFields = await connection.query<PersonCustomFieldRow>(
+        `select value.field_definition_id as field_id,
+                definition.label,
+                campaign.name as campaign_name,
+                coalesce(
+                  value.value_text,
+                  value.value_number::text,
+                  value.value_date::text
+                ) as value
+         from public.outreach_custom_field_values value
+         join public.outreach_custom_field_definitions definition
+           on definition.id = value.field_definition_id
+         join public.outreach_campaign_contacts member
+           on member.id = value.campaign_contact_id
+         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         where member.contact_id = any($1::uuid[])
+           and coalesce(
+                 value.value_text,
+                 value.value_number::text,
+                 value.value_date::text
+               ) is not null
+         order by definition.position, definition.id
+         limit 100`,
+        [chain]
+      );
+
+      // Заявки с сайта ищем по телефону: человек оставляет там имя и номер, и только по
+      // номеру заявка и связывается с карточкой.
+      const siteRegistrations = await connection.query<PersonSiteRegistrationRow>(
+        `select registration.id, event.title as event_title, registration.page,
+                registration.status, registration.consent_at, registration.created_at
+         from public.site_registrations registration
+         left join public.events event on event.id = registration.event_id
+         where registration.phone_e164 in (
+           select linked.phone_e164 from public.outreach_contacts linked
+           where linked.id = any($1::uuid[]) and linked.phone_e164 is not null
+         )
+         order by registration.created_at desc
+         limit 20`,
+        [chain]
+      );
+
+      // Ручные оплаты живут на участнике, а не на заказе: наличные и переводы мимо бота
+      // заводит организатор. Без них «сколько заплатил» врало бы в меньшую сторону.
+      const manualPaid = await connection.query<{ readonly total: string }>(
+        `select coalesce(sum(participant.amount_kopecks), 0)::text as total
+         from public.event_participants participant
+         where participant.outreach_contact_id = any($1::uuid[])
+           and participant.deleted_at is null`,
+        [chain]
+      );
+
+      // Пользователь бота ищется по всей цепочке дублей: привязку мог получить любой из них.
+      const linked = await connection.query<{ readonly linked_user_id: string }>(
+        `select linked_user_id from public.outreach_contacts
+         where id = any($1::uuid[]) and linked_user_id is not null
+         limit 1`,
+        [chain]
+      );
+      const userId = linked.rows[0]?.linked_user_id ?? null;
+      const botProfile = userId === null
+        ? null
+        : await loadBotProfile(connection, userId);
+      const orders = userId === null
+        ? []
+        : (await connection.query<PersonOrderRow>(
+            `select orders.id, orders.number, orders.status, orders.event_id,
+                    event.title as event_title,
+                    orders.total_kopecks::text as total_kopecks,
+                    orders.created_at, orders.paid_at, orders.excluded_at
+             from public.orders orders
+             join public.events event on event.id = orders.event_id
+             where orders.user_id = $1::uuid
+             order by orders.created_at desc, orders.id desc
+             limit 50`,
+            [userId]
+          )).rows;
+      const consents = userId === null
+        ? []
+        : (await connection.query<PersonConsentRow>(
+            `select acceptance.order_id, orders.number as order_number,
+                    version.version_number, version.public_url,
+                    acceptance.accepted_at, acceptance.channel
+             from public.offer_acceptances acceptance
+             join public.orders orders on orders.id = acceptance.order_id
+             join public.offer_versions version
+               on version.id = acceptance.offer_version_id
+             where acceptance.user_id = $1::uuid
+             order by acceptance.accepted_at desc, acceptance.order_id desc
+             limit 50`,
+            [userId]
+          )).rows;
+      const orderAnswers = userId === null
+        ? []
+        : (await connection.query<PersonOrderAnswerRow>(
+            `select value.order_id, orders.event_id, event.title as event_title,
+                    value.field_definition_id, definition.label,
+                    value.value_text, value.updated_at
+             from public.event_order_field_values value
+             join public.event_participant_field_definitions definition
+               on definition.id = value.field_definition_id
+             join public.orders orders on orders.id = value.order_id
+             join public.events event on event.id = orders.event_id
+             where orders.user_id = $1::uuid
+               and value.value_text is not null
+               and btrim(value.value_text) <> ''
+             order by definition.position, definition.created_at
+             limit 200`,
+            [userId]
+          )).rows;
+
+      const participationList = participations.rows.map((participation) =>
+        mapParticipation(
+          participation,
+          answersByParticipant.get(participation.participant_id) ?? []
+        ));
 
       return {
         contactId: contact.contact_id,
@@ -1427,13 +1692,56 @@ implements AdminOutreachRepository {
           campaignId: row.campaign_id,
           campaignName: row.campaign_name
         })),
-        participations: participations.rows.map((participation) => ({
-          participantId: participation.participant_id,
-          eventId: participation.event_id,
-          eventTitle: participation.event_title,
-          guests: participation.adults + participation.children,
-          sleepingPlaces: participation.sleeping_places,
-          answers: answersByParticipant.get(participation.participant_id) ?? []
+        participations: participationList,
+        createdByName: contact.created_by_name,
+        tasks: tasks.rows.map((row) => ({
+          ...mapTask(row),
+          campaignContactId: row.campaign_contact_id,
+          campaignId: row.campaign_id,
+          campaignName: row.campaign_name
+        })),
+        stageChanges: stageChanges.rows.map((row) => ({
+          ...mapStageHistory(row),
+          campaignId: row.campaign_id,
+          campaignName: row.campaign_name,
+          fromLabel: row.from_label,
+          toLabel: row.to_label
+        })),
+        customFields: customFields.rows.map((row) => ({
+          fieldId: row.field_id,
+          label: row.label,
+          campaignName: row.campaign_name,
+          value: row.value
+        })),
+        questionnaires: buildQuestionnaires(participationList, orderAnswers),
+        bot: botProfile,
+        orders: orders.map((row) => ({
+          id: row.id,
+          number: row.number,
+          status: row.status,
+          eventId: row.event_id,
+          eventTitle: row.event_title,
+          totalKopecks: row.total_kopecks,
+          createdAt: toIso(row.created_at),
+          paidAt: nullableIso(row.paid_at),
+          excludedAt: nullableIso(row.excluded_at)
+        })),
+        paidTotalKopecks: sumPaid(orders, manualPaid.rows[0]?.total ?? "0"),
+        consents: consents.map((row) => ({
+          orderId: row.order_id,
+          orderNumber: row.order_number,
+          versionNumber: row.version_number,
+          publicUrl: row.public_url,
+          acceptedAt: toIso(row.accepted_at),
+          channel: row.channel
+        })),
+        siteRegistrations: siteRegistrations.rows.map((row) => ({
+          id: row.id,
+          eventTitle: row.event_title,
+          page: row.page,
+          status: row.status,
+          consentAt: toIso(row.consent_at),
+          createdAt: toIso(row.created_at)
         }))
       };
     });
@@ -1963,9 +2271,14 @@ implements AdminOutreachRepository {
                 event.title as event_title,
                 participant.adults,
                 participant.children,
-                participant.sleeping_places
+                participant.sleeping_places,
+                participant.ticket_title,
+                participant.amount_kopecks::text as amount_kopecks,
+                attendance.checked_in_at
          from public.event_participants participant
          join public.events event on event.id = participant.event_id
+         left join public.event_attendance attendance
+           on attendance.participant_id = participant.id
          where participant.outreach_contact_id = $1::uuid
            and participant.deleted_at is null
          order by event.starts_at desc
@@ -1993,14 +2306,11 @@ implements AdminOutreachRepository {
         activities: activities.rows.map(mapActivity),
         tasks: tasks.rows.map(mapTask),
         stageHistory: stageHistory.rows.map(mapStageHistory),
-        participations: participations.rows.map((participation) => ({
-          participantId: participation.participant_id,
-          eventId: participation.event_id,
-          eventTitle: participation.event_title,
-          guests: participation.adults + participation.children,
-          sleepingPlaces: participation.sleeping_places,
-          answers: participationAnswers.get(participation.participant_id) ?? []
-        }))
+        participations: participations.rows.map((participation) =>
+          mapParticipation(
+            participation,
+            participationAnswers.get(participation.participant_id) ?? []
+          ))
       };
     });
   }
@@ -3074,6 +3384,160 @@ function mapActivity(row: ActivityRow): OutreachActivity {
     result: row.result,
     note: row.note,
     occurredAt: toIso(row.occurred_at)
+  };
+}
+
+/**
+ * Пользователь бота и то, откуда он пришёл. Кошелёк берём рублёвый: других счетов у нас нет,
+ * а складывать валюты в одно число значило бы показать сумму, которой не существует.
+ */
+async function loadBotProfile(
+  connection: SqlConnection,
+  userId: string
+): Promise<OutreachPersonBotProfile | null> {
+  const profile = await connection.query<PersonBotRow>(
+    `select users.id, users.registered_at, users.last_seen_at,
+            users.is_blocked, users.phone_status,
+            coalesce((
+              select wallet.cached_available_kopecks
+              from public.wallet_accounts wallet
+              where wallet.user_id = users.id and wallet.currency = 'RUB'
+            ), 0)::text as wallet_available_kopecks
+     from public.users users
+     where users.id = $1::uuid`,
+    [userId]
+  );
+  const row = profile.rows[0];
+  if (!row) {
+    return null;
+  }
+  const touchpoints = await connection.query<PersonTouchpointRow>(
+    `select channel, source, campaign, partner_code, occurred_at, is_first_touch
+     from public.user_touchpoints
+     where user_id = $1::uuid
+     order by occurred_at, id
+     limit 20`,
+    [userId]
+  );
+  return {
+    userId: row.id,
+    registeredAt: toIso(row.registered_at),
+    lastSeenAt: nullableIso(row.last_seen_at),
+    isBlocked: row.is_blocked,
+    phoneStatus: row.phone_status,
+    walletAvailableKopecks: row.wallet_available_kopecks,
+    touchpoints: touchpoints.rows.map((touchpoint) => ({
+      channel: touchpoint.channel,
+      source: touchpoint.source,
+      campaign: touchpoint.campaign,
+      partnerCode: touchpoint.partner_code,
+      occurredAt: toIso(touchpoint.occurred_at),
+      isFirstTouch: touchpoint.is_first_touch
+    }))
+  };
+}
+
+/**
+ * Анкеты одним списком. Вопросы у обоих источников общие — их заводит организатор во вкладке
+ * мероприятия; отличается только то, к чему ответ прикреплён: к участнику или к заказу.
+ */
+function buildQuestionnaires(
+  participations: readonly OutreachContactParticipation[],
+  orderAnswers: readonly PersonOrderAnswerRow[]
+): readonly OutreachPersonQuestionnaire[] {
+  const fromParticipants = participations
+    .filter((participation) => participation.answers.length > 0)
+    .map((participation) => ({
+      source: "participant" as const,
+      eventId: participation.eventId,
+      eventTitle: participation.eventTitle,
+      filledAt: null,
+      answers: participation.answers
+    }));
+
+  const byOrder = new Map<string, {
+    readonly eventId: string;
+    readonly eventTitle: string;
+    filledAt: string;
+    readonly answers: OutreachParticipationAnswer[];
+  }>();
+  for (const row of orderAnswers) {
+    const filledAt = toIso(row.updated_at);
+    const existing = byOrder.get(row.order_id);
+    if (existing) {
+      existing.answers.push({
+        fieldId: row.field_definition_id,
+        label: row.label,
+        value: row.value_text
+      });
+      // Анкету заполняют по частям и в разное время; для карточки важна последняя правка.
+      if (filledAt > existing.filledAt) {
+        existing.filledAt = filledAt;
+      }
+      continue;
+    }
+    byOrder.set(row.order_id, {
+      eventId: row.event_id,
+      eventTitle: row.event_title,
+      filledAt,
+      answers: [{
+        fieldId: row.field_definition_id,
+        label: row.label,
+        value: row.value_text
+      }]
+    });
+  }
+
+  return [
+    ...fromParticipants,
+    ...[...byOrder.values()].map((entry) => ({
+      source: "order" as const,
+      eventId: entry.eventId,
+      eventTitle: entry.eventTitle,
+      filledAt: entry.filledAt,
+      answers: entry.answers
+    }))
+  ];
+}
+
+/**
+ * Сколько человек заплатил всего: заказы бота плюс оплаты, заведённые организатором руками.
+ *
+ * Исключённые из отчётов заказы не в счёт — их для того и исключают. Полностью возвращённые
+ * тоже: денег у нас не осталось. Частичный возврат из суммы не вычитается — сколько именно
+ * вернули, видно в самом заказе, а сумма отвечает на вопрос «сколько человек принёс».
+ */
+function sumPaid(
+  orders: readonly PersonOrderRow[],
+  manualKopecks: string
+): string {
+  let total = BigInt(manualKopecks);
+  for (const order of orders) {
+    if (order.excluded_at !== null || order.paid_at === null) {
+      continue;
+    }
+    if (order.status === "refunded") {
+      continue;
+    }
+    total += BigInt(order.total_kopecks);
+  }
+  return total.toString();
+}
+
+function mapParticipation(
+  row: ParticipationRow,
+  answers: readonly OutreachParticipationAnswer[]
+): OutreachContactParticipation {
+  return {
+    participantId: row.participant_id,
+    eventId: row.event_id,
+    eventTitle: row.event_title,
+    guests: row.adults + row.children,
+    sleepingPlaces: row.sleeping_places,
+    ticketTitle: row.ticket_title,
+    amountKopecks: row.amount_kopecks,
+    checkedInAt: nullableIso(row.checked_in_at),
+    answers
   };
 }
 

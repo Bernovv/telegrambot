@@ -1382,9 +1382,19 @@ function personCard() {
     mergedDuplicates: 0,
     createdAt: "2026-07-01T10:00:00.000Z",
     updatedAt: "2026-07-01T10:00:00.000Z",
+    createdByName: "Ольга",
     campaigns: [],
     activities: [],
-    participations: []
+    tasks: [],
+    stageChanges: [],
+    customFields: [],
+    participations: [],
+    questionnaires: [],
+    bot: null,
+    orders: [],
+    paidTotalKopecks: "0",
+    consents: [],
+    siteRegistrations: []
   };
 }
 
