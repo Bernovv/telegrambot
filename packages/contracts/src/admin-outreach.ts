@@ -156,6 +156,14 @@ export interface OutreachTaskBoardItem {
   readonly campaignName: string;
   readonly contactName: string | null;
   readonly contactPhone: string | null;
+  /**
+   * Признаки контакта нужны прямо на доске: с задачи можно связаться, не открывая кампанию,
+   * а какой канал предложить — видно только по ним.
+   */
+  readonly contactTelegramUsername: string | null;
+  readonly contactMaxIdentifier: string | null;
+  /** Человек в общей базе. По нему доска уводит в карточку клиента. */
+  readonly contactId: string;
   readonly assignedAdminId: string;
   readonly assignedAdminName: string;
   readonly type: OutreachTaskType;

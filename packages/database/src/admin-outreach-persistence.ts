@@ -132,8 +132,11 @@ interface TaskBoardRow {
   readonly campaign_contact_id: string;
   readonly campaign_id: string;
   readonly campaign_name: string;
+  readonly contact_id: string;
   readonly contact_name: string | null;
   readonly contact_phone: string | null;
+  readonly contact_telegram_username: string | null;
+  readonly contact_max_identifier: string | null;
   readonly assigned_admin_id: string;
   readonly assigned_admin_name: string;
   readonly task_type: OutreachTask["type"];
@@ -1096,8 +1099,11 @@ implements AdminOutreachRepository {
       const result = await connection.query<TaskBoardRow>(
         `select task.id, task.campaign_contact_id,
                 campaign.id as campaign_id, campaign.name as campaign_name,
+                contact.id as contact_id,
                 contact.display_name as contact_name,
                 contact.phone_e164 as contact_phone,
+                contact.telegram_username as contact_telegram_username,
+                contact.max_identifier as contact_max_identifier,
                 task.assigned_admin_id,
                 coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                 task.task_type, task.task_text, task.due_at, task.status
@@ -1124,8 +1130,11 @@ implements AdminOutreachRepository {
         campaignContactId: row.campaign_contact_id,
         campaignId: row.campaign_id,
         campaignName: row.campaign_name,
+        contactId: row.contact_id,
         contactName: row.contact_name,
         contactPhone: row.contact_phone,
+        contactTelegramUsername: row.contact_telegram_username,
+        contactMaxIdentifier: row.contact_max_identifier,
         assignedAdminId: row.assigned_admin_id,
         assignedAdminName: row.assigned_admin_name,
         type: row.task_type,

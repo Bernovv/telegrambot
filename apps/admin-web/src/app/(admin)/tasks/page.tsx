@@ -1,13 +1,17 @@
 "use client";
 
+import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
+import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
 import {
   AdminApiError,
   completeOutreachTask,
+  listOutreachManagers,
   listOutreachTaskBoard
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import type {
+  OutreachManager,
   OutreachTaskBoardItem,
   OutreachTaskUrgency
 } from "@ticket-platform/contracts/admin-outreach";
@@ -15,6 +19,8 @@ import {
   Check,
   MessageCircle,
   Phone,
+  PhoneCall,
+  Plus,
   RefreshCw,
   Sparkles
 } from "lucide-react";
@@ -35,10 +41,14 @@ const URGENCY_COLUMNS: readonly {
 
 export default function OutreachTasksPage() {
   const [tasks, setTasks] = useState<readonly OutreachTaskBoardItem[]>([]);
+  const [managers, setManagers] = useState<readonly OutreachManager[]>([]);
   const [onlyMine, setOnlyMine] = useState(true);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [touch, setTouch] = useState<OutreachTaskBoardItem | null>(null);
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -63,6 +73,16 @@ export default function OutreachTasksPage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Список менеджеров нужен только формам постановки задачи — грузим молча: без него
+  // доска работает, просто ответственного нельзя будет сменить вручную.
+  useEffect(() => {
+    const controller = new AbortController();
+    void listOutreachManagers(controller.signal)
+      .then(setManagers)
+      .catch(() => setManagers([]));
+    return () => controller.abort();
+  }, []);
 
   async function complete(taskId: string) {
     setMutating(true);
@@ -102,6 +122,14 @@ export default function OutreachTasksPage() {
             <span>Только мои</span>
           </label>
           <button
+            className="primary-button"
+            type="button"
+            onClick={() => setNewTaskOpen(true)}
+          >
+            <Plus size={16} />
+            Поставить задачу
+          </button>
+          <button
             className="icon-button bordered"
             type="button"
             title="Обновить"
@@ -114,12 +142,14 @@ export default function OutreachTasksPage() {
         </div>
       </div>
 
+      {notice ? <div className="page-notice">{notice}</div> : null}
+
       {loading && tasks.length === 0 ? <PageLoading /> : null}
       {error ? <PageError message={error} retry={() => void load()} /> : null}
       {!loading && !error && tasks.length === 0 ? (
         <EmptyState
           title="Задач нет"
-          description="Как только менеджеры назначат себе задачи по контактам, они появятся здесь."
+          description="Поставьте первую сами или свяжитесь с контактом в кампании — следующий шаг появится здесь."
         />
       ) : null}
 
@@ -134,9 +164,11 @@ export default function OutreachTasksPage() {
               <div className="outreach-column-cards">
                 {column.items.map((task) => (
                   <article className="outreach-lead-card outreach-task-card" key={task.id}>
+                    {/* Ссылка ведёт прямо в шторку контакта: раньше она открывала кампанию
+                        целиком, и нужного человека приходилось искать глазами в воронке. */}
                     <Link
                       className="outreach-card-main"
-                      href={`/outreach/${task.campaignId}`}
+                      href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
                     >
                       <span className="outreach-card-title">
                         {task.type === "call" ? <Phone size={15} aria-hidden="true" /> : null}
@@ -153,11 +185,25 @@ export default function OutreachTasksPage() {
                       <span>{task.assignedAdminName}</span>
                       <span>{formatDateTime(task.dueAt)}</span>
                     </div>
+                    <div className="outreach-card-facts">
+                      <Link href={`/base/${task.contactId}`}>Карточка клиента</Link>
+                      <span>{task.campaignName}</span>
+                    </div>
                     {task.status === "open" ? (
                       <div className="outreach-card-actions">
                         <button
                           type="button"
+                          aria-label="Связаться"
+                          title="Связаться"
+                          disabled={mutating}
+                          onClick={() => setTouch(task)}
+                        >
+                          <PhoneCall size={15} />
+                        </button>
+                        <button
+                          type="button"
                           aria-label="Отметить выполненной"
+                          title="Отметить выполненной"
                           disabled={mutating}
                           onClick={() => void complete(task.id)}
                         >
@@ -174,6 +220,38 @@ export default function OutreachTasksPage() {
             </div>
           ))}
         </div>
+      ) : null}
+
+      {touch ? (
+        <OutreachTouchDialog
+          campaignId={touch.campaignId}
+          targets={[{
+            campaignContactId: touch.campaignContactId,
+            phone: touch.contactPhone,
+            telegramUsername: touch.contactTelegramUsername,
+            maxIdentifier: touch.contactMaxIdentifier
+          }]}
+          columns={null}
+          onClose={() => setTouch(null)}
+          onRecorded={async () => {
+            setNotice("Касание записано, задача закрыта.");
+            setTouch(null);
+            await load();
+          }}
+        />
+      ) : null}
+
+      {newTaskOpen ? (
+        <OutreachNewTaskDialog
+          person={null}
+          managers={managers}
+          onClose={() => setNewTaskOpen(false)}
+          onCreated={async () => {
+            setNotice("Задача поставлена.");
+            setNewTaskOpen(false);
+            await load();
+          }}
+        />
       ) : null}
     </>
   );

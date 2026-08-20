@@ -194,6 +194,17 @@ export default function OutreachCampaignPage() {
     return () => controller.abort();
   }, [load]);
 
+  // Приход с доски задач: `?contact=…` открывает шторку сразу, без поиска нужной карточки
+  // глазами по всей воронке. Адрес читается из окна, а не через useSearchParams, чтобы
+  // страница не тянула за собой Suspense ради одного необязательного параметра.
+  useEffect(() => {
+    const contactId = new URLSearchParams(window.location.search).get("contact");
+    if (contactId) {
+      void openDetail(contactId);
+    }
+    // Открываем один раз на заход: дальше шторкой распоряжается менеджер.
+  }, []);
+
   // Списки кампаний и мероприятий нужны для переноса и привязки — грузим молча:
   // без них страница работает, просто без этих двух возможностей.
   useEffect(() => {
