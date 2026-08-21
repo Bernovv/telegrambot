@@ -809,6 +809,7 @@ export default function OutreachPersonPage(
         onRemoveNote={removeNote}
         onSaveContact={saveContactFields}
         onSaveField={saveField}
+        onReload={() => load()}
         onCreateTask={createTask}
         onTouch={(campaign, note, channel) => {
           setTouchNote(note);

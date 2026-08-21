@@ -2444,6 +2444,7 @@ export default function OutreachCampaignPage() {
                     onRemoveNote={removeDetailNote}
                     onSaveContact={savePersonFields}
                     onSaveField={savePersonField}
+                    onReload={refreshDetailPerson}
                     onCreateTask={createPersonTask}
                     /* Касание в воронке записывают её собственной кнопкой «Связаться»:
                        там уже выбраны и контакт, и колонки. Второй вход в тот же разбор

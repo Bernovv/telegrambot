@@ -26,6 +26,7 @@ import type {
 import {
   Bot,
   CheckCircle2,
+  ClipboardList,
   Clock,
   ExternalLink,
   Mail,
@@ -40,6 +41,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { PersonComposer } from "@/components/person-composer";
 import { PersonFieldsCard } from "@/components/person-fields";
+import { PersonQuestionnaireDialog } from "@/components/person-questionnaire-dialog";
 
 /**
  * Карточка человека.
@@ -196,7 +198,8 @@ export function PersonBody({
   onCreateTask,
   onTouch,
   onCompleteTask,
-  onRescheduleTask
+  onRescheduleTask,
+  onReload
 }: {
   readonly person: OutreachPersonCard;
   readonly managers: readonly OutreachManager[];
@@ -226,6 +229,8 @@ export function PersonBody({
   readonly onTouch: PersonTouchHandler | null;
   readonly onCompleteTask: (taskId: string) => Promise<void>;
   readonly onRescheduleTask: (task: OutreachPersonTask) => void;
+  /** Перечитать карточку: анкета правится не через её собственные ручки. */
+  readonly onReload: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"work" | "events" | "money">("work");
   const events = buildPersonEvents(person);
@@ -318,7 +323,9 @@ export function PersonBody({
         </div>
       ) : null}
 
-      {tab === "events" ? <PersonEventsCard person={person} /> : null}
+      {tab === "events" ? (
+        <PersonEventsCard person={person} onReload={onReload} />
+      ) : null}
       {tab === "money" ? <PersonMoneyCard person={person} /> : null}
     </>
   );
@@ -861,9 +868,19 @@ export function PersonFeed({
   );
 }
 
-export function PersonEventsCard(
-  { person }: { readonly person: OutreachPersonCard }
-) {
+export function PersonEventsCard({
+  person,
+  onReload
+}: {
+  readonly person: OutreachPersonCard;
+  /** Перечитать карточку после правки анкеты. Пусто — анкету отсюда не заполняют. */
+  readonly onReload: (() => Promise<void>) | null;
+}) {
+  const [questionnaire, setQuestionnaire] = useState<{
+    readonly eventId: string;
+    readonly eventTitle: string;
+    readonly participantId: string;
+  } | null>(null);
   const entries = buildPersonEvents(person);
   if (entries.length === 0) {
     return null;
@@ -907,10 +924,38 @@ export function PersonEventsCard(
                   Пришёл {formatCompactDate(entry.checkedInAt)}
                 </StatusPill>
               ) : null}
+              {/* «Анкета не заполнена» — это не отсутствие данных, а работа, которую ещё
+                  надо сделать, и делают её как раз глядя на человека. Раньше ради этого
+                  надо было помнить, на какое мероприятие он ездил, и уйти со страницы. */}
+              {entry.participantId && onReload ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => setQuestionnaire({
+                    eventId: entry.eventId as string,
+                    eventTitle: entry.title,
+                    participantId: entry.participantId as string
+                  })}
+                >
+                  <ClipboardList size={15} />
+                  {entry.questionnaires.length > 0
+                    ? "Анкета заполнена"
+                    : "Заполнить анкету"}
+                </button>
+              ) : null}
             </div>
           </li>
         ))}
       </ul>
+      {questionnaire && onReload ? (
+        <PersonQuestionnaireDialog
+          eventId={questionnaire.eventId}
+          eventTitle={questionnaire.eventTitle}
+          participantId={questionnaire.participantId}
+          onClose={() => setQuestionnaire(null)}
+          onSaved={onReload}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1036,6 +1081,9 @@ export function PersonMoneyCard(
 interface PersonEventEntry {
   readonly key: string;
   readonly href: string | null;
+  /** Заполнено у поездок: по ним анкету и заполняют. */
+  readonly eventId: string | null;
+  readonly participantId: string | null;
   readonly title: string;
   readonly meta: string;
   readonly checkedInAt: string | null;
@@ -1046,6 +1094,8 @@ function buildPersonEvents(person: OutreachPersonCard): readonly PersonEventEntr
   const attended = person.participations.map((participation) => ({
     key: participation.participantId,
     href: `/events/${participation.eventId}/participants`,
+    eventId: participation.eventId,
+    participantId: participation.participantId,
     title: participation.eventTitle,
     meta: [
       `${participation.guests} чел.`,
@@ -1068,6 +1118,9 @@ function buildPersonEvents(person: OutreachPersonCard): readonly PersonEventEntr
       href: questionnaire.eventId
         ? `/events/${questionnaire.eventId}/questionnaire`
         : null,
+      // Анкета без поездки: заполнять её отсюда нечем — строки участника нет.
+      eventId: questionnaire.eventId,
+      participantId: null,
       title: questionnaire.eventTitle ?? "Без мероприятия",
       meta: [
         questionnaire.source === "order" ? "анкета к заказу" : "анкета участника",
