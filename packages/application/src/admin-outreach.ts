@@ -49,6 +49,19 @@ import {
 import type { IdGenerator } from "./identity.js";
 import type { PhoneNormalizer } from "./phone.js";
 
+/**
+ * Следующий шаг, который ставится вместе с переносом карточки или записью касания.
+ *
+ * Одной операцией, а не двумя: между ними карточка успевала бы побывать в состоянии,
+ * которое воронка запрещает, и запрет обходился бы случайно — закрыл вкладку и всё.
+ */
+export interface OutreachNextStep {
+  readonly type: OutreachTaskType;
+  readonly text: string;
+  readonly dueAt: Date;
+  readonly assignedAdminId?: string | null;
+}
+
 export interface NormalizedOutreachImportRow {
   readonly displayName: string | null;
   readonly phoneE164: string | null;
@@ -145,6 +158,9 @@ export interface AdminOutreachRepository {
     readonly name?: string;
     readonly description?: string | null;
     readonly status?: OutreachCampaignStatus;
+    readonly requireOpenTask?: boolean;
+    readonly callWindowStart?: number;
+    readonly callWindowEnd?: number;
     readonly now: Date;
   }): Promise<boolean>;
   listPipelineColumns(
@@ -167,6 +183,18 @@ export interface AdminOutreachRepository {
     readonly campaignContactId: string;
     readonly stage: string;
   }): Promise<OutreachPipelineColumnOutcome | null>;
+  /**
+   * Требует ли воронка следующего шага и есть ли он сейчас.
+   *
+   * `null` — строки участия нет. Проверка одна на перенос карточки и на запись касания:
+   * без задачи карточка остаётся лежать, и вспомнить о ней некому.
+   */
+  getTaskGuard(input: {
+    readonly campaignContactId: string;
+  }): Promise<{
+    readonly requireOpenTask: boolean;
+    readonly hasOpenTask: boolean;
+  } | null>;
   listCustomFieldDefinitions(
     campaignId: string
   ): Promise<readonly OutreachCustomFieldDefinition[]>;
@@ -702,10 +730,26 @@ export class AdminOutreachService {
     readonly description?: string | null;
     readonly status?: OutreachCampaignStatus;
     readonly eventId?: string | null;
+    readonly requireOpenTask?: boolean;
+    readonly callWindowStart?: number;
+    readonly callWindowEnd?: number;
     readonly now: Date;
   }): Promise<OutreachCampaignSummary | null> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.campaignId);
+    // Окно обзвона правится по частям, а проверять его надо целиком: недостающую половину
+    // берём из того, что стоит сейчас, иначе «с девятнадцати до девятнадцати» пройдёт.
+    if (
+      input.callWindowStart !== undefined
+      || input.callWindowEnd !== undefined
+    ) {
+      const current = await this.repository.getCampaign(input.campaignId);
+      const start = input.callWindowStart ?? current?.callWindowStart ?? 12;
+      const end = input.callWindowEnd ?? current?.callWindowEnd ?? 19;
+      if (start >= end) {
+        throw new Error("Outreach call window is invalid");
+      }
+    }
     if (input.eventId !== undefined && input.eventId !== null) {
       requireUuid(input.eventId);
     }
@@ -719,6 +763,15 @@ export class AdminOutreachService {
         ? {}
         : { description: optionalText(input.description ?? undefined, 2000) }),
       ...(input.status === undefined ? {} : { status: input.status }),
+      ...(input.requireOpenTask === undefined
+        ? {}
+        : { requireOpenTask: input.requireOpenTask }),
+      ...(input.callWindowStart === undefined
+        ? {}
+        : { callWindowStart: input.callWindowStart }),
+      ...(input.callWindowEnd === undefined
+        ? {}
+        : { callWindowEnd: input.callWindowEnd }),
       now: input.now
     });
     return changed ? this.repository.getCampaign(input.campaignId) : null;
@@ -1589,20 +1642,22 @@ export class AdminOutreachService {
     readonly note?: string;
     readonly nextContactAt?: Date;
     readonly now: Date;
-  }): Promise<{ readonly recorded: number }> {
+  }): Promise<{ readonly recorded: number; readonly taskRequired: boolean }> {
     requirePermission(input.actor, "outreach.write");
     requireIds(input.campaignContactIds);
     const ids = unique(input.campaignContactIds);
     validateActivity(input.channel, input.result);
     let lostReason: OutreachLostReason | null = null;
+    let outcome: OutreachPipelineColumnOutcome = "open";
     if (input.stage) {
-      const outcome = await this.repository.getPipelineColumnOutcome({
+      const found = await this.repository.getPipelineColumnOutcome({
         campaignContactId: ids[0] as string,
         stage: input.stage
       });
-      if (outcome === null) {
+      if (found === null) {
         throw new Error("Outreach pipeline stage was not found for this campaign");
       }
+      outcome = found;
       validateLostState(outcome, input.lostReason ?? null);
       lostReason = outcome === "lost" ? input.lostReason ?? null : null;
     }
@@ -1612,6 +1667,16 @@ export class AdminOutreachService {
       && (Number.isNaN(nextContactAt.getTime()) || nextContactAt <= input.now)
     ) {
       throw new Error("Outreach next contact time is invalid");
+    }
+    // «Когда связаться снова» и есть следующий шаг: по этому времени запись касания сама
+    // ставит задачу. Если воронка требует шага, а времени не назвали, — записывать нечего:
+    // разговор состоялся, а карточка легла бы без напоминания.
+    if (
+      nextContactAt === null
+      && outcome !== "lost"
+      && await this.someoneNeedsNextStep(ids)
+    ) {
+      return { recorded: 0, taskRequired: true };
     }
     const recorded = await this.repository.recordActivities({
       activities: ids.map((campaignContactId) => ({
@@ -1634,7 +1699,20 @@ export class AdminOutreachService {
     if (recorded !== ids.length) {
       throw new Error("Outreach campaign contact was not found");
     }
-    return { recorded };
+    return { recorded, taskRequired: false };
+  }
+
+  /** Хотя бы одна карточка из пачки останется без следующего шага. */
+  private async someoneNeedsNextStep(
+    campaignContactIds: readonly string[]
+  ): Promise<boolean> {
+    for (const campaignContactId of campaignContactIds) {
+      const guard = await this.repository.getTaskGuard({ campaignContactId });
+      if (guard !== null && guard.requireOpenTask && !guard.hasOpenTask) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async updateContactStage(input: {
@@ -1642,8 +1720,10 @@ export class AdminOutreachService {
     readonly campaignContactId: string;
     readonly stage: OutreachPipelineStage;
     readonly lostReason?: OutreachLostReason;
+    /** Следующий шаг, который ставят вместе с переносом. */
+    readonly task?: OutreachNextStep;
     readonly now: Date;
-  }): Promise<{ readonly updated: boolean }> {
+  }): Promise<{ readonly updated: boolean; readonly taskRequired: boolean }> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.campaignContactId);
     const outcome = await this.repository.getPipelineColumnOutcome({
@@ -1654,16 +1734,58 @@ export class AdminOutreachService {
       throw new Error("Outreach pipeline stage was not found for this campaign");
     }
     validateLostState(outcome, input.lostReason ?? null);
-    return {
-      updated: await this.repository.updateContactStage({
-        campaignContactId: input.campaignContactId,
-        actorAdminId: input.actor.adminId,
-        historyId: this.idGenerator.newId(),
-        stage: input.stage,
-        lostReason: outcome === "lost" ? input.lostReason ?? null : null,
-        now: input.now
-      })
-    };
+    if (await this.needsNextStep(input.campaignContactId, outcome, input.task)) {
+      return { updated: false, taskRequired: true };
+    }
+    const updated = await this.repository.updateContactStage({
+      campaignContactId: input.campaignContactId,
+      actorAdminId: input.actor.adminId,
+      historyId: this.idGenerator.newId(),
+      stage: input.stage,
+      lostReason: outcome === "lost" ? input.lostReason ?? null : null,
+      now: input.now
+    });
+    if (updated && input.task) {
+      await this.createNextStep(input.actor, input.campaignContactId, input.task, input.now);
+    }
+    return { updated, taskRequired: false };
+  }
+
+  /**
+   * Останется ли карточка без следующего шага.
+   *
+   * Колонки с исходом «проигран» правило не касается: там работа кончилась, и требовать
+   * звонок по отказавшемуся значит держать в списке дел то, чего делать не собираются.
+   */
+  private async needsNextStep(
+    campaignContactId: string,
+    outcome: OutreachPipelineColumnOutcome,
+    task: OutreachNextStep | undefined
+  ): Promise<boolean> {
+    if (outcome === "lost" || task) {
+      return false;
+    }
+    const guard = await this.repository.getTaskGuard({ campaignContactId });
+    return guard !== null && guard.requireOpenTask && !guard.hasOpenTask;
+  }
+
+  private async createNextStep(
+    actor: AdminRequestActor,
+    campaignContactId: string,
+    task: OutreachNextStep,
+    now: Date
+  ): Promise<void> {
+    await this.repository.createTask({
+      id: this.idGenerator.newId(),
+      contactId: null,
+      campaignContactId,
+      assignedAdminId: task.assignedAdminId ?? null,
+      createdByAdminId: actor.adminId,
+      type: task.type,
+      text: requiredText(task.text, 500, "Outreach task text"),
+      dueAt: task.dueAt,
+      now
+    });
   }
 
   /**

@@ -131,6 +131,16 @@ export function OutreachTouchDialog({
           ? { nextContactAt: new Date(nextContactAt).toISOString() }
           : {})
       });
+      // Воронка может не принимать разговор без следующего шага: он и есть «когда связаться
+      // снова». Отказ приходит обычным ответом, потому что это не поломка — менеджеру надо
+      // дозаполнить одно поле, а не начинать заново.
+      if (response.taskRequired) {
+        setError(
+          "Эта воронка не отпускает карточку без следующего шага."
+          + " Укажите, когда связаться снова, — по этому времени встанет задача."
+        );
+        return;
+      }
       await onRecorded(response.recorded);
     } catch (caught) {
       setError(caught instanceof AdminApiError

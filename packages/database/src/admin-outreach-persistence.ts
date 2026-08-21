@@ -649,6 +649,18 @@ implements AdminOutreachRepository {
         values.push(input.eventId);
         sets.push(`event_id = $${values.length}::uuid`);
       }
+      if (input.requireOpenTask !== undefined) {
+        values.push(input.requireOpenTask);
+        sets.push(`require_open_task = $${values.length}::boolean`);
+      }
+      if (input.callWindowStart !== undefined) {
+        values.push(input.callWindowStart);
+        sets.push(`call_window_start = $${values.length}::smallint`);
+      }
+      if (input.callWindowEnd !== undefined) {
+        values.push(input.callWindowEnd);
+        sets.push(`call_window_end = $${values.length}::smallint`);
+      }
       const result = await connection.query(
         `update public.outreach_campaigns
          set ${sets.join(", ")}
@@ -2014,6 +2026,38 @@ implements AdminOutreachRepository {
         occurredAt: input.now
       });
       return { status: "updated" as const };
+    });
+  }
+
+  getTaskGuard(
+    input: Parameters<AdminOutreachRepository["getTaskGuard"]>[0]
+  ): Promise<{
+    readonly requireOpenTask: boolean;
+    readonly hasOpenTask: boolean;
+  } | null> {
+    return this.read(async (connection) => {
+      const result = await connection.query<{
+        readonly require_open_task: boolean;
+        readonly has_open_task: boolean;
+      }>(
+        `select campaign.require_open_task,
+                exists (
+                  select 1 from public.outreach_tasks task
+                   where task.campaign_contact_id = member.id
+                     and task.status = 'open'
+                ) as has_open_task
+           from public.outreach_campaign_contacts member
+           join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+          where member.id = $1::uuid`,
+        [input.campaignContactId]
+      );
+      const row = result.rows[0];
+      return row
+        ? {
+            requireOpenTask: row.require_open_task,
+            hasOpenTask: row.has_open_task
+          }
+        : null;
     });
   }
 

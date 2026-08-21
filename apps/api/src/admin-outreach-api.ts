@@ -59,7 +59,10 @@ const updateCampaignBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   status: campaignStatus.optional(),
-  eventId: uuid.nullable().optional()
+  eventId: uuid.nullable().optional(),
+  requireOpenTask: z.boolean().optional(),
+  callWindowStart: z.number().int().min(0).max(23).optional(),
+  callWindowEnd: z.number().int().min(1).max(24).optional()
 }).strict().refine((value) => Object.keys(value).length > 0);
 
 const contactListQuery = z.object({
@@ -201,7 +204,17 @@ const activityBody = z.object({
 
 const stageBody = z.object({
   stage: pipelineStage,
-  lostReason: lostReason.optional()
+  lostReason: lostReason.optional(),
+  /**
+   * Следующий шаг вместе с переносом. Воронка может требовать его для всех колонок, кроме
+   * проигрышных, — тогда без него карточку не двинуть.
+   */
+  task: z.object({
+    assignedAdminId: uuid.optional(),
+    type: taskType,
+    text: z.string().trim().min(1).max(500),
+    dueAt: z.iso.datetime({ offset: true })
+  }).strict().optional()
 }).strict();
 
 const taskBody = z.object({
@@ -874,10 +887,22 @@ export class AdminOutreachController {
         ...(parsed.lostReason === undefined
           ? {}
           : { lostReason: parsed.lostReason }),
+        ...(parsed.task === undefined
+          ? {}
+          : {
+              task: {
+                type: parsed.task.type,
+                text: parsed.task.text,
+                dueAt: new Date(parsed.task.dueAt),
+                assignedAdminId: parsed.task.assignedAdminId ?? null
+              }
+            }),
         now: new Date()
       })
     );
-    if (!result.updated) {
+    // Отказ из-за отсутствия следующего шага — не поломка, а развилка: панель спросит
+    // задачу и повторит запрос вместе с ней. Через ошибку структура ответа не проходит.
+    if (!result.updated && !result.taskRequired) {
       throw outreachNotFound();
     }
     return result;
@@ -1145,6 +1170,15 @@ export class AdminOutreachController {
           : { description: parsed.description }),
         ...(parsed.status === undefined ? {} : { status: parsed.status }),
         ...(parsed.eventId === undefined ? {} : { eventId: parsed.eventId }),
+        ...(parsed.requireOpenTask === undefined
+          ? {}
+          : { requireOpenTask: parsed.requireOpenTask }),
+        ...(parsed.callWindowStart === undefined
+          ? {}
+          : { callWindowStart: parsed.callWindowStart }),
+        ...(parsed.callWindowEnd === undefined
+          ? {}
+          : { callWindowEnd: parsed.callWindowEnd }),
         now: new Date()
       })
     );

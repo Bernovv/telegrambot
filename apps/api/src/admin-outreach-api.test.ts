@@ -99,7 +99,7 @@ describe("administrator outreach HTTP contract", () => {
           if (!input.lostReason) {
             throw new Error("Outreach lost reason is required");
           }
-          return { updated: true };
+          return { updated: true, taskRequired: false };
         }
       })
     });
@@ -134,7 +134,7 @@ describe("administrator outreach HTTP contract", () => {
       readiness,
       adminAuth: adminAuth([]),
       adminOutreach: handler({
-        async updateContactStage() { return { updated: true }; }
+        async updateContactStage() { return { updated: true, taskRequired: false }; }
       })
     });
     await app.init();
@@ -167,7 +167,7 @@ describe("administrator outreach HTTP contract", () => {
       adminOutreach: handler({
         async updatePipelineColumns(input) {
           received = input;
-          return { updated: true };
+          return { updated: true, taskRequired: false };
         }
       })
     });
@@ -394,7 +394,7 @@ function handler(
     async createCampaign() { return campaign; },
     async updateCampaign() { return campaign; },
     async listPipelineColumns() { return []; },
-    async updatePipelineColumns() { return { updated: false }; },
+    async updatePipelineColumns() { return { updated: false, taskRequired: false }; },
     async listCustomFieldDefinitions() { return []; },
     async createCustomFieldDefinition(input) {
       return {
@@ -408,7 +408,7 @@ function handler(
       };
     },
     async deleteCustomFieldDefinition() { return { deleted: false }; },
-    async setCustomFieldValue() { return { updated: false }; },
+    async setCustomFieldValue() { return { updated: false, taskRequired: false }; },
     async listTaskBoard() { return []; },
     async listContacts() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getContact() { return null; },
@@ -474,13 +474,13 @@ function handler(
       };
     },
     async assignContacts() { return { updated: 0 }; },
-    async recordActivities() { return { recorded: 0 }; },
-    async updateContactStage() { return { updated: false }; },
+    async recordActivities() { return { recorded: 0, taskRequired: false }; },
+    async updateContactStage() { return { updated: false, taskRequired: false }; },
     async createTask() { return { created: false }; },
     async listSiteRegistrations() {
       return { items: [], total: 0, page: 1, limit: 50, needsAttention: 0 };
     },
-    async markPersonOwn() { return { updated: false }; },
+    async markPersonOwn() { return { updated: false, taskRequired: false }; },
     async createNote() { return { created: false }; },
     async deleteNote() { return { deleted: false }; },
     async completeTask() { return { completed: false }; },

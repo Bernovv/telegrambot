@@ -652,6 +652,21 @@ export function getOutreachCampaign(
   );
 }
 
+export function updateOutreachCampaignSettings(
+  campaignId: string,
+  input: {
+    readonly requireOpenTask?: boolean;
+    readonly callWindowStart?: number;
+    readonly callWindowEnd?: number;
+  }
+): Promise<OutreachCampaignSummary> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}`,
+    "PATCH",
+    input
+  );
+}
+
 export function updateOutreachCampaign(
   campaignId: string,
   input: {
@@ -988,7 +1003,7 @@ export function recordOutreachActivities(input: {
   readonly lostReason?: OutreachLostReason;
   readonly note?: string;
   readonly nextContactAt?: string;
-}): Promise<{ readonly recorded: number }> {
+}): Promise<{ readonly recorded: number; readonly taskRequired: boolean }> {
   return requestAdminMutation(
     "outreach/campaign-contacts/activities",
     "POST",
@@ -1001,8 +1016,15 @@ export function updateOutreachContactStage(
   input: {
     readonly stage: OutreachPipelineStage;
     readonly lostReason?: OutreachLostReason;
+    /** Следующий шаг: воронка может не отпускать карточку без него. */
+    readonly task?: {
+      readonly assignedAdminId?: string;
+      readonly type: OutreachTaskType;
+      readonly text: string;
+      readonly dueAt: string;
+    };
   }
-): Promise<{ readonly updated: boolean }> {
+): Promise<{ readonly updated: boolean; readonly taskRequired: boolean }> {
   return requestAdminMutation(
     `outreach/campaign-contacts/${encodeURIComponent(campaignContactId)}/stage`,
     "PATCH",

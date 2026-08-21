@@ -5762,3 +5762,27 @@ a.person-channel:hover {
   height: 28px;
   flex: none;
 }
+
+/* Правило воронки — строка с галочкой во всю ширину: объяснение к нему длиннее подписи. */
+.outreach-rule-check {
+  display: flex;
+  align-items: flex-start;
+  grid-column: 1 / -1;
+  gap: 9px;
+}
+
+.outreach-rule-check input {
+  margin-top: 3px;
+  width: auto;
+  flex: none;
+}
+
+.outreach-rule-check > span {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Карточки без следующего шага — то, ради чего правило и заводилось. */
+.metric-attention strong {
+  color: var(--warning);
+}

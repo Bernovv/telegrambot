@@ -6,13 +6,17 @@ import {
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
 import {
+  OutreachNextStepDialog,
+  type OutreachNextStepValue
+} from "@/components/outreach-next-step-dialog";
+import {
   OutreachTaskRescheduleDialog,
   suggestDueAt,
   type ReschedulableTask
 } from "@/components/outreach-task-reschedule-dialog";
 import { OwnBadge } from "@/components/own-badge";
 import { PersonOwnDialog } from "@/components/person-own-dialog";
-import { PersonBody, PersonFacts } from "@/components/person-card";
+import { PersonBody, PersonFacts, plural } from "@/components/person-card";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -31,6 +35,7 @@ import {
   createOutreachPersonTask,
   deleteOutreachNote,
   setOutreachPersonField,
+  updateOutreachCampaignSettings,
   updateOutreachPerson,
   addExistingContactsToCampaign,
   importEventParticipantsIntoCampaign,
@@ -119,6 +124,8 @@ import {
 interface StageTarget {
   readonly contactId: string;
   readonly stage: OutreachPipelineStage;
+  /** Причина отказа, уже названная: перенос повторяют вместе со следующим шагом. */
+  readonly lostReason?: OutreachLostReason;
 }
 
 type ViewMode = "board" | "table";
@@ -156,6 +163,9 @@ export default function OutreachCampaignPage() {
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [action, setAction] = useState<readonly string[] | null>(null);
   const [stageTarget, setStageTarget] = useState<StageTarget | null>(null);
+  /** Перенос, который ждёт следующего шага: воронка требует задачу. */
+  const [nextStep, setNextStep] = useState<StageTarget | null>(null);
+  const [onlyWithoutTask, setOnlyWithoutTask] = useState(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OutreachCampaignContactDetail | null>(null);
   // Полная карточка человека — та же, что на своей странице в базе. Раньше в панели была
@@ -318,12 +328,27 @@ export default function OutreachCampaignPage() {
     >>(
       (groups, column) => ({
         ...groups,
-        [column.stage]: contacts?.items.filter(
+        [column.stage]: (contacts?.items ?? []).filter(
           (contact) => contact.stage === column.stage
-        ) ?? []
+            && (!onlyWithoutTask || contact.openTask === null)
+        )
       }),
       {}
     ),
+    [contacts, pipelineColumns, onlyWithoutTask]
+  );
+
+  /**
+   * Карточки без следующего шага.
+   *
+   * Правило «без задачи нельзя» задним числом не применить: включив его, мы получили бы
+   * заблокированную воронку и ничего больше. Поэтому старые карточки просто видно — их
+   * разбирают руками, а счётчик показывает, сколько осталось.
+   */
+  const withoutTask = useMemo(
+    () => (contacts?.items ?? []).filter((contact) =>
+      contact.openTask === null
+      && outcomeFor(contact.stage) !== "lost").length,
     [contacts, pipelineColumns]
   );
 
@@ -786,7 +811,8 @@ export default function OutreachCampaignPage() {
   async function moveStage(
     contactId: string,
     stage: OutreachPipelineStage,
-    lostReason?: OutreachLostReason
+    lostReason?: OutreachLostReason,
+    task?: OutreachNextStepValue
   ) {
     if (outcomeFor(stage) === "lost" && !lostReason) {
       setStageTarget({ contactId, stage });
@@ -795,12 +821,25 @@ export default function OutreachCampaignPage() {
     setMutating(true);
     setError(null);
     try {
-      await updateOutreachContactStage(contactId, {
+      const result = await updateOutreachContactStage(contactId, {
         stage,
-        ...(lostReason ? { lostReason } : {})
+        ...(lostReason ? { lostReason } : {}),
+        ...(task ? { task } : {})
       });
+      // Воронка не отпускает карточку без следующего шага. Спрашиваем его и повторяем
+      // перенос вместе с задачей — одной операцией, чтобы карточка не успела полежать в
+      // запрещённом состоянии.
+      if (!result.updated && result.taskRequired) {
+        setNextStep({
+          contactId,
+          stage,
+          ...(lostReason ? { lostReason } : {})
+        });
+        return;
+      }
       setNotice(`Контакт перемещён: ${columnLabel(stage)}`);
       setStageTarget(null);
+      setNextStep(null);
       await load();
       if (detail?.id === contactId) {
         setDetail(await getOutreachContact(contactId));
@@ -1056,6 +1095,31 @@ export default function OutreachCampaignPage() {
     }
   }
 
+  async function submitCampaignRules(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const start = Number(formText(data, "callWindowStart"));
+    const end = Number(formText(data, "callWindowEnd"));
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start >= end) {
+      setError("Окно обзвона задаётся часами, и начало должно быть раньше конца.");
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      setCampaign(await updateOutreachCampaignSettings(id, {
+        requireOpenTask: data.get("requireOpenTask") !== null,
+        callWindowStart: start,
+        callWindowEnd: end
+      }));
+      setNotice("Правила воронки сохранены.");
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить правила."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function submitNewField(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -1274,7 +1338,32 @@ export default function OutreachCampaignPage() {
         <div><span>Обработано</span><strong>{processed}</strong></div>
         <div><span>Заинтересованы</span><strong>{campaign.interestedContacts}</strong></div>
         <div><span>Оплатили / зарегистрировались</span><strong>{campaign.convertedContacts}</strong></div>
+        {campaign.requireOpenTask ? (
+          <div className={withoutTask > 0 ? "metric-attention" : undefined}>
+            <span>Без следующего шага</span>
+            <strong>{withoutTask}</strong>
+          </div>
+        ) : null}
       </div>
+
+      {campaign.requireOpenTask && withoutTask > 0 ? (
+        <div className="outreach-notice">
+          {withoutTask}
+          {" "}
+          {plural(withoutTask, "карточка", "карточки", "карточек")}
+          {" "}
+          {plural(withoutTask, "лежит", "лежат", "лежат")}
+          {" без следующего шага — их завели до того, как воронка стала его требовать."}
+          {" "}
+          <button
+            className="inline-link"
+            type="button"
+            onClick={() => setOnlyWithoutTask((current) => !current)}
+          >
+            {onlyWithoutTask ? "Показать все" : "Показать только их"}
+          </button>
+        </div>
+      ) : null}
 
       {notice ? <div className="outreach-notice">{notice}</div> : null}
       {error ? <PageError message={error} retry={() => void load()} /> : null}
@@ -1762,6 +1851,59 @@ export default function OutreachCampaignPage() {
 
             <div className="section-title-row">
               <div>
+                <h3>Правила воронки</h3>
+                <span>Чем воронка отличается от остальных.</span>
+              </div>
+            </div>
+            <form
+              className="outreach-field-form"
+              onSubmit={(event) => void submitCampaignRules(event)}
+            >
+              <label className="outreach-rule-check">
+                <input
+                  name="requireOpenTask"
+                  type="checkbox"
+                  defaultValue="on"
+                  defaultChecked={campaign.requireOpenTask}
+                />
+                <span>
+                  Не отпускать карточку без следующего шага.
+                  {" "}
+                  Колонок с исходом «проигран» правило не касается: там работа кончилась.
+                </span>
+              </label>
+              <label>
+                <span>Обзвон с</span>
+                <input
+                  name="callWindowStart"
+                  type="number"
+                  min={0}
+                  max={23}
+                  defaultValue={campaign.callWindowStart}
+                />
+              </label>
+              <label>
+                <span>Обзвон до</span>
+                <input
+                  name="callWindowEnd"
+                  type="number"
+                  min={1}
+                  max={24}
+                  defaultValue={campaign.callWindowEnd}
+                />
+              </label>
+              <p className="muted">
+                В эти часы автоматика назначает звонки — по времени
+                {" "}
+                {campaign.callWindowTimezone}. Менеджер срок правит как обычно.
+              </p>
+              <button className="primary-button" type="submit" disabled={mutating}>
+                Сохранить правила
+              </button>
+            </form>
+
+            <div className="section-title-row">
+              <div>
                 <h3>Дополнительные поля карточки</h3>
                 <span>Свои поля для клиентов — как в amoCRM.</span>
               </div>
@@ -1841,6 +1983,30 @@ export default function OutreachCampaignPage() {
             if (detail && action.includes(detail.id)) {
               setDetail(await getOutreachContact(detail.id));
             }
+          }}
+        />
+      ) : null}
+
+      {nextStep ? (
+        <OutreachNextStepDialog
+          title="Что дальше по этому контакту?"
+          hint="Эта воронка не отпускает карточку без следующего шага"
+          managers={managers}
+          defaultAssignedAdminId={
+            contacts?.items.find((item) => item.id === nextStep.contactId)
+              ?.assignedAdminId ?? null
+          }
+          busy={mutating}
+          onClose={() => setNextStep(null)}
+          onSubmit={(task) => {
+            const target = nextStep;
+            setNextStep(null);
+            void moveStage(
+              target.contactId,
+              target.stage,
+              target.lostReason,
+              task
+            );
           }}
         />
       ) : null}
