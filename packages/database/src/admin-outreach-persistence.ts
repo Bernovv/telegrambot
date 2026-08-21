@@ -1342,7 +1342,8 @@ implements AdminOutreachRepository {
                   coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                   task.created_by_admin_id,
                   coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
-                  task.task_type, task.task_text, task.due_at, task.created_at
+                  task.task_type, task.task_text, task.due_at, task.created_at,
+                  task.auto_rule_id
            from public.outreach_tasks task
            join public.admin_accounts task_assignee
              on task_assignee.id = task.assigned_admin_id
@@ -2543,7 +2544,8 @@ implements AdminOutreachRepository {
                   coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                   task.created_by_admin_id,
                   coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
-                  task.task_type, task.task_text, task.due_at, task.created_at
+                  task.task_type, task.task_text, task.due_at, task.created_at,
+                  task.auto_rule_id
            from public.outreach_tasks task
            join public.admin_accounts task_assignee
              on task_assignee.id = task.assigned_admin_id
@@ -3031,9 +3033,12 @@ implements AdminOutreachRepository {
           `update public.outreach_campaign_contacts
            set current_status = $2::text,
                pipeline_stage = coalesce($3::text, pipeline_stage),
+               -- Причина отказа приходит уже разобранной: служба обнуляет её всюду,
+               -- кроме колонок с исходом «проигран». Сравнивать здесь с именем стадии
+               -- нельзя — колонки переименовывают из кабинета, и «lost» у воронки может
+               -- называться иначе.
                lost_reason = case
-                 when $3::text = 'lost' then $4::text
-                 when $3::text is not null then null
+                 when $3::text is not null then $4::text
                  else lost_reason
                end,
                last_activity_at = $5::timestamptz,
@@ -3087,12 +3092,15 @@ implements AdminOutreachRepository {
         );
         if (input.nextContactAt && activity.taskId) {
           await connection.query(
+            // Человек у задачи обязателен: задачи умеют относиться к нему целиком, а не
+            // только к его работе в кампании. Здесь он берётся из строки участия — она
+            // уже заблокирована выше.
             `insert into public.outreach_tasks (
-               id, campaign_contact_id, assigned_admin_id,
+               id, contact_id, campaign_contact_id, assigned_admin_id,
                created_by_admin_id, task_type, task_text,
                due_at, status, created_at
              ) values (
-               $1::uuid, $2::uuid, coalesce($3::uuid, $4::uuid),
+               $1::uuid, $9::uuid, $2::uuid, coalesce($3::uuid, $4::uuid),
                $4::uuid, $5::text, $6::text,
                $7::timestamptz, 'open', $8::timestamptz
              )`,
@@ -3104,7 +3112,8 @@ implements AdminOutreachRepository {
               input.action === "call" ? "call" : "message",
               input.action === "call" ? "Позвонить клиенту" : "Написать клиенту",
               input.nextContactAt,
-              input.occurredAt
+              input.occurredAt,
+              current.contact_id
             ]
           );
         }
@@ -3500,7 +3509,8 @@ implements AdminOutreachRepository {
                   coalesce(task_assignee.display_name, task_assignee.email_normalized, 'Менеджер') as assigned_admin_name,
                   task.created_by_admin_id,
                   coalesce(task_creator.display_name, task_creator.email_normalized, 'Менеджер') as created_by_admin_name,
-                  task.task_type, task.task_text, task.due_at, task.created_at
+                  task.task_type, task.task_text, task.due_at, task.created_at,
+                  task.auto_rule_id
            from public.outreach_tasks task
            join public.admin_accounts task_assignee
              on task_assignee.id = task.assigned_admin_id

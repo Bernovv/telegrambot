@@ -17,6 +17,7 @@
     "test:migrations": "pnpm --filter @ticket-platform/database test:migrations",
     "db:migrations:check": "node scripts/check-migrations.mjs && node scripts/generate-pgboss-migration.mjs --check",
     "db:sql:check": "node scripts/check-sql-parameter-types.mjs",
+    "db:smoke": "node --import tsx packages/database/scripts/smoke-queries.ts",
     "queue:dead-letter": "pnpm --filter @ticket-platform/worker dead-letter",
     "env:check": "node scripts/check-env.mjs",
     "price:show": "pnpm --filter @ticket-platform/worker price",
