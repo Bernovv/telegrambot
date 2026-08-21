@@ -3,6 +3,7 @@
 import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
 import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
 import { OwnBadge } from "@/components/own-badge";
+import { PersonOwnDialog } from "@/components/person-own-dialog";
 import {
   OutreachTaskRescheduleDialog,
   suggestDueAt,
@@ -28,7 +29,6 @@ import {
   completeOutreachTask,
   createOutreachNote,
   deleteOutreachNote,
-  markOutreachPersonOwn,
   deleteOutreachPerson,
   getOutreachPerson,
   listOutreachCampaigns,
@@ -123,6 +123,7 @@ export default function OutreachPersonPage(
     useState<readonly OutreachCampaignSummary[]>([]);
   const menuRef = useRef<HTMLDetailsElement>(null);
   const [reschedule, setReschedule] = useState<ReschedulableTask | null>(null);
+  const [ownOpen, setOwnOpen] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -261,33 +262,6 @@ export default function OutreachPersonPage(
     } finally {
       setMutating(false);
     }
-  }
-
-  async function toggleOwn() {
-    if (!person) {
-      return;
-    }
-    if (person.isOwn) {
-      await run(
-        () => markOutreachPersonOwn(id, { isOwn: false }),
-        "Пометка снята."
-      );
-      return;
-    }
-    const note = window.prompt(
-      "Пометить человека своим? Менеджеры увидят плашку везде, где он показан,"
-      + " и обзванивать его не будут.\n\nКто это? Можно не заполнять."
-    );
-    if (note === null) {
-      return;
-    }
-    await run(
-      () => markOutreachPersonOwn(id, {
-        isOwn: true,
-        ...(note.trim() ? { note: note.trim() } : {})
-      }),
-      "Человек помечен своим."
-    );
   }
 
   async function saveNote(body: string): Promise<boolean> {
@@ -470,7 +444,9 @@ export default function OutreachPersonPage(
           {person.archivedAt ? (
             <StatusPill tone="neutral">В архиве</StatusPill>
           ) : null}
-          {person.isOwn ? <OwnBadge note={person.ownNote} /> : null}
+          {person.isOwn ? (
+            <OwnBadge note={person.ownNote} onEdit={() => setOwnOpen(true)} />
+          ) : null}
           {person.mergedDuplicates > 0 ? (
             <StatusPill tone="neutral">
               сведено дублей: {person.mergedDuplicates}
@@ -530,10 +506,10 @@ export default function OutreachPersonPage(
               <button
                 type="button"
                 disabled={mutating}
-                onClick={menuAction(() => void toggleOwn())}
+                onClick={menuAction(() => setOwnOpen(true))}
               >
                 <ShieldCheck size={16} />
-                {person.isOwn ? "Снять пометку «свои»" : "Отметить «свои»"}
+                {person.isOwn ? "Изменить пометку «свои»" : "Отметить «свои»"}
               </button>
               <button
                 type="button"
@@ -589,6 +565,10 @@ export default function OutreachPersonPage(
               ? ` ${formatCompactDate(person.ownMarkedAt)}`
               : ""}.`
             : ""}
+          {" "}
+          <button className="inline-link" type="button" onClick={() => setOwnOpen(true)}>
+            Изменить или снять
+          </button>
         </div>
       ) : null}
       {person.archivedAt && person.archivedReason ? (
@@ -907,6 +887,18 @@ export default function OutreachPersonPage(
 
         </div>
       </div>
+
+      {ownOpen ? (
+        <PersonOwnDialog
+          person={person}
+          onClose={() => setOwnOpen(false)}
+          onDone={async (message) => {
+            setNotice(message);
+            setOwnOpen(false);
+            await load();
+          }}
+        />
+      ) : null}
 
       {reschedule ? (
         <OutreachTaskRescheduleDialog

@@ -2535,6 +2535,70 @@ tbody tr:hover {
 
 /* Плашка «свои». Жёлтая, а не красная: это не ошибка и не запрет, а предупреждение —
    человек в базе по делу, просто звонить ему не надо. */
+/* Ссылка-действие внутри абзаца: выглядит как ссылка, а делает то же, что кнопка. */
+.inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inline-link:hover {
+  text-decoration: none;
+}
+
+.own-badge-button {
+  cursor: pointer;
+}
+
+.own-badge-button:hover {
+  background: #ffe9b4;
+  border-color: #dcb35e;
+}
+
+/* Пометка «свои»: поставить, поправить объяснение или снять — в одном окне. */
+.own-dialog {
+  display: grid;
+  padding: 4px 18px 18px;
+  gap: 10px;
+}
+
+.own-dialog form {
+  display: grid;
+  gap: 12px;
+}
+
+.own-dialog label {
+  display: grid;
+  gap: 5px;
+}
+
+.own-dialog label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.own-dialog input {
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+}
+
+.own-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .own-badge {
   display: inline-flex;
   align-items: center;
@@ -4929,7 +4993,32 @@ tbody tr:hover {
   content: "";
   height: 1px;
   flex: 1;
+  order: 1;
   background: var(--line-strong);
+}
+
+/* Действие уровня зоны уезжает за черту вправо: подпись слева, кнопка справа. */
+.person-zone-action {
+  display: inline-flex;
+  align-items: center;
+  order: 2;
+  padding: 4px 9px;
+  gap: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.person-zone-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .person-drawer-campaign .outreach-lead-fields,

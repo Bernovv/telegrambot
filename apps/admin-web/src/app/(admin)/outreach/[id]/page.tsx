@@ -6,6 +6,7 @@ import {
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
 import { OwnBadge } from "@/components/own-badge";
+import { PersonOwnDialog } from "@/components/person-own-dialog";
 import {
   PersonContactsCard,
   PersonEventsCard,
@@ -94,6 +95,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  ShieldCheck,
   Tent,
   Users,
   Trash2,
@@ -152,6 +154,7 @@ export default function OutreachCampaignPage() {
   // другим кампаниям.
   const [detailPerson, setDetailPerson] = useState<OutreachPersonCard | null>(null);
   const [detailPersonError, setDetailPersonError] = useState<string | null>(null);
+  const [ownOpen, setOwnOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1708,6 +1711,22 @@ export default function OutreachCampaignPage() {
         />
       ) : null}
 
+      {ownOpen && detailPerson ? (
+        <PersonOwnDialog
+          person={detailPerson}
+          onClose={() => setOwnOpen(false)}
+          onDone={async (message) => {
+            setNotice(message);
+            setOwnOpen(false);
+            await loadDetailPerson();
+            await load();
+            if (detail) {
+              setDetail(await getOutreachContact(detail.id));
+            }
+          }}
+        />
+      ) : null}
+
       {stageTarget ? (
         <div className="outreach-modal-backdrop" role="presentation">
           <section className="outreach-modal outreach-small-modal" role="dialog" aria-modal="true" aria-labelledby="lost-title">
@@ -1849,7 +1868,15 @@ export default function OutreachCampaignPage() {
                   </h2>
                   <span className="person-drawer-phone">{primaryContact(detail)}</span>
                 </div>
-                {detail.isOwn ? <OwnBadge note={null} compact /> : null}
+                {detail.isOwn ? (
+                  <OwnBadge
+                    note={detailPerson?.ownNote ?? null}
+                    compact
+                    // Пока карточка человека не приехала, менять нечего: диалогу нужен
+                    // её текущий текст, иначе он сотрёт объяснение пустым полем.
+                    {...(detailPerson ? { onEdit: () => setOwnOpen(true) } : {})}
+                  />
+                ) : null}
                 <button
                   className="icon-button"
                   type="button"
@@ -2043,7 +2070,19 @@ export default function OutreachCampaignPage() {
             {/* Дальше — та же карточка, что открывается на своей странице: деньги, заметки,
                 анкеты и история по всем кампаниям, а не только по этой. */}
             <div className="person-flow">
-              <p className="person-zone">Карточка клиента</p>
+              <p className="person-zone">
+                Карточка клиента
+                {detailPerson ? (
+                  <button
+                    className="person-zone-action"
+                    type="button"
+                    onClick={() => setOwnOpen(true)}
+                  >
+                    <ShieldCheck size={14} />
+                    {detailPerson.isOwn ? "Изменить «свои»" : "Отметить «свои»"}
+                  </button>
+                ) : null}
+              </p>
               {detailPersonError ? (
                 <p className="muted person-empty">{detailPersonError}</p>
               ) : !detailPerson ? (
