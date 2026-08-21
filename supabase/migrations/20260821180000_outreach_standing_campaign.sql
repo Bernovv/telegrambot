@@ -158,6 +158,7 @@ begin
   -- воронки на одних и тех же людей — это два места, где менеджер ищет, кому звонить.
   update public.outreach_campaigns campaign
   set archived_at = now(),
+      archived_by_admin_id = '00000000-0000-4000-8000-000000000002'::uuid,
       updated_at = now()
   from public.events event
   where event.id = campaign.event_id
