@@ -221,6 +221,8 @@ interface TaskRuleRow {
   readonly id: string;
   readonly campaign_id: string;
   readonly trigger_code: OutreachTaskRule["trigger"];
+  readonly stage: string | null;
+  readonly stage_label: string | null;
   readonly is_enabled: boolean;
   readonly offset_days: number;
   readonly use_call_window: boolean;
@@ -534,6 +536,14 @@ interface PersonCampaignRow {
   readonly stage_label: string;
   readonly assigned_admin_name: string | null;
   readonly removed_at: Date | string | null;
+}
+
+interface PersonPipelineColumnRow {
+  readonly campaign_id: string;
+  readonly stage: string;
+  readonly label: string;
+  readonly position: number;
+  readonly outcome: OutreachPipelineColumn["outcome"];
 }
 
 interface PersonActivityRow extends ActivityRow {
@@ -1052,6 +1062,16 @@ implements AdminOutreachRepository {
         (stage) => !nextStages.has(stage)
       );
       if (removedStages.length > 0) {
+        // Правила автозадач по удалённым стадиям снимаются вместе с ними: повода больше
+        // нет, а правило, которое молча никогда не сработает, хуже его отсутствия.
+        await connection.query(
+          `update public.outreach_task_rules
+              set deleted_at = $3::timestamptz, updated_at = $3::timestamptz
+            where campaign_id = $1::uuid
+              and stage = any($2::text[])
+              and deleted_at is null`,
+          [input.campaignId, removedStages, input.now]
+        );
         await connection.query(
           `delete from public.outreach_pipeline_columns
            where campaign_id = $1::uuid
@@ -1549,6 +1569,32 @@ implements AdminOutreachRepository {
         [chain]
       );
 
+      // Стадии всех воронок, где человек состоит: карточка перебрасывает его между ними
+      // прямо у имени, и без списка стадий выпадающему списку неоткуда взяться.
+      const campaignIds = [...new Set(campaigns.rows.map((row) => row.campaign_id))];
+      const pipelineColumns = campaignIds.length === 0
+        ? { rows: [] as readonly PersonPipelineColumnRow[] }
+        : await connection.query<PersonPipelineColumnRow>(
+          `select pipeline_column.campaign_id, pipeline_column.stage,
+                  pipeline_column.label, pipeline_column.position,
+                  pipeline_column.outcome
+             from public.outreach_pipeline_columns pipeline_column
+            where pipeline_column.campaign_id = any($1::uuid[])
+            order by pipeline_column.campaign_id, pipeline_column.position`,
+          [campaignIds]
+        );
+      const stagesByCampaign = new Map<string, OutreachPipelineColumn[]>();
+      for (const row of pipelineColumns.rows) {
+        const known = stagesByCampaign.get(row.campaign_id) ?? [];
+        known.push({
+          stage: row.stage,
+          label: row.label,
+          position: row.position,
+          outcome: row.outcome
+        });
+        stagesByCampaign.set(row.campaign_id, known);
+      }
+
       const activities = await connection.query<PersonActivityRow>(
         `select activity.id, activity.actor_admin_id,
                 coalesce(actor.display_name, actor.email_normalized, 'Менеджер') as actor_name,
@@ -1835,6 +1881,7 @@ implements AdminOutreachRepository {
           campaignName: row.campaign_name,
           stage: row.pipeline_stage,
           stageLabel: row.stage_label,
+          stages: stagesByCampaign.get(row.campaign_id) ?? [],
           assignedAdminName: row.assigned_admin_name,
           removedAt: nullableIso(row.removed_at)
         })),
@@ -2050,10 +2097,76 @@ implements AdminOutreachRepository {
       const result = await connection.query<TaskRuleRow>(
         `${TASK_RULE_SELECT}
           where rule.campaign_id = $1::uuid
-          order by rule.trigger_code`,
+            and rule.deleted_at is null
+          order by rule.trigger_code, pipeline_column.position nulls first`,
         [campaignId]
       );
       return result.rows.map(mapTaskRule);
+    });
+  }
+
+  /**
+   * Заводит правило. `null` — такое уже есть: повод с той же стадией занят, и второе
+   * правило означало бы две задачи на одно событие.
+   */
+  createTaskRule(
+    input: Parameters<AdminOutreachRepository["createTaskRule"]>[0]
+  ): Promise<OutreachTaskRule | null> {
+    return this.write(async (connection) => {
+      const inserted = await connection.query<{ readonly id: string }>(
+        `insert into public.outreach_task_rules (
+           id, campaign_id, trigger_code, stage, is_enabled, offset_days,
+           use_call_window, at_hour, task_type, task_text, created_at, updated_at
+         ) values (
+           $1::uuid, $2::uuid, $3::text, $4::text, true, $5::smallint,
+           $6::boolean, $7::smallint, $8::text, $9::text, $10::timestamptz,
+           $10::timestamptz
+         )
+         on conflict do nothing
+         returning id`,
+        [
+          input.ruleId,
+          input.campaignId,
+          input.trigger,
+          input.stage,
+          input.offsetDays,
+          input.useCallWindow,
+          input.atHour,
+          input.taskType,
+          input.taskText,
+          input.now
+        ]
+      );
+      if (inserted.rows.length === 0) {
+        return null;
+      }
+      const result = await connection.query<TaskRuleRow>(
+        `${TASK_RULE_SELECT} where rule.id = $1::uuid`,
+        [input.ruleId]
+      );
+      const row = result.rows[0];
+      return row ? mapTaskRule(row) : null;
+    });
+  }
+
+  /**
+   * Снимает правило. Задачи, которые оно уже поставило, остаются: это работа, которую
+   * менеджеру всё ещё делать, а ссылка на правило нужна ленте карточки.
+   */
+  deleteTaskRule(
+    input: Parameters<AdminOutreachRepository["deleteTaskRule"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      const deleted = await connection.query(
+        `update public.outreach_task_rules
+            set deleted_at = $2::timestamptz,
+                deleted_by_admin_id = $3::uuid,
+                updated_at = $2::timestamptz
+          where id = $1::uuid
+            and deleted_at is null`,
+        [input.ruleId, input.now, input.deletedByAdminId]
+      );
+      return (deleted.rowCount ?? 0) > 0;
     });
   }
 
@@ -3742,14 +3855,20 @@ async function updateContact(
 const TASK_RULE_SELECT = `
   select rule.id, rule.campaign_id, rule.trigger_code, rule.is_enabled,
          rule.offset_days, rule.use_call_window, rule.at_hour,
-         rule.task_type, rule.task_text
-    from public.outreach_task_rules rule`;
+         rule.task_type, rule.task_text, rule.stage,
+         pipeline_column.label as stage_label
+    from public.outreach_task_rules rule
+    left join public.outreach_pipeline_columns pipeline_column
+      on pipeline_column.campaign_id = rule.campaign_id
+     and pipeline_column.stage = rule.stage`;
 
 function mapTaskRule(row: TaskRuleRow): OutreachTaskRule {
   return {
     id: row.id,
     campaignId: row.campaign_id,
     trigger: row.trigger_code,
+    stage: row.stage,
+    stageLabel: row.stage_label,
     isEnabled: row.is_enabled,
     offsetDays: row.offset_days,
     useCallWindow: row.use_call_window,

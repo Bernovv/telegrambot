@@ -1,6 +1,8 @@
 "use client";
 
+import { bookMentorSlot, listMentorSlots } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import type { MentorSlot } from "@ticket-platform/contracts/admin-staff";
 import type {
   OutreachManager,
   OutreachPersonCard,
@@ -25,7 +27,8 @@ export function PersonFieldsCard({
   managers,
   busy,
   onSaveContact,
-  onSaveField
+  onSaveField,
+  onBooked
 }: {
   readonly person: OutreachPersonCard;
   readonly managers: readonly OutreachManager[];
@@ -36,6 +39,8 @@ export function PersonFieldsCard({
     readonly nextMeetingAt?: string | null;
   }) => Promise<boolean>;
   readonly onSaveField: (fieldId: string, value: string | null) => Promise<boolean>;
+  /** Человека записали к наставнику: карточку надо перечитать, встреча теперь оттуда. */
+  readonly onBooked: () => Promise<void>;
 }) {
   return (
     <section className="data-section person-fields-card">
@@ -58,8 +63,10 @@ export function PersonFieldsCard({
         <PersonFieldRow label="Личная встреча">
           <MeetingValue
             value={person.nextMeetingAt}
+            contactId={person.contactId}
             busy={busy}
             onSave={(next) => onSaveContact({ nextMeetingAt: next })}
+            onBooked={onBooked}
           />
         </PersonFieldRow>
         {person.fields.map((field) => (
@@ -241,17 +248,48 @@ function SelectValue({
   );
 }
 
+/**
+ * Личная встреча — из окошек наставника.
+ *
+ * Раньше здесь было просто время, и это была та самая ошибка: менеджер назначал встречу,
+ * не зная, свободен ли наставник, а совпадения выяснялись у самого наставника. Теперь
+ * список — это свободные окошки из его календаря, и запись занимает окошко тем же
+ * действием, каким ставит время в карточку.
+ *
+ * Ручной ввод остался: встреча бывает и без наставника — с руководителем, например, — и
+ * запирать её ради стройности неправильно.
+ */
 function MeetingValue({
   value,
+  contactId,
   busy,
-  onSave
+  onSave,
+  onBooked
 }: {
   readonly value: string | null;
+  readonly contactId: string;
   readonly busy: boolean;
   readonly onSave: (next: string | null) => Promise<boolean>;
+  readonly onBooked: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(() => toLocalInput(value));
+  const [slots, setSlots] = useState<readonly MentorSlot[]>([]);
+  const [slotId, setSlotId] = useState("");
+  const [slotsFailed, setSlotsFailed] = useState(false);
   const soon = value !== null && new Date(value).getTime() > Date.now();
+
+  async function loadSlots() {
+    try {
+      setSlots(await listMentorSlots({ onlyFree: true }));
+      setSlotsFailed(false);
+    } catch {
+      // Окошки — подсказка, а не условие: не дали их прочитать (нет роли, отвалился
+      // запрос) — время всё равно можно поставить руками.
+      setSlots([]);
+      setSlotsFailed(true);
+    }
+  }
+
   return (
     <Editable
       busy={busy}
@@ -262,15 +300,45 @@ function MeetingValue({
           </span>
         )
         : <span className="muted">не назначена</span>}
-      onOpen={() => setDraft(toLocalInput(value))}
-      onSubmit={() => onSave(draft ? new Date(draft).toISOString() : null)}
+      onOpen={() => {
+        setDraft(toLocalInput(value));
+        setSlotId("");
+        void loadSlots();
+      }}
+      onSubmit={async () => {
+        if (slotId) {
+          await bookMentorSlot({ slotId, contactId });
+          await onBooked();
+          return true;
+        }
+        return onSave(draft ? new Date(draft).toISOString() : null);
+      }}
     >
-      <input
-        type="datetime-local"
-        value={draft}
-        autoFocus
-        onChange={(event) => setDraft(event.target.value)}
-      />
+      <span className="person-meeting-edit">
+        <select
+          aria-label="Свободное окошко наставника"
+          value={slotId}
+          onChange={(event) => setSlotId(event.target.value)}
+        >
+          <option value="">
+            {slots.length === 0
+              ? (slotsFailed ? "Окошки не загрузились" : "Свободных окошек нет")
+              : "Выбрать окошко наставника"}
+          </option>
+          {slots.map((slot) => (
+            <option key={slot.id} value={slot.id}>
+              {slot.mentorName} · {formatDateTime(slot.startsAt)}
+            </option>
+          ))}
+        </select>
+        <input
+          type="datetime-local"
+          aria-label="Время встречи"
+          value={draft}
+          disabled={slotId !== ""}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      </span>
     </Editable>
   );
 }

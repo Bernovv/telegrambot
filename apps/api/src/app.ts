@@ -80,6 +80,10 @@ import {
   type AdminTeamHandler
 } from "./admin-team-api.js";
 import {
+  AdminStaffApiModule,
+  type AdminStaffHandler
+} from "./admin-staff-api.js";
+import {
   AdminOverviewApiModule,
   type AdminEventReportHandler,
   type AdminOverviewHandler
@@ -164,6 +168,8 @@ export interface ApiApplicationOptions {
   readonly adminExpenses?: AdminExpensesHandler;
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
+  /** Команда кабинета: роли и календари наставников. */
+  readonly adminStaff?: AdminStaffHandler;
   readonly adminOverview?: AdminOverviewHandler;
   readonly adminEventReport?: AdminEventReportHandler;
   /** Форма регистрации на сайте. Единственный открытый путь записи, кроме вебхуков. */
@@ -235,6 +241,9 @@ class ApiModule {
         ...(options.adminTeam
           ? [AdminTeamApiModule.register(options.adminTeam)]
           : []),
+        ...(options.adminStaff
+          ? [AdminStaffApiModule.register(options.adminStaff)]
+          : []),
         ...(options.adminOverview && options.adminEventReport
           ? [AdminOverviewApiModule.register(
               options.adminOverview,
@@ -285,6 +294,7 @@ export async function createApiApplication(
       || options.adminExpenses
       || options.adminInventory
       || options.adminTeam
+      || options.adminStaff
       || options.adminOverview
     )
     && !options.adminAuth

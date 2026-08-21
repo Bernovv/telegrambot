@@ -39,6 +39,8 @@ export function isAllowedAdminApiPath(
       || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
       || /^outreach\/site-registrations(?:\?.*)?$/i.test(path)
       || path === "outreach/managers"
+      || path === "staff"
+      || path === "staff/slots"
       || path === "outreach/tasks/board"
       || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields|\/task-rules)?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}$/i.test(path)
@@ -70,6 +72,13 @@ export function isAllowedAdminApiPath(
         .test(path)
       || /^outreach\/notes\/[0-9a-f-]{36}\/delete$/i.test(path)
       || path === "outreach/custom-fields"
+      || path === "staff/roles"
+      || path === "staff/slots"
+      || path === "staff/slots/remove"
+      || path === "staff/slots/book"
+      || path === "staff/slots/release"
+      || /^outreach\/campaigns\/[0-9a-f-]{36}\/task-rules$/i.test(path)
+      || /^outreach\/task-rules\/[0-9a-f-]{36}\/delete$/i.test(path)
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/contacts(?:\/(?:add|remove))?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/tasks$/i.test(path)
       || /^outreach\/campaigns\/[0-9a-f-]{36}\/import$/i.test(path)

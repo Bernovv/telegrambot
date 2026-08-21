@@ -348,6 +348,12 @@ export interface OutreachPersonCampaign {
   readonly stage: OutreachPipelineStage;
   /** Название стадии так, как его назвал менеджер в этой кампании. */
   readonly stageLabel: string;
+  /**
+   * Все стадии этой воронки — чтобы карточка перебрасывала человека, не открывая её.
+   * Приезжают вместе с участием, а не отдельным запросом: воронок у человека две-три, и
+   * ходить за колонками каждой значит три запроса ради выпадающего списка.
+   */
+  readonly stages: readonly OutreachPipelineColumn[];
   readonly assignedAdminName: string | null;
   /** Человека убрали из кампании, но история осталась. */
   readonly removedAt: string | null;
@@ -794,7 +800,8 @@ export const OUTREACH_TASK_TRIGGERS = [
   "event_upcoming",
   "attended",
   "no_show",
-  "meeting_upcoming"
+  "meeting_upcoming",
+  "stage_entered"
 ] as const;
 
 export type OutreachTaskTrigger = typeof OUTREACH_TASK_TRIGGERS[number];
@@ -803,6 +810,12 @@ export interface OutreachTaskRule {
   readonly id: string;
   readonly campaignId: string;
   readonly trigger: OutreachTaskTrigger;
+  /**
+   * Стадия, переход в которую ставит задачу. Заполнена только у повода `stage_entered`:
+   * у остальных стадия ничего не значила бы.
+   */
+  readonly stage: OutreachPipelineStage | null;
+  readonly stageLabel: string | null;
   readonly isEnabled: boolean;
   /** Сдвиг от повода в днях: −1 — за день до, 1 — на следующий день, 0 — сразу. */
   readonly offsetDays: number;
@@ -812,6 +825,37 @@ export interface OutreachTaskRule {
   readonly taskType: OutreachTaskType;
   readonly taskText: string;
 }
+
+/**
+ * Новое правило.
+ *
+ * Повод выбирают из списка того, что умеет автоматика, — придумать свой нельзя. Стадию
+ * указывают только для перехода по воронке, и она обязана существовать в этой воронке:
+ * правило про стадию, которой нет, не сработает никогда.
+ */
+export interface CreateOutreachTaskRuleRequest {
+  readonly trigger: OutreachTaskTrigger;
+  readonly stage?: OutreachPipelineStage | undefined;
+  readonly offsetDays?: number | undefined;
+  readonly useCallWindow?: boolean | undefined;
+  readonly atHour?: number | null | undefined;
+  readonly taskType: OutreachTaskType;
+  readonly taskText: string;
+}
+
+/** Почему правило не завелось. */
+export const OUTREACH_TASK_RULE_BLOCKERS = [
+  "duplicate",
+  "unknown_stage",
+  "stage_required"
+] as const;
+
+export type OutreachTaskRuleBlocker =
+  typeof OUTREACH_TASK_RULE_BLOCKERS[number];
+
+export type CreateOutreachTaskRuleOutcome =
+  | { readonly status: "created"; readonly rule: OutreachTaskRule }
+  | { readonly status: "rejected"; readonly blocker: OutreachTaskRuleBlocker };
 
 /** Правка правила. Пропущенное поле не меняется. */
 export interface UpdateOutreachTaskRuleRequest {

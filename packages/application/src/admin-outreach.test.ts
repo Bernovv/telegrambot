@@ -1204,6 +1204,124 @@ describe("AdminOutreachService", () => {
     assert.deepEqual(created.options, ["Instagram", "Сайт"]);
   });
 
+  // Стадии придумывает менеджер, значит и правило по стадии заводит он же. Проверка на
+  // существование стадии здесь единственная: в базе внешнего ключа на колонку нет.
+  it("отказывает правилу по стадии, которой в воронке нет", async () => {
+    const service = new AdminOutreachService(
+      repository({
+        async listPipelineColumns() {
+          return [
+            { stage: "new", label: "Новые", position: 1, outcome: "open" as const }
+          ];
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const outcome = await service.createTaskRule({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      request: {
+        trigger: "stage_entered",
+        stage: "confirmed",
+        taskType: "call",
+        taskText: "Позвонить"
+      },
+      now
+    });
+
+    assert.deepEqual(outcome, { status: "rejected", blocker: "unknown_stage" });
+  });
+
+  it("требует стадию у правила про переход по воронке", async () => {
+    const service = new AdminOutreachService(
+      repository({}),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const outcome = await service.createTaskRule({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      request: {
+        trigger: "stage_entered",
+        taskType: "call",
+        taskText: "Позвонить"
+      },
+      now
+    });
+
+    assert.deepEqual(outcome, { status: "rejected", blocker: "stage_required" });
+  });
+
+  // Не встало — такое правило уже есть: две задачи на одно событие, вторая отменила бы
+  // первую.
+  it("сообщает о повторе, когда правило на этот повод уже заведено", async () => {
+    const service = new AdminOutreachService(
+      repository({ async createTaskRule() { return null; } }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const outcome = await service.createTaskRule({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      request: {
+        trigger: "no_answer",
+        offsetDays: 1,
+        taskType: "call",
+        taskText: "Перезвонить"
+      },
+      now
+    });
+
+    assert.deepEqual(outcome, { status: "rejected", blocker: "duplicate" });
+  });
+
+  it("заводит правило и не хранит час, когда срок берётся из окна обзвона", async () => {
+    let stored: { readonly atHour: number | null; readonly stage: string | null } | null =
+      null;
+    const service = new AdminOutreachService(
+      repository({
+        async createTaskRule(input) {
+          stored = { atHour: input.atHour, stage: input.stage };
+          return {
+            id: RULE_ID,
+            campaignId: input.campaignId,
+            trigger: input.trigger,
+            stage: input.stage,
+            stageLabel: null,
+            isEnabled: true,
+            offsetDays: input.offsetDays,
+            useCallWindow: input.useCallWindow,
+            atHour: input.atHour,
+            taskType: input.taskType,
+            taskText: input.taskText
+          };
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    const outcome = await service.createTaskRule({
+      actor: writeActor,
+      campaignId: CAMPAIGN_ID,
+      request: {
+        trigger: "attended",
+        offsetDays: 1,
+        atHour: 10,
+        taskType: "call",
+        taskText: "Собрать обратную связь"
+      },
+      now
+    });
+
+    assert.equal(outcome.status, "created");
+    assert.deepEqual(stored, { atHour: null, stage: null });
+  });
+
   it("surfaces a friendly error when deleting a pipeline stage still in use", async () => {
     const service = new AdminOutreachService(
       repository({
@@ -1237,6 +1355,8 @@ function repository(
     async setPersonFieldValue() { return true; },
     async getTaskGuard() { return { requireOpenTask: false, hasOpenTask: false }; },
     async listTaskRules() { return []; },
+    async createTaskRule() { return null; },
+    async deleteTaskRule() { return false; },
     async updateTaskRule() { return null; },
     async importPeople() {
       return {
@@ -1392,6 +1512,7 @@ const CAMPAIGN_CONTACT_ID = "00000000-0000-4000-8000-000000000103";
 const CAMPAIGN_CONTACT_ID_2 = "00000000-0000-4000-8000-000000000104";
 const CONTACT_ID = "00000000-0000-4000-8000-000000000105";
 const IMPORT_ID = "00000000-0000-4000-8000-000000000106";
+const RULE_ID = "00000000-0000-4000-8000-000000000107";
 const now = new Date("2026-07-29T12:00:00.000Z");
 
 function personCard() {

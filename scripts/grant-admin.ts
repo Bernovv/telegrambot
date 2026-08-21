@@ -37,8 +37,9 @@ async function main(): Promise<void> {
     if (result.status === "unknown_role") {
       throw new Error(
         `Role ${process.env.ADMIN_ROLE} does not exist.`
-        + " Known roles: content_manager, sales_manager, financial_admin,"
-        + " technical_admin, super_admin"
+        + " Known roles: head, manager, mentor (эти три выдаёт и снимает страница"
+        + " «Команда»), а также прежние content_manager, sales_manager,"
+        + " financial_admin, technical_admin, super_admin"
       );
     }
     if (result.status === "unknown_granting_admin") {

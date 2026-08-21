@@ -52,9 +52,20 @@ import type {
   OutreachPipelineStage,
   OutreachTaskBoardItem,
   OutreachTaskRule,
+  CreateOutreachTaskRuleRequest,
+  CreateOutreachTaskRuleOutcome,
   UpdateOutreachTaskRuleRequest,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
+import type {
+  BookMentorSlotRequest,
+  CreateMentorSlotsRequest,
+  CreateMentorSlotsResult,
+  MentorSlot,
+  MentorSlotFilters,
+  SetStaffRoleRequest,
+  StaffView
+} from "@ticket-platform/contracts/admin-staff";
 
 // A column not yet saved has no stage id: the server assigns one on create.
 export type OutreachPipelineColumnDraft = Omit<OutreachPipelineColumn, "stage" | "position"> & {
@@ -661,6 +672,27 @@ export function listOutreachTaskRules(
   return requestAdminApi(
     `outreach/campaigns/${encodeURIComponent(campaignId)}/task-rules`,
     signal
+  );
+}
+
+export function createOutreachTaskRule(
+  campaignId: string,
+  request: CreateOutreachTaskRuleRequest
+): Promise<CreateOutreachTaskRuleOutcome> {
+  return requestAdminMutation(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/task-rules`,
+    "POST",
+    request
+  );
+}
+
+export function deleteOutreachTaskRule(
+  ruleId: string
+): Promise<{ readonly deleted: boolean }> {
+  return requestAdminMutation(
+    `outreach/task-rules/${encodeURIComponent(ruleId)}/delete`,
+    "POST",
+    {}
   );
 }
 
@@ -1444,6 +1476,67 @@ export function buildAdminApiPath(
   }
   const encoded = query.toString();
   return encoded ? `${resource}?${encoded}` : resource;
+}
+
+/**
+ * Команда кабинета.
+ *
+ * Путь `staff`, а не `team`: адрес `events/:id/team` уже занят долями организаторов
+ * мероприятия, и одно слово на две разные вещи однажды отправило бы запрос не туда.
+ */
+export function getStaff(signal?: AbortSignal): Promise<StaffView> {
+  return requestAdminApi("staff", signal);
+}
+
+export function setStaffRole(
+  request: SetStaffRoleRequest
+): Promise<{ readonly changed: boolean }> {
+  return requestAdminMutation("staff/roles", "POST", request);
+}
+
+export function listMentorSlots(
+  filters: MentorSlotFilters,
+  signal?: AbortSignal
+): Promise<readonly MentorSlot[]> {
+  const query = new URLSearchParams();
+  if (filters.mentorAdminId) {
+    query.set("mentorAdminId", filters.mentorAdminId);
+  }
+  if (filters.onlyFree !== undefined) {
+    query.set("onlyFree", filters.onlyFree ? "true" : "false");
+  }
+  if (filters.from) {
+    query.set("from", filters.from);
+  }
+  if (filters.to) {
+    query.set("to", filters.to);
+  }
+  const suffix = query.size === 0 ? "" : `?${query.toString()}`;
+  return requestAdminApi(`staff/slots${suffix}`, signal);
+}
+
+export function createMentorSlots(
+  request: CreateMentorSlotsRequest
+): Promise<CreateMentorSlotsResult> {
+  return requestAdminMutation("staff/slots", "POST", request);
+}
+
+export function cancelMentorSlot(
+  slotId: string
+): Promise<{ readonly cancelled: boolean }> {
+  return requestAdminMutation("staff/slots/remove", "POST", { slotId });
+}
+
+export function bookMentorSlot(
+  request: BookMentorSlotRequest
+): Promise<{ readonly booked: boolean }> {
+  return requestAdminMutation("staff/slots/book", "POST", request);
+}
+
+export function releaseMentorSlot(
+  slotId: string
+): Promise<{ readonly released: boolean }> {
+  return requestAdminMutation("staff/slots/release", "POST", { slotId });
 }
 
 async function requestAdminApi<T>(

@@ -24,6 +24,7 @@ import {
   OUTREACH_MAX_PIPELINE_COLUMNS,
   OUTREACH_PERSON_FILTERS,
   OUTREACH_PIPELINE_COLUMN_OUTCOMES,
+  OUTREACH_TASK_TRIGGERS,
   OUTREACH_TASK_TYPES
 } from "@ticket-platform/contracts";
 import { z } from "zod";
@@ -151,6 +152,16 @@ const taskRuleBody = z.object({
   taskType: taskType.optional(),
   taskText: z.string().trim().min(1).max(500).optional()
 }).strict().refine((value) => Object.keys(value).length > 0);
+
+const newTaskRuleBody = z.object({
+  trigger: z.enum(OUTREACH_TASK_TRIGGERS),
+  stage: z.string().regex(/^[a-z0-9_]{1,40}$/).optional(),
+  offsetDays: z.number().int().min(-30).max(30).optional(),
+  useCallWindow: z.boolean().optional(),
+  atHour: z.number().int().min(0).max(23).nullable().optional(),
+  taskType,
+  taskText: z.string().trim().min(1).max(500)
+}).strict();
 
 const personFieldBody = z.object({
   fieldId: z.string().uuid(),
@@ -314,6 +325,8 @@ export type AdminOutreachHandler = Pick<
   | "updatePerson"
   | "setPersonField"
   | "listTaskRules"
+  | "createTaskRule"
+  | "deleteTaskRule"
   | "updateTaskRule"
   | "archivePerson"
   | "restorePerson"
@@ -675,6 +688,45 @@ export class AdminOutreachController {
         campaignId
       })
     );
+  }
+
+  @Post("campaigns/:id/task-rules")
+  @RequireAdminPermission("outreach.write")
+  async createTaskRule(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    const parsed = parse(newTaskRuleBody, body);
+    return executeOutreach(() =>
+      this.handler.createTaskRule({
+        actor: requireActor(request),
+        campaignId,
+        request: parsed,
+        now: new Date()
+      })
+    );
+  }
+
+  @Post("task-rules/:id/delete")
+  @RequireAdminPermission("outreach.write")
+  async deleteTaskRule(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const ruleId = parse(uuid, id);
+    const result = await executeOutreach(() =>
+      this.handler.deleteTaskRule({
+        actor: requireActor(request),
+        ruleId,
+        now: new Date()
+      })
+    );
+    if (!result.deleted) {
+      throw outreachNotFound();
+    }
+    return result;
   }
 
   @Patch("task-rules/:id")

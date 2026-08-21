@@ -437,6 +437,10 @@ function handler(
     async updatePerson() { return { status: "updated" as const }; },
     async setPersonField() { return { saved: true }; },
     async listTaskRules() { return []; },
+    async createTaskRule() {
+      return { status: "rejected" as const, blocker: "duplicate" as const };
+    },
+    async deleteTaskRule() { return { deleted: false }; },
     async updateTaskRule() { return null; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },

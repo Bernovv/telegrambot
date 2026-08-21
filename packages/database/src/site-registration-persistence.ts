@@ -104,6 +104,7 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
            left join public.outreach_task_rules rule
              on rule.campaign_id = campaign.id
             and rule.trigger_code = 'site_registration'
+            and rule.deleted_at is null
            join lateral (
              select stage
                from public.outreach_pipeline_columns

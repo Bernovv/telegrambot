@@ -41,9 +41,13 @@ import type {
   OutreachPipelineStage,
   OutreachTaskBoardItem,
   OutreachTaskRule,
+  OutreachTaskTrigger,
   OutreachTaskType,
-  OutreachTaskUrgency
+  OutreachTaskUrgency,
+  CreateOutreachTaskRuleRequest,
+  CreateOutreachTaskRuleOutcome
 } from "@ticket-platform/contracts";
+import { OUTREACH_TASK_TRIGGERS } from "@ticket-platform/contracts";
 import {
   normalizeContactInput,
   type ContactRejectionReason
@@ -219,6 +223,23 @@ export interface AdminOutreachRepository {
   }): Promise<boolean>;
   /** Правила автозадач воронки. Пусто — правил не заводили. */
   listTaskRules(campaignId: string): Promise<readonly OutreachTaskRule[]>;
+  createTaskRule(input: {
+    readonly ruleId: string;
+    readonly campaignId: string;
+    readonly trigger: OutreachTaskTrigger;
+    readonly stage: OutreachPipelineStage | null;
+    readonly offsetDays: number;
+    readonly useCallWindow: boolean;
+    readonly atHour: number | null;
+    readonly taskType: OutreachTaskType;
+    readonly taskText: string;
+    readonly now: Date;
+  }): Promise<OutreachTaskRule | null>;
+  deleteTaskRule(input: {
+    readonly ruleId: string;
+    readonly deletedByAdminId: string;
+    readonly now: Date;
+  }): Promise<boolean>;
   updateTaskRule(input: {
     readonly ruleId: string;
     readonly changes: UpdateOutreachTaskRuleRequest;
@@ -799,6 +820,107 @@ export class AdminOutreachService {
     requirePermission(input.actor, "outreach.read");
     requireUuid(input.campaignId);
     return this.repository.listTaskRules(input.campaignId);
+  }
+
+  /**
+   * Завести правило.
+   *
+   * Повод берётся из списка того, что умеет автоматика: придумать свой нельзя, за каждым
+   * стоит запрос, который ищет, по кому ставить задачу. А вот стадия — не наш список, а
+   * список менеджера, поэтому её существование проверяется по самой воронке.
+   */
+  async createTaskRule(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+    readonly request: CreateOutreachTaskRuleRequest;
+    readonly now: Date;
+  }): Promise<CreateOutreachTaskRuleOutcome> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.campaignId);
+    const request = input.request;
+    if (!OUTREACH_TASK_TRIGGERS.includes(request.trigger)) {
+      throw new Error("Outreach task rule trigger is unknown");
+    }
+    const taskText = requiredText(request.taskText, 500, "Outreach task text");
+    const offsetDays = request.offsetDays ?? 0;
+    if (!Number.isInteger(offsetDays) || Math.abs(offsetDays) > 30) {
+      throw new Error("Outreach task rule offset is invalid");
+    }
+    const useCallWindow = request.useCallWindow ?? true;
+    const atHour = request.atHour ?? null;
+    if (!useCallWindow && atHour === null) {
+      throw new Error("Outreach task rule needs an hour without the call window");
+    }
+    if (
+      atHour !== null
+      && (!Number.isInteger(atHour) || atHour < 0 || atHour > 23)
+    ) {
+      throw new Error("Outreach task rule hour is invalid");
+    }
+    const stage = await this.resolveRuleStage(
+      input.campaignId,
+      request.trigger,
+      request.stage
+    );
+    if (typeof stage !== "string" && stage !== null) {
+      return { status: "rejected", blocker: stage.blocker };
+    }
+    const created = await this.repository.createTaskRule({
+      ruleId: this.idGenerator.newId(),
+      campaignId: input.campaignId,
+      trigger: request.trigger,
+      stage,
+      offsetDays,
+      useCallWindow,
+      atHour: useCallWindow ? null : atHour,
+      taskType: request.taskType,
+      taskText,
+      now: input.now
+    });
+    // Не встало — такое правило уже есть: повод с той же стадией. Второе означало бы две
+    // задачи на одно событие, и вторая отменяла бы первую.
+    return created === null
+      ? { status: "rejected", blocker: "duplicate" }
+      : { status: "created", rule: created };
+  }
+
+  async deleteTaskRule(input: {
+    readonly actor: AdminRequestActor;
+    readonly ruleId: string;
+    readonly now: Date;
+  }): Promise<{ readonly deleted: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.ruleId);
+    return {
+      deleted: await this.repository.deleteTaskRule({
+        ruleId: input.ruleId,
+        deletedByAdminId: input.actor.adminId,
+        now: input.now
+      })
+    };
+  }
+
+  /**
+   * Стадия правила: `null` у всех поводов, кроме перехода по воронке, и существующая
+   * стадия у него. Возвращает причину отказа вместо стадии, когда её выбрали неверно.
+   */
+  private async resolveRuleStage(
+    campaignId: string,
+    trigger: OutreachTaskTrigger,
+    stage: OutreachPipelineStage | undefined
+  ): Promise<
+    OutreachPipelineStage | null | { readonly blocker: "unknown_stage" | "stage_required" }
+  > {
+    if (trigger !== "stage_entered") {
+      return null;
+    }
+    if (stage === undefined || stage.trim().length === 0) {
+      return { blocker: "stage_required" };
+    }
+    const columns = await this.repository.listPipelineColumns(campaignId);
+    return columns.some((column) => column.stage === stage)
+      ? stage
+      : { blocker: "unknown_stage" };
   }
 
   async updateTaskRule(input: {

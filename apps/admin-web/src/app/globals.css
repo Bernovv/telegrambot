@@ -6213,3 +6213,152 @@ a.person-channel:hover {
     width: 100%;
   }
 }
+
+/* ── Команда ────────────────────────────────────────────────────────────────
+   Три группы рядом, а не список из пятнадцати человек с ролями в скобках: вопрос,
+   ради которого сюда заходят, — «кто у нас менеджер», а не «какие роли у Иванова». */
+
+.team-groups {
+  display: grid;
+  margin-bottom: 18px;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.team-group .section-title-row h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-table th[scope="row"] {
+  font-weight: 500;
+  text-align: left;
+}
+
+.team-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.team-role-toggle input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+/* Календарь наставника: расписание заводится пачкой, поэтому форма — про правило
+   («по вторникам в 15 и 18»), а не про одно окошко. */
+.mentor-slot-form {
+  display: grid;
+  padding: 0 18px 16px;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.mentor-slot-form label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mentor-slot-form label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mentor-slot-form input {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+
+.mentor-slot-form .muted,
+.mentor-slot-form .primary-button {
+  grid-column: 1 / -1;
+}
+
+.mentor-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0;
+  gap: 10px;
+  border: 0;
+}
+
+.mentor-weekdays legend {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mentor-weekdays label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.mentor-weekdays input {
+  width: auto;
+}
+
+.mentor-slot-list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* Стадия воронки прямо в шапке карточки: положив трубку, менеджер двигает человека
+   отсюда, а не идёт искать его в самой воронке. */
+.person-stage-switch select {
+  max-width: 260px;
+  padding: 3px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Встреча выбирается из окошек наставника, поэтому в правке два поля: список и время. */
+.person-meeting-edit {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 220px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.person-meeting-edit select,
+.person-meeting-edit input {
+  min-width: 0;
+  flex: 1 1 140px;
+  padding: 5px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+
+/* Новое правило: те же поля, но выделено рамкой — это форма, а не строка списка. */
+.outreach-rule-new {
+  border-color: var(--line-strong);
+  border-style: dashed;
+}

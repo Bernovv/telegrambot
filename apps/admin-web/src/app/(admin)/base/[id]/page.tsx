@@ -614,7 +614,16 @@ export default function OutreachPersonPage(
             </div>
           </details>
         </div>
-        <PersonFacts person={person} />
+        <PersonFacts
+          person={person}
+          managers={managers}
+          busy={mutating}
+          onMoved={async (message) => {
+            setNotice(message);
+            await load();
+          }}
+          onError={setError}
+        />
       </div>
 
       {notice ? <div className="page-notice">{notice}</div> : null}

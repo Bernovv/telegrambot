@@ -9,14 +9,21 @@ import {
   orderStatusTone
 } from "@/lib/format";
 import {
+  LOST_REASONS,
   channelLabel,
   lostReasonLabel,
   statusLabel,
   taskTypeLabel
 } from "@/lib/outreach-labels";
+import { AdminApiError, updateOutreachContactStage } from "@/lib/admin-api";
+import {
+  OutreachNextStepDialog,
+  type OutreachNextStepValue
+} from "@/components/outreach-next-step-dialog";
 import type {
   OutreachCampaignSummary,
   OutreachChannel,
+  OutreachLostReason,
   OutreachManager,
   OutreachPersonCampaign,
   OutreachPersonCard,
@@ -139,17 +146,27 @@ export function headlineStage(
 }
 
 /**
- * Три цифры в шапке вместо прежних пяти.
+ * Две цифры и стадия — вместо трёх цифр.
  *
- * Деньги и поездки нужны перед каждым звонком, следующий шаг — почти перед каждым. «Касаний
- * 47» и «кампаний 3» во время разговора не говорят ничего: за первым идут в ленту, за вторым
- * — в список воронок, и оба рядом.
+ * Третьей строкой здесь стоял ближайший срок: «просрочено с Позвонить · 21 авг». Он и так
+ * виден в «Следующем шаге» рядом, а место занимал то, ради которого шапку и открывают, —
+ * менеджер, положив трубку, двигает карточку по воронке. До этого ради переноса
+ * приходилось идти в саму воронку и искать там карточку глазами.
  */
-export function PersonFacts({ person }: { readonly person: OutreachPersonCard }) {
-  const open = openTasks(person);
-  const next = [...open].sort((left, right) =>
-    left.dueAt.localeCompare(right.dueAt))[0];
-  const overdue = next ? new Date(next.dueAt).getTime() < Date.now() : false;
+export function PersonFacts({
+  person,
+  managers,
+  busy,
+  onMoved,
+  onError
+}: {
+  readonly person: OutreachPersonCard;
+  readonly managers: readonly OutreachManager[];
+  readonly busy: boolean;
+  /** Перечитать карточку: стадия сменилась, и вместе с ней лента и задачи. */
+  readonly onMoved: (message: string) => Promise<void>;
+  readonly onError: (message: string) => void;
+}) {
   return (
     <p className="person-facts">
       <span title="Заказы бота плюс оплаты, заведённые руками. Частичные возвраты не вычтены — их видно в самом заказе.">
@@ -165,15 +182,216 @@ export function PersonFacts({ person }: { readonly person: OutreachPersonCard })
           "мероприятий"
         )}
       </span>
-      {next ? (
-        <span className={overdue ? "fact-attention" : undefined}>
-          {overdue ? "просрочено с " : "следующий шаг "}
-          <b>{taskTypeLabel(next.type)} · {formatDateTime(next.dueAt)}</b>
-        </span>
-      ) : (
-        <span className="fact-attention"><b>шага нет</b></span>
-      )}
+      <PersonStageSwitch
+        person={person}
+        managers={managers}
+        busy={busy}
+        onMoved={onMoved}
+        onError={onError}
+      />
     </p>
+  );
+}
+
+/**
+ * Быстрый переброс карточки по воронке.
+ *
+ * Воронок у человека бывает несколько, и стадия принадлежит работе в конкретной — поэтому
+ * в списке они разделены заголовками, а не свалены в один. Когда воронка одна (обычный
+ * случай), заголовок не показывается: он повторял бы то, что и так написано рядом.
+ *
+ * Два правила воронки соблюдаются здесь так же, как на доске: колонка с исходом
+ * «проигран» требует причину, а воронка с запретом не отпускает карточку без следующего
+ * шага. Перенос в обоих случаях повторяется одной операцией вместе с ответом — иначе
+ * карточка успевала бы полежать в состоянии, которое воронка запрещает.
+ */
+function PersonStageSwitch({
+  person,
+  managers,
+  busy,
+  onMoved,
+  onError
+}: {
+  readonly person: OutreachPersonCard;
+  readonly managers: readonly OutreachManager[];
+  readonly busy: boolean;
+  readonly onMoved: (message: string) => Promise<void>;
+  readonly onError: (message: string) => void;
+}) {
+  const [moving, setMoving] = useState(false);
+  const [lostTarget, setLostTarget] = useState<StageMove | null>(null);
+  const [taskTarget, setTaskTarget] = useState<StageMove | null>(null);
+  const active = activeCampaigns(person).filter(
+    (campaign) => campaign.stages.length > 0
+  );
+  const headline = headlineStage(person);
+
+  if (active.length === 0 || !headline) {
+    return (
+      <span className="fact-attention">
+        <b>не в воронке</b>
+      </span>
+    );
+  }
+
+  async function move(target: StageMove) {
+    setMoving(true);
+    try {
+      const result = await updateOutreachContactStage(target.campaignContactId, {
+        stage: target.stage,
+        ...(target.lostReason ? { lostReason: target.lostReason } : {}),
+        ...(target.task ? { task: target.task } : {})
+      });
+      if (!result.updated && result.taskRequired) {
+        setLostTarget(null);
+        setTaskTarget(target);
+        return;
+      }
+      setLostTarget(null);
+      setTaskTarget(null);
+      await onMoved(`Карточка перенесена: ${target.label}`);
+    } catch (caught) {
+      onError(caught instanceof AdminApiError
+        ? caught.message
+        : "Не удалось перенести карточку.");
+    } finally {
+      setMoving(false);
+    }
+  }
+
+  function choose(value: string) {
+    const [campaignContactId, stage] = value.split("|");
+    const campaign = active.find(
+      (item) => item.campaignContactId === campaignContactId
+    );
+    const column = campaign?.stages.find((item) => item.stage === stage);
+    if (!campaign || !column || !campaignContactId || !stage) {
+      return;
+    }
+    const target: StageMove = {
+      campaignContactId,
+      stage,
+      label: column.label
+    };
+    // Причину отказа спрашиваем до переноса: сервер всё равно её потребует, а вопрос
+    // после отказа читается как ошибка.
+    if (column.outcome === "lost") {
+      setLostTarget(target);
+      return;
+    }
+    void move(target);
+  }
+
+  return (
+    <>
+      <span className="person-stage-switch">
+        <label>
+          <span className="visually-hidden">Стадия воронки</span>
+          <select
+            value={`${headline.campaignContactId}|${headline.stage}`}
+            disabled={busy || moving}
+            onChange={(event) => choose(event.target.value)}
+          >
+            {active.map((campaign) => (
+              <optgroup key={campaign.campaignContactId} label={campaign.campaignName}>
+                {campaign.stages.map((column) => (
+                  <option
+                    key={`${campaign.campaignContactId}|${column.stage}`}
+                    value={`${campaign.campaignContactId}|${column.stage}`}
+                  >
+                    {column.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+      </span>
+
+      {lostTarget ? (
+        <PersonLostReasonDialog
+          label={lostTarget.label}
+          busy={moving}
+          onClose={() => setLostTarget(null)}
+          onSubmit={(reason) => void move({ ...lostTarget, lostReason: reason })}
+        />
+      ) : null}
+
+      {taskTarget ? (
+        <OutreachNextStepDialog
+          title="Воронка не отпускает без следующего шага"
+          hint={`Перенос в «${taskTarget.label}» сохранится вместе с задачей.`}
+          managers={managers}
+          defaultAssignedAdminId={person.assignedAdminId}
+          busy={moving}
+          onClose={() => setTaskTarget(null)}
+          onSubmit={(task) => void move({ ...taskTarget, task })}
+        />
+      ) : null}
+    </>
+  );
+}
+
+interface StageMove {
+  readonly campaignContactId: string;
+  readonly stage: string;
+  readonly label: string;
+  readonly lostReason?: OutreachLostReason;
+  readonly task?: OutreachNextStepValue;
+}
+
+/** Причина отказа. Без неё карточка в проигранную колонку не уезжает — так решено в воронке. */
+function PersonLostReasonDialog({
+  label,
+  busy,
+  onClose,
+  onSubmit
+}: {
+  readonly label: string;
+  readonly busy: boolean;
+  readonly onClose: () => void;
+  readonly onSubmit: (reason: OutreachLostReason) => void;
+}) {
+  const [reason, setReason] = useState<OutreachLostReason>("declined");
+  return (
+    <div className="outreach-modal-backdrop" role="presentation">
+      <section
+        className="outreach-modal outreach-small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="person-lost-title"
+      >
+        <div className="section-title-row">
+          <div>
+            <h2 id="person-lost-title">Почему не сложилось?</h2>
+            <span>Перенос в «{label}» без причины не сохраняется.</span>
+          </div>
+        </div>
+        <label className="select-field">
+          <span>Причина</span>
+          <select
+            value={reason}
+            disabled={busy}
+            onChange={(event) => setReason(event.target.value as OutreachLostReason)}
+          >
+            {LOST_REASONS.map((value) => (
+              <option key={value} value={value}>{lostReasonLabel(value)}</option>
+            ))}
+          </select>
+        </label>
+        <div className="outreach-row-actions">
+          <button type="button" disabled={busy} onClick={onClose}>Отмена</button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onSubmit(reason)}
+          >
+            Перенести
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -291,6 +509,7 @@ export function PersonBody({
               busy={busy}
               onSaveContact={onSaveContact}
               onSaveField={onSaveField}
+              onBooked={onReload}
             />
             <PersonAboutCard person={person} />
             <PersonCampaignsCard

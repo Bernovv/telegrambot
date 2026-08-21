@@ -259,5 +259,15 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260821200000_outreach_task_rules",
     description: "Create configurable automatic follow-up task rules with idempotent trigger evidence",
     destructive: false
+  },
+  {
+    id: "20260822090000_team_roles_and_mentor_slots",
+    description: "Add head, manager, and mentor roles with mentor meeting slots",
+    destructive: false
+  },
+  {
+    id: "20260822100000_outreach_stage_task_rules",
+    description: "Let the panel add task rules per trigger, including entering a pipeline stage",
+    destructive: false
   }
 ];

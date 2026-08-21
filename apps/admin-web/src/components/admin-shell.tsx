@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Sunrise,
   Users,
+  UsersRound,
   X
 } from "lucide-react";
 import Link from "next/link";
@@ -40,7 +41,10 @@ const NAVIGATION = [
   { href: "/outreach", label: "Кампании", icon: PhoneCall },
   { href: "/users", label: "Бот", icon: Users },
   { href: "/orders", label: "Заказы", icon: ReceiptText },
-  { href: "/broadcasts", label: "Рассылки", icon: Megaphone }
+  { href: "/broadcasts", label: "Рассылки", icon: Megaphone },
+  // Команда — про кабинет, а не про операции: кто здесь работает и что ему доступно.
+  // Стоит последней по той же причине, по какой в неё редко заходят.
+  { href: "/team", label: "Команда", icon: UsersRound }
 ] as const;
 
 export function AdminShell({

@@ -611,3 +611,28 @@ test("requires an exact same-origin mutation request", () => {
   );
   assert.equal(isTrustedMutationOrigin(null, "https://admin.example.com"), false);
 });
+
+test("пропускает команду и правила автозадач, но не соседние пути", () => {
+  assert.equal(isAllowedAdminApiPath("GET", "staff"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "staff/slots"), true);
+  assert.equal(isAllowedAdminApiPath("POST", "staff/roles"), true);
+  assert.equal(isAllowedAdminApiPath("POST", "staff/slots/book"), true);
+  assert.equal(isAllowedAdminApiPath("POST", "staff/slots/release"), true);
+  // Ролей отсюда только выдают: чтения по этому пути нет, и открывать его нечему.
+  assert.equal(isAllowedAdminApiPath("GET", "staff/roles"), false);
+  assert.equal(isAllowedAdminApiPath("PATCH", "staff"), false);
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/campaigns/00000000-0000-4000-8000-000000000101/task-rules"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "outreach/task-rules/00000000-0000-4000-8000-000000000101/delete"
+    ),
+    true
+  );
+});

@@ -32,7 +32,11 @@ export const ADMIN_PERMISSIONS = [
   "imports.execute",
   "system.read",
   "system.manage",
-  "admins.manage"
+  "admins.manage",
+  "team.read",
+  "team.manage",
+  "mentor_slots.manage",
+  "mentor_slots.book"
 ] as const;
 
 export type AdminPermission = typeof ADMIN_PERMISSIONS[number];

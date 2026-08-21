@@ -1868,12 +1868,18 @@ export default function OutreachCampaignPage() {
               </div>
             </div>
             <OutreachTaskRules
+              campaignId={id}
               rules={taskRules}
+              columns={pipelineColumns}
               busy={mutating}
               onSaved={(saved) => {
                 setTaskRules((current) => current.map((rule) =>
                   rule.id === saved.id ? saved : rule));
                 setNotice("Правило сохранено.");
+              }}
+              onChanged={async (message) => {
+                setTaskRules(await listOutreachTaskRules(id));
+                setNotice(message);
               }}
               onError={setError}
             />
@@ -2432,7 +2438,19 @@ export default function OutreachCampaignPage() {
                 <p className="muted person-empty">Загружаем карточку…</p>
               ) : (
                 <>
-                  <PersonFacts person={detailPerson} />
+                  <PersonFacts
+                    person={detailPerson}
+                    managers={managers}
+                    busy={mutating}
+                    onMoved={async (message) => {
+                      setNotice(message);
+                      // Карточка уехала в другую колонку — доску надо перечитать целиком,
+                      // иначе она показывает человека там, где его уже нет.
+                      await load();
+                      await refreshDetailPerson();
+                    }}
+                    onError={setError}
+                  />
                   <PersonBody
                     person={detailPerson}
                     managers={managers}

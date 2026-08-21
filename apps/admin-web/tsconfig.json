@@ -53,6 +53,9 @@
       "@ticket-platform/contracts/admin-organizers": [
         "../../packages/contracts/src/admin-organizers.ts"
       ],
+      "@ticket-platform/contracts/admin-staff": [
+        "../../packages/contracts/src/admin-staff.ts"
+      ],
       "@ticket-platform/contracts/admin-overview": [
         "../../packages/contracts/src/admin-overview.ts"
       ],

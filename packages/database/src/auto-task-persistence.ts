@@ -65,6 +65,7 @@ rules as (
     from public.outreach_task_rules rule
     join scope on scope.campaign_id = rule.campaign_id
    where rule.is_enabled
+     and rule.deleted_at is null
 ),
 candidates as (
   -- Скоро мероприятие, на которое человек записан.
@@ -163,6 +164,30 @@ candidates as (
    where rule.trigger_code = 'no_answer'
      and activity.result = 'no_answer'
      and activity.occurred_at > $1::timestamptz - interval '30 days'
+
+  union all
+
+  -- Карточка перешла в стадию, за которой закреплено правило. Якорь — сам переход:
+  -- «через день после того, как подтвердил участие» считается от подтверждения.
+  --
+  -- Переходы старше месяца не догоняем по той же причине, что и мероприятия: правило,
+  -- включённое сегодня, не должно выдать пачку задач по прошлогодней истории.
+  select rule.id, rule.trigger_code,
+         member.id, member.contact_id,
+         history.occurred_at,
+         member.id::text || ':' || history.id::text,
+         rule.offset_days, rule.use_call_window, rule.at_hour,
+         rule.task_type, rule.task_text,
+         rule.call_window_start, rule.call_window_end, rule.call_window_timezone
+    from rules rule
+    join public.outreach_campaign_contacts member
+      on member.campaign_id = rule.campaign_id
+     and member.removed_at is null
+    join public.outreach_stage_history history
+      on history.campaign_contact_id = member.id
+     and history.to_stage = rule.stage
+   where rule.trigger_code = 'stage_entered'
+     and history.occurred_at > $1::timestamptz - interval '30 days'
 )
 select distinct on (candidate.rule_id, candidate.auto_key)
        candidate.rule_id, candidate.trigger_code,

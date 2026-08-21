@@ -21,6 +21,7 @@ import { createAdminOutreachPersistence } from "../src/admin-outreach-persistenc
 import { createAutoTaskPersistence } from "../src/auto-task-persistence.js";
 import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-persistence.js";
 import { createNodePostgresPool } from "../src/node-postgres.js";
+import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
 
 const CONNECTION = process.env.SMOKE_DATABASE_URL;
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
   const autoTasks = createAutoTaskPersistence(pool);
   const sync = createEventCampaignSyncPersistence(pool);
   const site = createSiteRegistrationPersistence(pool);
+  const staff = createAdminStaffPersistence(pool).repository;
 
   const upcomingEventId = randomUUID();
   const pastEventId = randomUUID();
@@ -236,6 +238,113 @@ async function main(): Promise<void> {
     console.log(`        пар «воронка и мероприятие»: ${pending.length}`);
   });
   await check("sync.markSynced", () => sync.markSynced({ campaignId, at: now }));
+
+  console.log("\nПравила автозадач:");
+  // Правило по стадии — единственное, у которого есть стадия, и в базе на неё нет
+  // внешнего ключа. Проверяем и заведение, и снятие: снятое правило остаётся строкой,
+  // на которую ссылаются уже поставленные задачи.
+  await check("createTaskRule и deleteTaskRule", async () => {
+    const columns = await outreach.listPipelineColumns(campaignId);
+    const stage = columns[0]?.stage;
+    if (!stage) {
+      throw new Error("У воронки нет ни одной стадии");
+    }
+    const rule = await outreach.createTaskRule({
+      ruleId: randomUUID(),
+      campaignId,
+      trigger: "stage_entered",
+      stage,
+      offsetDays: 1,
+      useCallWindow: true,
+      atHour: null,
+      taskType: "call",
+      taskText: "Проверка правила по стадии",
+      now
+    });
+    if (!rule) {
+      throw new Error("Правило не завелось: повод со стадией занят");
+    }
+    await outreach.deleteTaskRule({
+      ruleId: rule.id,
+      deletedByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+  });
+
+  console.log("\nКоманда и окошки наставника:");
+  await check("staff.listMembers", () => staff.listMembers());
+  await check("staff.hasPermission",
+    () => staff.hasPermission(AUTOMATION_ADMIN, "team.manage"));
+  await check("staff.grantRole и revokeRole", async () => {
+    await staff.grantRole({
+      grantId: randomUUID(),
+      adminId: AUTOMATION_ADMIN,
+      roleCode: "mentor",
+      grantedByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+    await staff.revokeRole({
+      adminId: AUTOMATION_ADMIN,
+      roleCode: "mentor",
+      revokedByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+  });
+  await check("staff.createSlots, bookSlot, releaseSlot, cancelSlot", async () => {
+    const slotId = randomUUID();
+    const startsAt = new Date(now.getTime() + 3 * 86_400_000);
+    const created = await staff.createSlots({
+      slots: [{
+        id: slotId,
+        mentorAdminId: AUTOMATION_ADMIN,
+        startsAt,
+        durationMinutes: 60,
+        note: null
+      }],
+      createdByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+    if (created !== 1) {
+      throw new Error("Окошко не завелось");
+    }
+    const outcome = await staff.bookSlot({
+      slotId,
+      contactId,
+      bookedByAdminId: AUTOMATION_ADMIN,
+      note: "проверка",
+      now
+    });
+    if (outcome !== "booked") {
+      throw new Error(`Запись не прошла: ${outcome}`);
+    }
+    // Повторная запись в занятое окошко — это ровно тот случай, ради которого условие
+    // `contact_id is null` и стоит в запросе.
+    const second = await staff.bookSlot({
+      slotId,
+      contactId,
+      bookedByAdminId: AUTOMATION_ADMIN,
+      note: null,
+      now
+    });
+    if (second !== "already_booked") {
+      throw new Error(`Занятое окошко перезаписалось: ${second}`);
+    }
+    await staff.releaseSlot({
+      slotId,
+      releasedByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+    await staff.cancelSlot({
+      slotId,
+      cancelledByAdminId: AUTOMATION_ADMIN,
+      now
+    });
+  });
+  await check("staff.listSlots", () => staff.listSlots({
+    onlyFree: false,
+    from: new Date(now.getTime() - 86_400_000),
+    to: new Date(now.getTime() + 30 * 86_400_000)
+  }));
 
   console.log("\nЗаявка с сайта:");
   await check("findStandingCampaign", async () => {
