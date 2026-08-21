@@ -106,6 +106,17 @@ export interface OutreachCampaignSummary {
   /** Мероприятие, на которое продаёт кампания. Пусто, если привязки нет. */
   readonly eventId: string | null;
   readonly eventTitle: string | null;
+  /**
+   * Постоянная воронка направления: собирает участников всех мероприятий, чей слаг
+   * начинается с этого префикса. Пусто — обычная кампания.
+   */
+  readonly eventSlugPrefix: string | null;
+  /** Карточка обязана иметь открытую задачу везде, кроме колонок с исходом «проигран». */
+  readonly requireOpenTask: boolean;
+  /** Часы, в которые автоматика назначает звонки, во времени `callWindowTimezone`. */
+  readonly callWindowStart: number;
+  readonly callWindowEnd: number;
+  readonly callWindowTimezone: string;
   /** Кампания убрана из списка. История сохраняется, кампанию можно вернуть. */
   readonly archivedAt: string | null;
   readonly totalContacts: number;

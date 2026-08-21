@@ -46,6 +46,11 @@ export interface EventParticipantsImporter {
   importEventParticipants(input: {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
+    /**
+     * Мероприятие, из которого берём участников. У постоянной воронки направления своего
+     * мероприятия нет — у неё их столько, сколько встреч прошло, и каждую сверяем отдельно.
+     */
+    readonly eventId?: string;
     readonly assignedAdminId?: string | null;
     readonly now: Date;
   }): Promise<{
@@ -82,6 +87,7 @@ export class SyncEventCampaignsBatchService {
         const result = await this.importer.importEventParticipants({
           actor: EVENT_CAMPAIGN_ACTOR,
           campaignId: campaign.campaignId,
+          eventId: campaign.eventId,
           // Ничей: ответственного назначает менеджер, когда берёт контакт в работу.
           // Служебная учётка в этом поле спрятала бы контакт из всех фильтров «мои».
           assignedAdminId: null,

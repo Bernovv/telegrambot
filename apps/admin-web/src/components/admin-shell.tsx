@@ -2,6 +2,7 @@
 
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
+  CalendarClock,
   CalendarDays,
   Contact,
   Globe,
@@ -31,6 +32,9 @@ const NAVIGATION = [
   { href: "/today", label: "Мой день", icon: Sunrise },
   { href: "/tasks", label: "Задачи", icon: ListChecks },
   { href: "/events", label: "Мероприятия", icon: CalendarDays },
+  // Постоянная воронка направления открывается коротким адресом: её идентификатор может
+  // смениться, а пункт меню должен остаться тем же.
+  { href: "/outreach/sreda", label: "Бизнес-среда", icon: CalendarClock },
   { href: "/registrations", label: "Заявки с сайта", icon: Globe },
   { href: "/base", label: "База контактов", icon: Contact },
   { href: "/outreach", label: "Кампании", icon: PhoneCall },
@@ -47,6 +51,10 @@ export function AdminShell({
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const longestMatch = NAVIGATION
+    .filter((item) => pathname.startsWith(item.href))
+    .map((item) => item.href)
+    .sort((left, right) => right.length - left.length)[0];
 
   async function signOut() {
     if (signingOut) {
@@ -86,7 +94,9 @@ export function AdminShell({
         <nav className="sidebar-nav" aria-label="Основная навигация">
           <span className="nav-caption">Операции</span>
           {NAVIGATION.map((item) => {
-            const active = pathname.startsWith(item.href);
+            // Совпадений может быть два: «Бизнес-среда» лежит внутри «Кампаний». Подсвечиваем
+            // самое длинное — иначе подсвечены оба, и непонятно, где ты находишься.
+            const active = item.href === longestMatch;
             const Icon = item.icon;
             return (
               <Link

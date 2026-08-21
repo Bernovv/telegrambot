@@ -440,6 +440,11 @@ export class AdminOutreachService {
     readonly actor: AdminRequestActor;
     readonly campaignId: string;
     /**
+     * Из какого мероприятия брать участников. Без него берётся мероприятие кампании — но у
+     * постоянной воронки направления своего мероприятия нет, и сверка называет его сама.
+     */
+    readonly eventId?: string;
+    /**
      * Не передан — ответственным становится тот, кто нажал кнопку. `null` — контакт
      * остаётся ничьим: так наполняет кампанию работник, у которого хозяина нет.
      */
@@ -453,11 +458,15 @@ export class AdminOutreachService {
     if (!campaign) {
       throw new Error("Outreach campaign was not found");
     }
-    if (!campaign.eventId) {
+    const eventId = input.eventId ?? campaign.eventId;
+    if (!eventId) {
       throw new Error("Outreach campaign has no event to import from");
     }
+    if (input.eventId) {
+      requireUuid(input.eventId);
+    }
 
-    const rows = await this.repository.listEventParticipantRows(campaign.eventId);
+    const rows = await this.repository.listEventParticipantRows(eventId);
     if (rows.length === 0) {
       return {
         received: 0,

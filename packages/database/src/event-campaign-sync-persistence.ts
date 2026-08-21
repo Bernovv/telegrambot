@@ -31,39 +31,63 @@ implements EventCampaignSyncRepository {
     const connection = await this.pool.connect();
     try {
       const result = await connection.query<PendingCampaignRow>(
-        `select campaign.id as campaign_id,
-                event.id as event_id,
-                event.title as event_title
-         from public.outreach_campaigns campaign
-         join public.events event on event.id = campaign.event_id
-         where campaign.is_event_campaign
-           and campaign.archived_at is null
-           and campaign.status <> 'completed'
-           and event.status <> 'archived'
-           and coalesce(event.ends_at, event.starts_at)
-               > $1::timestamptz - interval '30 days'
-           and (
-             campaign.participants_synced_at is null
-             or exists (
-               select 1
-               from public.event_participants participant
-               where participant.event_id = event.id
-                 and participant.deleted_at is null
-                 and participant.updated_at > campaign.participants_synced_at
-             )
-             or exists (
-               select 1
-               from public.orders paid
-               where paid.event_id = event.id
-                 and paid.status = 'paid'
-                 and paid.excluded_at is null
-                 and paid.updated_at > campaign.participants_synced_at
-             )
-           )
-         order by campaign.participants_synced_at asc nulls first,
-                  campaign.created_at asc,
-                  campaign.id asc
-         limit $2::int`,
+        `with pending as (
+           -- Кампания одного мероприятия: как было.
+           select campaign.id as campaign_id,
+                  campaign.participants_synced_at,
+                  campaign.created_at,
+                  event.id as event_id,
+                  event.title as event_title
+             from public.outreach_campaigns campaign
+             join public.events event on event.id = campaign.event_id
+            where campaign.is_event_campaign
+              and campaign.archived_at is null
+              and campaign.status <> 'completed'
+              and event.status <> 'archived'
+           union all
+           -- Постоянная воронка направления: столько строк, сколько у неё мероприятий.
+           -- Участники всех встреч едут в одну воронку, поэтому и сверять надо каждую.
+           select campaign.id as campaign_id,
+                  campaign.participants_synced_at,
+                  campaign.created_at,
+                  event.id as event_id,
+                  event.title as event_title
+             from public.outreach_campaigns campaign
+             join public.events event
+               on event.slug like campaign.event_slug_prefix || '%'
+            where campaign.event_slug_prefix is not null
+              and campaign.archived_at is null
+              and campaign.status <> 'completed'
+              and event.status <> 'archived'
+         )
+         select pending.campaign_id, pending.event_id, pending.event_title
+           from pending
+           join public.events event on event.id = pending.event_id
+          where coalesce(event.ends_at, event.starts_at)
+                > $1::timestamptz - interval '30 days'
+            and (
+              pending.participants_synced_at is null
+              or exists (
+                select 1
+                  from public.event_participants participant
+                 where participant.event_id = pending.event_id
+                   and participant.deleted_at is null
+                   and participant.updated_at > pending.participants_synced_at
+              )
+              or exists (
+                select 1
+                  from public.orders paid
+                 where paid.event_id = pending.event_id
+                   and paid.status = 'paid'
+                   and paid.excluded_at is null
+                   and paid.updated_at > pending.participants_synced_at
+              )
+            )
+          order by pending.participants_synced_at asc nulls first,
+                   pending.created_at asc,
+                   pending.campaign_id asc,
+                   pending.event_id asc
+          limit $2::int`,
         [input.at, input.limit]
       );
       return result.rows.map((row) => ({

@@ -68,6 +68,7 @@ implements AdminEventManagementRepository {
       await createEventCampaign(connection, {
         campaignId: input.campaignId,
         eventId: input.eventId,
+        slug: input.event.slug,
         title: input.event.title,
         createdByAdminId: input.audit.actorAdminId,
         occurredAt: input.audit.occurredAt
@@ -283,11 +284,26 @@ async function createEventCampaign(
   input: {
     readonly campaignId: string;
     readonly eventId: string;
+    readonly slug: string;
     readonly title: string;
     readonly createdByAdminId: string;
     readonly occurredAt: Date;
   }
 ): Promise<void> {
+  // У направления воронка постоянная: встречи «Бизнес-среда» идут каждую неделю, и своя
+  // кампания у каждой означала бы полсотни воронок за год и человека, разрезанного по
+  // десяти из них. Такие мероприятия наполняют направление, а собственной кампании не
+  // заводят.
+  const standing = await connection.query<{ readonly id: string }>(
+    `select id from public.outreach_campaigns
+      where event_slug_prefix is not null
+        and $1::text like event_slug_prefix || '%'
+      limit 1`,
+    [input.slug]
+  );
+  if (standing.rows[0]) {
+    return;
+  }
   await connection.query(
     `insert into public.outreach_campaigns (
        id, name, description, status, created_by_admin_id,

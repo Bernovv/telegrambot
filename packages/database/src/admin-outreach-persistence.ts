@@ -59,6 +59,11 @@ interface CampaignRow {
   readonly completed_at: Date | string | null;
   readonly event_id: string | null;
   readonly event_title: string | null;
+  readonly event_slug_prefix: string | null;
+  readonly require_open_task: boolean;
+  readonly call_window_start: number;
+  readonly call_window_end: number;
+  readonly call_window_timezone: string;
   readonly archived_at: Date | string | null;
 }
 
@@ -3621,6 +3626,11 @@ function mapCampaign(row: CampaignRow): OutreachCampaignSummary {
     convertedContacts: Number(row.converted_contacts),
     eventId: row.event_id,
     eventTitle: row.event_title,
+    eventSlugPrefix: row.event_slug_prefix,
+    requireOpenTask: row.require_open_task,
+    callWindowStart: row.call_window_start,
+    callWindowEnd: row.call_window_end,
+    callWindowTimezone: row.call_window_timezone,
     archivedAt: nullableIso(row.archived_at),
     createdAt: toIso(row.created_at),
     completedAt: nullableIso(row.completed_at)
@@ -3984,7 +3994,11 @@ const CAMPAIGN_SUMMARY_SELECT = `
            where stage_column.outcome = 'won'
          )::text as converted_contacts,
          campaign.created_at, campaign.completed_at,
-         campaign.event_id, event.title as event_title, campaign.archived_at
+         campaign.event_id, event.title as event_title,
+         campaign.event_slug_prefix, campaign.require_open_task,
+         campaign.call_window_start, campaign.call_window_end,
+         campaign.call_window_timezone,
+         campaign.archived_at
   from public.outreach_campaigns campaign
   left join public.events event on event.id = campaign.event_id
   left join public.outreach_campaign_contacts campaign_contact

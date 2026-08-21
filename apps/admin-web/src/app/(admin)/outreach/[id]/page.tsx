@@ -123,8 +123,16 @@ interface StageTarget {
 
 type ViewMode = "board" | "table";
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default function OutreachCampaignPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id: routeId } = useParams<{ id: string }>();
+  // Постоянная воронка направления открывается по короткому адресу — `/outreach/sreda`.
+  // Пункт меню должен пережить пересоздание воронки, а её идентификатор этого не обещает.
+  const alias = UUID_PATTERN.test(routeId) ? null : routeId;
+  const [aliasId, setAliasId] = useState<string | null>(null);
+  const id = alias === null ? routeId : aliasId ?? "";
   const fileInput = useRef<HTMLInputElement>(null);
   const [campaign, setCampaign] = useState<OutreachCampaignSummary | null>(null);
   const [contacts, setContacts] = useState<OutreachCampaignContactPage | null>(null);
@@ -171,6 +179,11 @@ export default function OutreachCampaignPage() {
   const [baseLoading, setBaseLoading] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    if (!id) {
+      // Короткий адрес ещё не превратился в идентификатор: грузить нечего, и экран
+      // остаётся в состоянии загрузки.
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -210,6 +223,30 @@ export default function OutreachCampaignPage() {
       }
     }
   }, [filters, id]);
+
+  useEffect(() => {
+    if (alias === null) {
+      return;
+    }
+    const controller = new AbortController();
+    void listOutreachCampaigns(controller.signal)
+      .then((all) => {
+        const standing = all.find((item) => item.eventSlugPrefix === alias);
+        if (standing) {
+          setAliasId(standing.id);
+          return;
+        }
+        setError(`Воронка «${alias}» не заведена.`);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setError("Не удалось найти воронку.");
+          setLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [alias]);
 
   useEffect(() => {
     const controller = new AbortController();
