@@ -16,6 +16,7 @@ import {
 } from "@/lib/outreach-labels";
 import type {
   OutreachCampaignSummary,
+  OutreachChannel,
   OutreachManager,
   OutreachPersonCampaign,
   OutreachPersonCard,
@@ -28,6 +29,7 @@ import {
   Clock,
   ExternalLink,
   Mail,
+  MessageCircle,
   MessageSquare,
   Phone,
   PhoneCall,
@@ -65,6 +67,18 @@ const SITE_REGISTRATION_LABELS: Record<string, string> = {
   duplicate: "повтор заявки",
   unassigned: "встреча не нашлась"
 };
+
+/**
+ * Открыть разбор касания по одной воронке.
+ *
+ * Канал приходит заполненным, когда менеджер только что нажал «Telegram» или «Позвонить»:
+ * переспрашивать, чем он воспользовался секунду назад, незачем.
+ */
+export type PersonTouchHandler = (
+  campaign: OutreachPersonCampaign,
+  note: string,
+  channel: OutreachChannel | null
+) => void;
 
 /** Русские числительные: «1 задача», «2 задачи», «5 задач». */
 export function plural(count: number, one: string, few: string, many: string): string {
@@ -196,8 +210,11 @@ export function PersonBody({
     readonly dueAt: Date;
     readonly assignedAdminId: string | null;
   }) => Promise<boolean>;
-  /** Открывает разбор касания. Пусто — в этом месте касание не записывают. */
-  readonly onTouch: ((campaign: OutreachPersonCampaign, note: string) => void) | null;
+  /**
+   * Открывает разбор касания. Канал — тот, которым только что воспользовались, либо `null`,
+   * когда его ещё не выбрали. Пусто целиком — в этом месте касание не записывают.
+   */
+  readonly onTouch: PersonTouchHandler | null;
   readonly onCompleteTask: (taskId: string) => Promise<void>;
   readonly onRescheduleTask: (task: OutreachPersonTask) => void;
 }) {
@@ -247,7 +264,13 @@ export function PersonBody({
       {tab === "work" ? (
         <div className={variant === "drawer" ? "person-layout person-layout-narrow" : "person-layout"}>
           <div className="person-rail">
-            <PersonContactsCard person={person} />
+            <PersonContactsCard
+              person={person}
+              campaign={activeCampaigns(person).length === 1
+                ? activeCampaigns(person)[0] ?? null
+                : null}
+              onTouch={onTouch}
+            />
             <PersonAboutCard person={person} />
             <PersonCampaignsCard
               person={person}
@@ -292,9 +315,135 @@ export function PersonBody({
  * настоящая почта, и ровно этим карточка в amoCRM и нечитаема. Исключение — телефон и
  * Telegram: по ним звонят и пишут, и их отсутствие само по себе новость.
  */
-export function PersonContactsCard(
-  { person }: { readonly person: OutreachPersonCard }
-) {
+/**
+ * Куда написать или позвонить — в один клик.
+ *
+ * Раньше между «написал человеку» и «записал касание» не было ничего: ник открывали
+ * ссылкой из строки, а разбор искали кнопкой в шапке, и половина разговоров до базы не
+ * доезжала. Поэтому кнопка не только открывает переписку, но и спрашивает потом, чем
+ * разговор кончился.
+ */
+export function PersonChannels({
+  person,
+  campaign,
+  onTouch
+}: {
+  readonly person: OutreachPersonCard;
+  /** Единственная воронка человека. Когда их несколько, касание пишут полем внизу. */
+  readonly campaign: OutreachPersonCampaign | null;
+  readonly onTouch: PersonTouchHandler | null;
+}) {
+  const [used, setUsed] = useState<OutreachChannel | null>(null);
+  const digits = person.phone ? person.phone.replace(/[^\d]/g, "") : null;
+  // Ссылка на профиль в MAX собирается из ника: `https://max.ru/<ник>`. Из числового
+  // идентификатора ссылку не собрать — у профилей MAX она другой формы, и подставлять
+  // наугад значит вести менеджера в никуда.
+  const maxHandle = person.maxIdentifier
+    && !/^\d+$/.test(person.maxIdentifier.replace(/^@/, ""))
+    ? person.maxIdentifier.replace(/^@/, "")
+    : null;
+
+  const channels: readonly {
+    readonly key: OutreachChannel;
+    readonly label: string;
+    readonly href: string | null;
+    readonly missing: string;
+    readonly icon: typeof Phone;
+  }[] = [
+    {
+      key: "phone",
+      label: "Позвонить",
+      href: digits ? `tel:${person.phone?.replace(/[^+\d]/g, "")}` : null,
+      missing: "телефона не знаем",
+      icon: Phone
+    },
+    {
+      key: "telegram",
+      label: "Telegram",
+      href: person.telegramUsername
+        ? `https://t.me/${person.telegramUsername}`
+        : null,
+      missing: "ника в Telegram не знаем",
+      icon: Send
+    },
+    {
+      key: "max",
+      label: "MAX",
+      href: maxHandle ? `https://max.ru/${maxHandle}` : null,
+      missing: person.maxIdentifier
+        ? "в MAX записан числовой идентификатор — ссылку по нему не собрать"
+        : "в MAX человека не знаем",
+      icon: MessageSquare
+    },
+    {
+      key: "whatsapp",
+      label: "WhatsApp",
+      href: digits ? `https://wa.me/${digits}` : null,
+      missing: "телефона не знаем, а WhatsApp открывается по нему",
+      icon: MessageCircle
+    }
+  ];
+
+  return (
+    <div className="person-channels">
+      <div className="person-channel-row">
+        {channels.map((channel) => {
+          const Icon = channel.icon;
+          if (!channel.href) {
+            return (
+              <span
+                key={channel.key}
+                className="person-channel person-channel-off"
+                title={channel.missing}
+              >
+                <Icon size={15} />
+                {channel.label}
+              </span>
+            );
+          }
+          return (
+            <a
+              key={channel.key}
+              className="person-channel"
+              href={channel.href}
+              target={channel.key === "phone" ? undefined : "_blank"}
+              rel="noreferrer"
+              onClick={() => setUsed(channel.key)}
+            >
+              <Icon size={15} />
+              {channel.label}
+            </a>
+          );
+        })}
+      </div>
+      {used && campaign && onTouch ? (
+        <p className="person-channel-followup">
+          Записать, чем кончилось?
+          <button
+            type="button"
+            className="inline-link"
+            onClick={() => {
+              onTouch(campaign, "", used);
+              setUsed(null);
+            }}
+          >
+            Разобрать касание
+          </button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function PersonContactsCard({
+  person,
+  campaign,
+  onTouch
+}: {
+  readonly person: OutreachPersonCard;
+  readonly campaign: OutreachPersonCampaign | null;
+  readonly onTouch: PersonTouchHandler | null;
+}) {
   const [showAll, setShowAll] = useState(false);
   const hidden = [
     person.maxIdentifier === null,
@@ -305,6 +454,7 @@ export function PersonContactsCard(
   return (
     <section className="data-section">
       <div className="section-title-row"><div><h2>Контакты</h2></div></div>
+      <PersonChannels person={person} campaign={campaign} onTouch={onTouch} />
       <dl className="person-contacts">
         <div className="person-contact person-contact-lead">
           <Phone size={16} />
@@ -437,7 +587,7 @@ export function PersonCampaignsCard({
   readonly busy: boolean;
   readonly available: readonly OutreachCampaignSummary[];
   readonly onAdd: ((campaignId: string) => void) | null;
-  readonly onTouch: ((campaign: OutreachPersonCampaign, note: string) => void) | null;
+  readonly onTouch: PersonTouchHandler | null;
 }) {
   const active = activeCampaigns(person);
   if (person.campaigns.length === 0 && available.length === 0) {
@@ -499,7 +649,7 @@ export function PersonCampaignsCard({
                   title="Записать касание"
                   aria-label={`Записать касание по воронке ${membership.campaignName}`}
                   disabled={busy}
-                  onClick={() => onTouch(membership, "")}
+                  onClick={() => onTouch(membership, "", null)}
                 >
                   <PhoneCall size={16} />
                 </button>

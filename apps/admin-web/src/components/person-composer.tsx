@@ -1,8 +1,8 @@
 "use client";
 
+import type { PersonTouchHandler } from "@/components/person-card";
 import type {
   OutreachManager,
-  OutreachPersonCampaign,
   OutreachPersonCard,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
@@ -38,7 +38,7 @@ export function PersonComposer({
     readonly dueAt: Date;
     readonly assignedAdminId: string | null;
   }) => Promise<boolean>;
-  readonly onTouch: ((campaign: OutreachPersonCampaign, note: string) => void) | null;
+  readonly onTouch: PersonTouchHandler | null;
 }) {
   const active = person.campaigns.filter((item) => !item.removedAt);
   const [mode, setMode] = useState<"note" | "task" | "touch">("note");
@@ -79,7 +79,7 @@ export function PersonComposer({
       (item) => item.campaignContactId === campaignId
     ) ?? active[0];
     if (campaign && onTouch) {
-      onTouch(campaign, body);
+      onTouch(campaign, body, null);
       setDraft("");
     }
   }

@@ -37,6 +37,7 @@ import { formatCompactDate } from "@/lib/format";
 import type {
   OutreachDeleteBlocker,
   OutreachCampaignSummary,
+  OutreachChannel,
   OutreachManager,
   OutreachMergeBlocker,
   OutreachPerson,
@@ -111,6 +112,8 @@ export default function OutreachPersonPage(
     useState<OutreachPersonCampaign | null>(null);
   /** Текст, написанный в поле внизу ленты: уезжает в разбор касания заметкой. */
   const [touchNote, setTouchNote] = useState("");
+  /** Канал, которым только что воспользовались кнопкой в карточке. */
+  const [touchChannel, setTouchChannel] = useState<OutreachChannel | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [campaigns, setCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
@@ -757,8 +760,9 @@ export default function OutreachPersonPage(
         onSaveNote={saveNote}
         onRemoveNote={removeNote}
         onCreateTask={createTask}
-        onTouch={(campaign, note) => {
+        onTouch={(campaign, note, channel) => {
           setTouchNote(note);
+          setTouchChannel(channel);
           setTouchCampaign(campaign);
         }}
         onCompleteTask={(taskId) => run(
@@ -815,14 +819,17 @@ export default function OutreachPersonPage(
           }]}
           columns={null}
           defaultNote={touchNote}
+          {...(touchChannel ? { defaultChannel: touchChannel } : {})}
           onClose={() => {
             setTouchCampaign(null);
             setTouchNote("");
+            setTouchChannel(null);
           }}
           onRecorded={async () => {
             setNotice("Касание записано.");
             setTouchCampaign(null);
             setTouchNote("");
+            setTouchChannel(null);
             await load();
           }}
         />

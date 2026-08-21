@@ -48,6 +48,7 @@ export function OutreachTouchDialog({
   targets,
   columns,
   defaultNote,
+  defaultChannel,
   onClose,
   onRecorded
 }: {
@@ -60,16 +61,21 @@ export function OutreachTouchDialog({
    * написанное только потому, что разбор открылся отдельным окном, нельзя.
    */
   readonly defaultNote?: string | undefined;
+  /** Канал, которым только что воспользовались из карточки. Пусто — предложим сами. */
+  readonly defaultChannel?: OutreachChannel | undefined;
   readonly onClose: () => void;
   readonly onRecorded: (recorded: number) => void | Promise<void>;
 }) {
   const [pipeline, setPipeline] =
     useState<readonly OutreachPipelineColumn[]>(columns ?? []);
-  const [channel, setChannel] =
-    useState<OutreachChannel>(() => defaultChannelFor(targets));
+  const [channel, setChannel] = useState<OutreachChannel>(
+    () => defaultChannel ?? defaultChannelFor(targets)
+  );
   const [result, setResult] =
     useState<Exclude<OutreachContactStatus, "new">>(() =>
-      defaultChannelFor(targets) === "phone" ? "no_answer" : "sent");
+      (defaultChannel ?? defaultChannelFor(targets)) === "phone"
+        ? "no_answer"
+        : "sent");
   const [stage, setStage] = useState<OutreachPipelineStage>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
