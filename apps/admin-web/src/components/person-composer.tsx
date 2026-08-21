@@ -86,54 +86,45 @@ export function PersonComposer({
 
   return (
     <form className="person-composer" onSubmit={(event) => void submit(event)}>
-      <div className="person-composer-modes" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "note"}
-          className={mode === "note" ? "person-mode person-mode-active" : "person-mode"}
-          onClick={() => setMode("note")}
-        >
-          <StickyNote size={15} />
-          Заметка
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "task"}
-          className={mode === "task" ? "person-mode person-mode-active" : "person-mode"}
-          onClick={() => setMode("task")}
-        >
-          <CalendarClock size={15} />
-          Задача
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "touch"}
-          className={mode === "touch" ? "person-mode person-mode-active" : "person-mode"}
-          disabled={!canTouch}
-          title={canTouch
-            ? undefined
-            : "Касание записывается по воронке, а человек сейчас ни в одной не состоит"}
-          onClick={() => setMode("touch")}
-        >
-          <PhoneCall size={15} />
-          Касание
-        </button>
+      <div className="person-composer-toolbar">
+        <div className="person-composer-modes" role="tablist" aria-label="Тип записи">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "note"}
+            className={mode === "note" ? "person-mode person-mode-active" : "person-mode"}
+            onClick={() => setMode("note")}
+          >
+            <StickyNote size={15} />
+            Заметка
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "task"}
+            className={mode === "task" ? "person-mode person-mode-active" : "person-mode"}
+            onClick={() => setMode("task")}
+          >
+            <CalendarClock size={15} />
+            Задача
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "touch"}
+            className={mode === "touch" ? "person-mode person-mode-active" : "person-mode"}
+            disabled={!canTouch}
+            title={canTouch
+              ? undefined
+              : "Касание записывается по воронке, а человек сейчас ни в одной не состоит"}
+            onClick={() => setMode("touch")}
+          >
+            <PhoneCall size={15} />
+            Касание
+          </button>
+        </div>
+        <span className="person-composer-hint">⌘ Enter — сохранить</span>
       </div>
-
-      <textarea
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        rows={2}
-        maxLength={4000}
-        placeholder={mode === "task"
-          ? "Что сделать. Например: позвонить, уточнить, идёт ли с женой"
-          : mode === "touch"
-            ? "О чём говорили — уедет в разбор касания"
-            : "Например: просил не звонить до сентября, едет с женой"}
-      />
 
       {mode === "task" ? (
         <div className="person-composer-row">
@@ -192,12 +183,24 @@ export function PersonComposer({
         </div>
       ) : null}
 
-      <div className="person-composer-actions">
-        {mode === "task" ? (
-          <span className="muted">
-            Новая задача заменит открытую по этой линии работы — прежняя уйдёт в историю.
-          </span>
-        ) : <span />}
+      <div className="person-composer-entry">
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+          rows={2}
+          maxLength={4000}
+          placeholder={mode === "task"
+            ? "Что сделать. Например: позвонить, уточнить, идёт ли с женой"
+            : mode === "touch"
+              ? "О чём говорили — уедет в разбор касания"
+              : "Например: просил не звонить до сентября, едет с женой"}
+        />
         <button
           className="primary-button"
           type="submit"
@@ -206,6 +209,11 @@ export function PersonComposer({
           {mode === "note" ? "Записать" : mode === "task" ? "Поставить задачу" : "Разобрать касание"}
         </button>
       </div>
+      {mode === "task" ? (
+        <span className="muted person-composer-note">
+          Новая задача заменит открытую по этой линии работы — прежняя уйдёт в историю.
+        </span>
+      ) : null}
     </form>
   );
 }

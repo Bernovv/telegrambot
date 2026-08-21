@@ -5868,3 +5868,348 @@ a.person-channel:hover {
 .person-questionnaire-body {
   padding: 4px 18px 18px;
 }
+
+/* ── Рабочая карточка клиента ────────────────────────────────────────────────
+   На своей странице карточка занимает ровно доступную высоту окна. Прокручиваются
+   только данные слева и история справа; поле записи остаётся на месте, как в amoCRM. */
+
+.person-page {
+  display: flex;
+  height: calc(100svh - 108px);
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.person-page > .eyebrow,
+.person-page > .person-head,
+.person-page > .page-notice,
+.person-page > .page-warning,
+.person-page > .person-flags,
+.person-page > .person-tabs {
+  flex: 0 0 auto;
+}
+
+.person-page > .eyebrow .back-link {
+  margin-bottom: 12px;
+}
+
+.person-page > .person-tabs {
+  margin-top: 16px;
+}
+
+.person-page > .person-layout,
+.person-page > .person-tabs + .person-layout {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: 14px;
+  gap: 14px;
+  grid-template-columns: 304px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.person-page > .person-tabs + .data-section {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.person-page .person-rail {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.person-page .person-rail > .data-section {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.person-page .person-rail > .data-section:last-child {
+  border-bottom: 0;
+}
+
+.person-page .person-rail .section-title-row {
+  min-height: 40px;
+  padding: 9px 14px;
+}
+
+.person-page .person-rail .section-title-row h2 {
+  font-size: 13px;
+}
+
+.person-page .person-channels {
+  padding: 0 12px 12px;
+}
+
+.person-page .person-channel-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.person-page .person-channel {
+  min-width: 0;
+  min-height: 52px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 5px 2px;
+  gap: 3px;
+  background: var(--surface-muted);
+  border-color: transparent;
+  border-radius: 7px;
+  font-size: 9px;
+}
+
+.person-page .person-contact {
+  min-height: 34px;
+  padding: 7px 14px;
+  gap: 7px;
+  grid-template-columns: 90px minmax(0, 1fr);
+}
+
+.person-page .person-contact > svg {
+  display: none;
+}
+
+.person-page .person-contact dt,
+.person-page .person-contact-plain > dt {
+  grid-column: 1;
+  align-self: start;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.person-page .person-contact dd,
+.person-page .person-contact-plain > dd {
+  grid-column: 2;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.person-page .person-contact-lead dd {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.person-page .person-meta {
+  padding: 9px 14px 11px;
+  font-size: 10px;
+}
+
+.person-page .person-more-fields {
+  padding: 8px 14px 10px;
+  font-size: 10px;
+}
+
+.person-page .person-field {
+  min-height: 34px;
+  padding: 7px 14px;
+  gap: 7px;
+  grid-template-columns: 90px minmax(0, 1fr);
+}
+
+.person-page .person-field dt {
+  align-self: start;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.person-page .person-field dd,
+.person-page .person-field-open {
+  font-size: 11px;
+}
+
+.person-page .person-note {
+  padding: 10px 14px;
+  font-size: 11px;
+}
+
+.person-page .person-list-tight > li {
+  padding: 8px 14px;
+}
+
+.person-page .person-list-main {
+  flex-basis: 190px;
+  gap: 1px;
+  font-size: 11px;
+}
+
+.person-page .person-list-sub {
+  font-size: 10px;
+}
+
+.person-page .person-main-fixed {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.person-page .person-stream {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.person-page .person-feed-toolbar {
+  min-height: 40px;
+  padding: 5px 10px;
+  gap: 10px;
+}
+
+.person-feed-count {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.person-page .person-feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.person-page .person-feed-filter {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.person-page .person-spine {
+  min-height: 0;
+  padding: 4px 16px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.person-page .person-composer {
+  position: relative;
+  z-index: 2;
+  padding: 9px 11px 10px;
+  gap: 7px;
+  background: var(--surface);
+  box-shadow: 0 -5px 22px rgb(22 40 32 / 7%);
+}
+
+.person-composer-toolbar {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.person-page .person-composer-modes {
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
+.person-page .person-mode {
+  min-height: 28px;
+  padding: 0 8px;
+  gap: 5px;
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.person-composer-hint,
+.person-composer-note {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.person-composer-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.person-page .person-composer-entry textarea {
+  height: 48px;
+  min-height: 48px;
+  padding: 8px 10px;
+  resize: none;
+}
+
+.person-page .person-composer-entry .primary-button {
+  min-height: 48px;
+}
+
+.person-page .person-composer-row {
+  gap: 7px;
+}
+
+.person-page .person-composer-row input,
+.person-page .person-composer-row select {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 1000px) {
+  .person-page {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .person-page > .person-layout,
+  .person-page > .person-tabs + .person-layout {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .person-page .person-rail {
+    height: auto;
+    max-height: none;
+    overflow: hidden;
+  }
+
+  .person-page .person-main-fixed,
+  .person-page .person-stream {
+    height: auto;
+  }
+
+  .person-page .person-stream {
+    grid-template-rows: auto auto auto;
+  }
+
+  .person-page .person-spine {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 620px) {
+  .person-composer-hint {
+    display: none;
+  }
+
+  .person-composer-entry {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .person-composer-entry .primary-button {
+    width: 100%;
+  }
+}

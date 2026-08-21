@@ -38,7 +38,7 @@ import {
   Trash2
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PersonComposer } from "@/components/person-composer";
 import { PersonFieldsCard } from "@/components/person-fields";
 import { PersonQuestionnaireDialog } from "@/components/person-questionnaire-dialog";
@@ -168,7 +168,7 @@ export function PersonFacts({ person }: { readonly person: OutreachPersonCard })
       {next ? (
         <span className={overdue ? "fact-attention" : undefined}>
           {overdue ? "просрочено с " : "следующий шаг "}
-          <b>{formatDateTime(next.dueAt)}</b>
+          <b>{taskTypeLabel(next.type)} · {formatDateTime(next.dueAt)}</b>
         </span>
       ) : (
         <span className="fact-attention"><b>шага нет</b></span>
@@ -277,7 +277,7 @@ export function PersonBody({
 
       {tab === "work" ? (
         <div className={variant === "drawer" ? "person-layout person-layout-narrow" : "person-layout"}>
-          <div className="person-rail">
+          <aside className="person-rail" aria-label="Данные клиента">
             <PersonContactsCard
               person={person}
               campaign={activeCampaigns(person).length === 1
@@ -300,14 +300,16 @@ export function PersonBody({
               onAdd={onAddToCampaign}
               onTouch={onTouch}
             />
-          </div>
-          <div className="person-main">
-            <PersonNextStep
-              person={person}
-              busy={busy}
-              onComplete={onCompleteTask}
-              onReschedule={onRescheduleTask}
-            />
+          </aside>
+          <div className={variant === "page" ? "person-main person-main-fixed" : "person-main"}>
+            {variant === "drawer" ? (
+              <PersonNextStep
+                person={person}
+                busy={busy}
+                onComplete={onCompleteTask}
+                onReschedule={onRescheduleTask}
+              />
+            ) : null}
             <section className="data-section person-stream">
               <PersonFeed person={person} busy={busy} onRemoveNote={onRemoveNote} />
               <PersonComposer
@@ -475,8 +477,8 @@ export function PersonContactsCard({
   ].filter(Boolean).length;
 
   return (
-    <section className="data-section">
-      <div className="section-title-row"><div><h2>Контакты</h2></div></div>
+    <section className="data-section person-contacts-card">
+      <div className="section-title-row"><div><h2>Данные клиента</h2></div></div>
       <PersonChannels person={person} campaign={campaign} onTouch={onTouch} />
       <dl className="person-contacts">
         <div className="person-contact person-contact-lead">
@@ -569,7 +571,7 @@ export function PersonAboutCard(
     return null;
   }
   return (
-    <section className="data-section">
+    <section className="data-section person-about-card">
       <div className="section-title-row">
         <div>
           <h2>Что знаем</h2>
@@ -617,7 +619,7 @@ export function PersonCampaignsCard({
     return null;
   }
   return (
-    <section className="data-section">
+    <section className="data-section person-campaigns-card">
       <div className="section-title-row">
         <div>
           <h2>Воронки</h2>
@@ -794,18 +796,26 @@ export function PersonFeed({
   readonly onRemoveNote: (noteId: string) => Promise<void>;
 }) {
   const [filter, setFilter] = useState<FeedFilter>("all");
+  const listRef = useRef<HTMLOListElement>(null);
   const entries = buildPersonTimeline(person);
   const shown = filter === "all"
     ? entries
     : entries.filter((entry) => entry.kind === filter);
+  const latestShownId = shown.at(-1)?.id;
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (list) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [filter, latestShownId]);
 
   return (
     <>
-      <div className="section-title-row">
-        <div>
-          <h2>История</h2>
-          <span>{entries.length}</span>
-        </div>
+      <div className="section-title-row person-feed-toolbar">
+        <span className="person-feed-count">
+          {entries.length} {plural(entries.length, "событие", "события", "событий")}
+        </span>
         <div className="person-feed-filters">
           {FEED_FILTERS.map((option) => (
             <button
@@ -828,7 +838,7 @@ export function PersonFeed({
             : "В этой части истории пусто."}
         </p>
       ) : (
-        <ol className="person-spine">
+        <ol className="person-spine" ref={listRef}>
           {shown.map((entry) => (
             <li key={entry.id} data-kind={entry.kind}>
               <div className="person-spine-head">
@@ -1255,5 +1265,5 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
   ];
 
   return [...activities, ...notes, ...stages, ...tasks, ...origins]
-    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
 }

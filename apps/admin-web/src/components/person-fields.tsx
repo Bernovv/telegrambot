@@ -38,7 +38,7 @@ export function PersonFieldsCard({
   readonly onSaveField: (fieldId: string, value: string | null) => Promise<boolean>;
 }) {
   return (
-    <section className="data-section">
+    <section className="data-section person-fields-card">
       <div className="section-title-row"><div><h2>Основное</h2></div></div>
       <dl className="person-fields">
         <PersonFieldRow label="Ответственный">

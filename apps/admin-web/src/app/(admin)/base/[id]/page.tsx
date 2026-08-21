@@ -498,7 +498,7 @@ export default function OutreachPersonPage(
   }
 
   return (
-    <>
+    <div className="person-page">
       <p className="eyebrow">
         <Link className="back-link" href="/base">
           <ArrowLeft size={14} />
@@ -898,7 +898,6 @@ export default function OutreachPersonPage(
           }}
         />
       ) : null}
-    </>
+    </div>
   );
 }
-
