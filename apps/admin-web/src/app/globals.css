@@ -4544,12 +4544,14 @@ tbody tr:hover {
   margin-top: 0;
 }
 
-.person-layout .section-title-row {
+.person-layout .section-title-row,
+.person-flow .section-title-row {
   min-height: 0;
   padding: 12px 16px;
 }
 
-.person-layout .section-title-row h2 {
+.person-layout .section-title-row h2,
+.person-flow .section-title-row h2 {
   font-size: 15px;
 }
 
@@ -4832,6 +4834,115 @@ tbody tr:hover {
 .person-spine p {
   margin: 6px 0 0;
   white-space: pre-wrap;
+}
+
+/* Панель контакта в воронке: сверху то, что делают с ним в этой кампании, ниже — та же
+   карточка человека, что открывается на своей странице. Раньше здесь была своя урезанная
+   версия, и чтобы увидеть заметки, анкеты и историю по другим кампаниям, приходилось
+   уходить со страницы воронки и возвращаться. */
+
+/* Карточка человека целиком в 560 пикселей не читается: ответы анкеты и строки заказов
+   встают в две строки. Ширина только у этой панели — у панелей участника на мероприятии
+   содержимое другое, им лишнее место не нужно. */
+.person-drawer {
+  width: min(760px, 100%);
+}
+
+.person-drawer-head {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: grid;
+  padding: 16px 18px;
+  gap: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.person-drawer-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.person-drawer-title > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.person-drawer-title h2 {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.person-drawer-title h2 a:hover {
+  color: var(--accent);
+}
+
+.person-drawer-phone {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.person-drawer-campaign {
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Подпись зоны с чертой до края: она делит панель на «что делаем» и «кто это». */
+.person-zone {
+  display: flex;
+  align-items: center;
+  padding: 15px 18px 4px;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.person-zone::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line-strong);
+}
+
+.person-drawer-campaign .outreach-lead-fields,
+.person-drawer-campaign .outreach-custom-fields {
+  border-bottom: 0;
+}
+
+.person-drawer-campaign .outreach-task-panel {
+  margin: 4px 18px 18px;
+  background: var(--surface);
+}
+
+/* Внутри панели разделы идут одной лентой: рамка вокруг каждого дала бы коробки в коробке. */
+.person-flow > .data-section {
+  margin-top: 0;
+  background: transparent;
+  border-width: 1px 0 0;
+  border-radius: 0;
+}
+
+.person-flow > .data-section:first-of-type {
+  border-top: 0;
+}
+
+.person-flow > .person-facts {
+  padding: 12px 18px 14px;
 }
 
 @media (max-width: 1180px) {

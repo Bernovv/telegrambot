@@ -6,6 +6,15 @@ import {
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
 import { OwnBadge } from "@/components/own-badge";
+import {
+  PersonContactsCard,
+  PersonEventsCard,
+  PersonFacts,
+  PersonHistoryCard,
+  PersonKnowledgeCard,
+  PersonOrdersCard,
+  PersonOriginCard
+} from "@/components/person-card";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -19,6 +28,9 @@ import {
   exportOutreachCampaign,
   getOutreachCampaign,
   getOutreachContact,
+  getOutreachPerson,
+  createOutreachNote,
+  deleteOutreachNote,
   addExistingContactsToCampaign,
   importEventParticipantsIntoCampaign,
   listEvents,
@@ -41,17 +53,16 @@ import {
 import { formatDateTime } from "@/lib/format";
 import {
   LOST_REASONS,
-  channelLabel,
   lostReasonLabel,
   stageLabel,
   stageTone,
-  statusLabel,
-  taskTypeLabel
+  statusLabel
 } from "@/lib/outreach-labels";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
 import type { AdminEventSummary } from "@ticket-platform/contracts/admin-events";
 import type {
   OutreachBaseContact,
+  OutreachPersonCard,
   OutreachCampaignContactDetail,
   OutreachCampaignContactPage,
   OutreachCampaignContactSummary,
@@ -73,6 +84,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  ExternalLink,
   FileUp,
   GripVertical,
   LayoutGrid,
@@ -135,6 +147,11 @@ export default function OutreachCampaignPage() {
   const [stageTarget, setStageTarget] = useState<StageTarget | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OutreachCampaignContactDetail | null>(null);
+  // Полная карточка человека — та же, что на своей странице в базе. Раньше в панели была
+  // своя урезанная версия, и менеджер звонил, не видя ни денег, ни заметок, ни истории по
+  // другим кампаниям.
+  const [detailPerson, setDetailPerson] = useState<OutreachPersonCard | null>(null);
+  const [detailPersonError, setDetailPersonError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,6 +235,33 @@ export default function OutreachCampaignPage() {
       .catch(() => setEvents([]));
     return () => controller.abort();
   }, [id]);
+
+  // Карточка человека приезжает отдельным запросом: воронка знает про контакт только то,
+  // что относится к этой кампании.
+  const detailContactId = detail?.contactId ?? null;
+
+  const loadDetailPerson = useCallback(async (signal?: AbortSignal) => {
+    if (!detailContactId) {
+      setDetailPerson(null);
+      setDetailPersonError(null);
+      return;
+    }
+    try {
+      setDetailPerson(await getOutreachPerson(detailContactId, signal));
+      setDetailPersonError(null);
+    } catch (caught) {
+      if (!signal?.aborted) {
+        setDetailPerson(null);
+        setDetailPersonError(messageFor(caught, "Не удалось загрузить карточку человека."));
+      }
+    }
+  }, [detailContactId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadDetailPerson(controller.signal);
+    return () => controller.abort();
+  }, [loadDetailPerson]);
 
   const pageIds = useMemo(
     () => contacts?.items.map((contact) => contact.id) ?? [],
@@ -353,6 +397,40 @@ export default function OutreachCampaignPage() {
         isOwn: found?.isOwn ?? false
       };
     });
+  }
+
+  async function saveDetailNote(body: string): Promise<boolean> {
+    if (!detailContactId) {
+      return false;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      await createOutreachNote(detailContactId, body);
+      await loadDetailPerson();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить заметку."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeDetailNote(noteId: string) {
+    if (!window.confirm("Снять заметку? В карточке её больше не будет.")) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      await deleteOutreachNote(noteId);
+      await loadDetailPerson();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось снять заметку."));
+    } finally {
+      setMutating(false);
+    }
   }
 
   async function assignSelected(event: ChangeEvent<HTMLSelectElement>) {
@@ -1715,196 +1793,227 @@ export default function OutreachCampaignPage() {
       ) : null}
 
       {detail ? (
-        <div className="outreach-drawer-backdrop" role="presentation" onMouseDown={() => setDetail(null)}>
-          <aside className="outreach-drawer outreach-lead-drawer" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="section-title-row">
-              <div>
-                <h2>
-                  <Link href={`/base/${detail.contactId}`}>
-                    {detail.displayName ?? "Без имени"}
-                  </Link>
-                </h2>
-                <span>
-                  {primaryContact(detail)}
-                  {detail.isOwn ? " · свои" : ""}
-                </span>
-              </div>
-              <button className="icon-button" type="button" aria-label="Закрыть" onClick={() => setDetail(null)}>
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="outreach-drawer-actions">
-              <button type="button" onClick={() => setAction([detail.id])}>
-                <PhoneCall size={16} /> Связаться
-              </button>
-            </div>
-
-            <div className="outreach-lead-fields">
-              <label>
-                <span>Этап воронки</span>
-                <select
-                  value={detail.stage}
-                  disabled={mutating}
-                  onChange={(event) => void moveStage(detail.id, event.target.value)}
-                >
-                  {pipelineColumns.map((column) => (
-                    <option key={column.stage} value={column.stage}>{column.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Ответственный</span>
-                <select
-                  value={detail.assignedAdminId ?? ""}
-                  disabled={mutating}
-                  onChange={(event) => void assignIds([detail.id], event.target.value)}
-                >
-                  <option value="" disabled>Не назначен</option>
-                  {managers.map((manager) => (
-                    <option key={manager.id} value={manager.id}>{manager.displayName}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {detail.participations.length > 0 ? (
-              <div className="accommodation-note">
-                <UserRoundCheck size={16} />
-                <span>
-                  Едет на:{" "}
-                  {detail.participations
-                    .map((participation) =>
-                      `${participation.eventTitle} — ${participation.guests} гост.`)
-                    .join("; ")}
-                </span>
-              </div>
-            ) : null}
-
-            {campaign.eventId && detail.participations.length === 0 ? (
-              <details className="participant-from-contact">
-                <summary>Добавить в «{campaign.eventTitle}»</summary>
-                <form onSubmit={(event) => void addParticipantFromContact(event, detail)}>
-                  <p className="muted">
-                    Стадия «Оплатил» не знает, сколько человек едет и нужна ли палатка —
-                    уточните здесь.
-                  </p>
-                  <label className="field">
-                    <span>Взрослых</span>
-                    <input name="adults" type="number" min={0} max={100} defaultValue={1} required />
-                  </label>
-                  <label className="field">
-                    <span>Детей</span>
-                    <input name="children" type="number" min={0} max={100} defaultValue={0} required />
-                  </label>
-                  <label className="field">
-                    <span>Спальных мест</span>
-                    <input name="sleepingPlaces" type="number" min={0} max={200} defaultValue={0} required />
-                  </label>
-                  <label className="field">
-                    <span>Тариф</span>
-                    <input name="ticketTitle" maxLength={200} placeholder="Все включено" />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={mutating}>
-                    Добавить участником
-                  </button>
-                </form>
-              </details>
-            ) : null}
-
-            <div className="outreach-contact-meta">
-              <span>Источник</span><strong>{detail.source ?? "Не указан"}</strong>
-              <span>Заметка из импорта</span><strong>{detail.note ?? "Нет"}</strong>
-              <span>Последний результат</span><strong>{statusLabel(detail.status)}</strong>
-              <span>Регистрация в боте</span><strong>{detail.linkedUserId ? "Да" : "Нет"}</strong>
-            </div>
-
-            {detail.customFields.length > 0 ? (
-              <div className="outreach-custom-fields">
-                <h3>Дополнительные поля</h3>
-                {detail.customFields.map((field) => (
-                  <label key={field.fieldId}>
-                    <span>{field.label}</span>
-                    {field.type === "select" ? (
-                      <select
-                        defaultValue={field.value ?? ""}
-                        onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
-                      >
-                        <option value="">Не выбрано</option>
-                        {(field.options ?? []).map((option) => (
-                          <option key={option} value={option}>{option}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
-                        defaultValue={field.value ?? ""}
-                        onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
-                      />
-                    )}
-                  </label>
-                ))}
-              </div>
-            ) : null}
-
-            <section className="outreach-task-panel">
-              <div className="outreach-task-heading">
+        <div
+          className="outreach-drawer-backdrop"
+          role="presentation"
+          onMouseDown={() => setDetail(null)}
+        >
+          <aside
+            className="outreach-drawer person-drawer"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            {/* Шапка не уезжает вверх вместе с историей: закрыть панель и увидеть, чья она,
+                нужно на любой глубине прокрутки. */}
+            <div className="person-drawer-head">
+              <div className="person-drawer-title">
                 <div>
-                  <CalendarClock size={18} />
-                  <h3>Следующая задача</h3>
+                  <h2>
+                    <Link href={`/base/${detail.contactId}`}>
+                      {detail.displayName ?? "Без имени"}
+                    </Link>
+                  </h2>
+                  <span className="person-drawer-phone">{primaryContact(detail)}</span>
+                </div>
+                {detail.isOwn ? <OwnBadge note={null} compact /> : null}
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Закрыть"
+                  onClick={() => setDetail(null)}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="person-drawer-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={mutating}
+                  onClick={() => setAction([detail.id])}
+                >
+                  <PhoneCall size={16} />
+                  Связаться
+                </button>
+                <Link className="secondary-button" href={`/base/${detail.contactId}`}>
+                  Открыть карточку
+                  <ExternalLink size={15} />
+                </Link>
+              </div>
+            </div>
+
+            <div className="person-drawer-campaign">
+              <p className="person-zone">Работа по кампании</p>
+
+              <div className="outreach-lead-fields">
+                <label>
+                  <span>Этап воронки</span>
+                  <select
+                    value={detail.stage}
+                    disabled={mutating}
+                    onChange={(event) => void moveStage(detail.id, event.target.value)}
+                  >
+                    {pipelineColumns.map((column) => (
+                      <option key={column.stage} value={column.stage}>{column.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Ответственный</span>
+                  <select
+                    value={detail.assignedAdminId ?? ""}
+                    disabled={mutating}
+                    onChange={(event) => void assignIds([detail.id], event.target.value)}
+                  >
+                    <option value="" disabled>Не назначен</option>
+                    {managers.map((manager) => (
+                      <option key={manager.id} value={manager.id}>{manager.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {detail.participations.length > 0 ? (
+                <div className="accommodation-note">
+                  <UserRoundCheck size={16} />
+                  <span>
+                    Едет на:{" "}
+                    {detail.participations
+                      .map((participation) =>
+                        `${participation.eventTitle} — ${participation.guests} гост.`)
+                      .join("; ")}
+                  </span>
+                </div>
+              ) : null}
+
+              {campaign.eventId && detail.participations.length === 0 ? (
+                <details className="participant-from-contact">
+                  <summary>Добавить в «{campaign.eventTitle}»</summary>
+                  <form onSubmit={(event) => void addParticipantFromContact(event, detail)}>
+                    <p className="muted">
+                      Стадия «Оплатил» не знает, сколько человек едет и нужна ли палатка —
+                      уточните здесь.
+                    </p>
+                    <label className="field">
+                      <span>Взрослых</span>
+                      <input name="adults" type="number" min={0} max={100} defaultValue={1} required />
+                    </label>
+                    <label className="field">
+                      <span>Детей</span>
+                      <input name="children" type="number" min={0} max={100} defaultValue={0} required />
+                    </label>
+                    <label className="field">
+                      <span>Спальных мест</span>
+                      <input name="sleepingPlaces" type="number" min={0} max={200} defaultValue={0} required />
+                    </label>
+                    <label className="field">
+                      <span>Тариф</span>
+                      <input name="ticketTitle" maxLength={200} placeholder="Все включено" />
+                    </label>
+                    <button className="primary-button" type="submit" disabled={mutating}>
+                      Добавить участником
+                    </button>
+                  </form>
+                </details>
+              ) : null}
+
+              {detail.customFields.length > 0 ? (
+                <div className="outreach-custom-fields">
+                  <h3>Дополнительные поля кампании</h3>
+                  {detail.customFields.map((field) => (
+                    <label key={field.fieldId}>
+                      <span>{field.label}</span>
+                      {field.type === "select" ? (
+                        <select
+                          defaultValue={field.value ?? ""}
+                          onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
+                        >
+                          <option value="">Не выбрано</option>
+                          {(field.options ?? []).map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+                          defaultValue={field.value ?? ""}
+                          onBlur={(event) => void updateDetailFieldValue(field.fieldId, event.target.value)}
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+
+              <section className="outreach-task-panel">
+                <div className="outreach-task-heading">
+                  <div>
+                    <CalendarClock size={18} />
+                    <h3>Следующая задача</h3>
+                  </div>
+                  {detail.openTask ? (
+                    <button
+                      className="outreach-complete-task"
+                      type="button"
+                      disabled={mutating}
+                      onClick={() => void completeTask(detail.openTask as OutreachTask)}
+                    >
+                      <CheckCircle2 size={16} />
+                      Выполнено
+                    </button>
+                  ) : null}
                 </div>
                 {detail.openTask ? (
-                  <button
-                    className="outreach-complete-task"
-                    type="button"
-                    disabled={mutating}
-                    onClick={() => void completeTask(detail.openTask as OutreachTask)}
-                  >
-                    <CheckCircle2 size={16} />
-                    Выполнено
-                  </button>
-                ) : null}
-              </div>
-              {detail.openTask ? (
-                <div className="outreach-current-task">
-                  <TaskBadge task={detail.openTask} />
-                  <strong>{detail.openTask.text}</strong>
-                  <span>{detail.openTask.assignedAdminName}</span>
-                </div>
-              ) : (
-                <p className="muted">Открытой задачи нет. Поставьте следующий шаг, чтобы контакт не потерялся.</p>
-              )}
-              <details className="outreach-task-create" open={!detail.openTask}>
-                <summary>{detail.openTask ? "Заменить задачу" : "Поставить задачу"}</summary>
-                <OutreachTaskForm
-                  target={{ kind: "campaign", campaignContactId: detail.id }}
-                  openTask={detail.openTask}
-                  managers={managers}
-                  defaultAssignedAdminId={detail.assignedAdminId}
-                  onSaved={async () => {
-                    setNotice("Задача поставлена.");
-                    await load();
-                    setDetail(await getOutreachContact(detail.id));
-                  }}
-                />
-              </details>
-            </section>
-
-            <div className="outreach-history">
-              <h3>История</h3>
-              {detail.activities.length === 0 && detail.stageHistory.length <= 1 ? (
-                <p className="muted">Касаний пока нет.</p>
-              ) : null}
-              {buildTimeline(detail, pipelineColumns).map((item) => (
-                <article key={item.id}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>{item.meta}</span>
+                  <div className="outreach-current-task">
+                    <TaskBadge task={detail.openTask} />
+                    <strong>{detail.openTask.text}</strong>
+                    <span>{detail.openTask.assignedAdminName}</span>
                   </div>
-                  <p>{item.actor} · {formatDateTime(item.occurredAt)}</p>
-                  {item.note ? <small>{item.note}</small> : null}
-                </article>
-              ))}
+                ) : (
+                  <p className="muted">
+                    Открытой задачи нет. Поставьте следующий шаг, чтобы контакт не потерялся.
+                  </p>
+                )}
+                <details className="outreach-task-create" open={!detail.openTask}>
+                  <summary>{detail.openTask ? "Заменить задачу" : "Поставить задачу"}</summary>
+                  <OutreachTaskForm
+                    target={{ kind: "campaign", campaignContactId: detail.id }}
+                    openTask={detail.openTask}
+                    managers={managers}
+                    defaultAssignedAdminId={detail.assignedAdminId}
+                    onSaved={async () => {
+                      setNotice("Задача поставлена.");
+                      await load();
+                      setDetail(await getOutreachContact(detail.id));
+                    }}
+                  />
+                </details>
+              </section>
+            </div>
+
+            {/* Дальше — та же карточка, что открывается на своей странице: деньги, заметки,
+                анкеты и история по всем кампаниям, а не только по этой. */}
+            <div className="person-flow">
+              <p className="person-zone">Карточка клиента</p>
+              {detailPersonError ? (
+                <p className="muted person-empty">{detailPersonError}</p>
+              ) : !detailPerson ? (
+                <p className="muted person-empty">Загружаем карточку…</p>
+              ) : (
+                <>
+                  <PersonFacts person={detailPerson} />
+                  <PersonContactsCard person={detailPerson} />
+                  <PersonKnowledgeCard
+                    person={detailPerson}
+                    busy={mutating}
+                    onSaveNote={saveDetailNote}
+                    onRemoveNote={removeDetailNote}
+                  />
+                  <PersonEventsCard person={detailPerson} />
+                  <PersonOrdersCard person={detailPerson} />
+                  <PersonOriginCard person={detailPerson} />
+                  <PersonHistoryCard person={detailPerson} />
+                </>
+              )}
             </div>
           </aside>
         </div>
@@ -1928,42 +2037,6 @@ function TaskBadge({ task }: { readonly task: OutreachTask | null }) {
           : formatDateTime(task.dueAt)}
     </span>
   );
-}
-
-function buildTimeline(
-  detail: OutreachCampaignContactDetail,
-  columns: readonly OutreachPipelineColumn[]
-) {
-  const columnName = (stage: OutreachPipelineStage) =>
-    columns.find((column) => column.stage === stage)?.label ?? stageLabel(stage);
-  const activities = detail.activities.map((activity) => ({
-    id: `activity-${activity.id}`,
-    title: statusLabel(activity.result),
-    meta: channelLabel(activity.channel),
-    actor: activity.actorName,
-    occurredAt: activity.occurredAt,
-    note: activity.note
-  }));
-  const stages = detail.stageHistory
-    .filter((entry) => entry.fromStage !== null)
-    .map((entry) => ({
-      id: `stage-${entry.id}`,
-      title: `Этап: ${columnName(entry.toStage)}`,
-      meta: entry.fromStage ? `из «${columnName(entry.fromStage)}»` : "Создан",
-      actor: entry.actorName,
-      occurredAt: entry.occurredAt,
-      note: entry.lostReason ? `Причина: ${lostReasonLabel(entry.lostReason)}` : null
-    }));
-  const tasks = detail.tasks.map((task) => ({
-    id: `task-${task.id}`,
-    title: task.status === "completed" ? "Задача выполнена" : task.status === "cancelled" ? "Задача заменена" : "Задача поставлена",
-    meta: taskTypeLabel(task.type),
-    actor: task.createdByAdminName,
-    occurredAt: task.completedAt ?? task.createdAt,
-    note: `${task.text} · срок ${formatDateTime(task.dueAt)}`
-  }));
-  return [...activities, ...stages, ...tasks]
-    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 }
 
 function messageFor(error: unknown, fallback: string): string {
