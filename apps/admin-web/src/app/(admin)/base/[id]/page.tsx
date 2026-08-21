@@ -37,6 +37,7 @@ import {
 } from "@/lib/outreach-labels";
 import type {
   OutreachDeleteBlocker,
+  OutreachPersonQuestionnaire,
   OutreachCampaignSummary,
   OutreachManager,
   OutreachMergeBlocker,
@@ -49,19 +50,21 @@ import {
   ArrowLeft,
   Bot,
   CalendarClock,
-  CalendarDays,
   CheckCircle2,
   ExternalLink,
   Mail,
   Merge,
   MessageSquare,
+  MoreHorizontal,
   Pencil,
   Phone,
   PhoneCall,
   RefreshCw,
   Search,
+  Send,
   ShieldCheck,
   StickyNote,
+  Tag,
   Trash2,
   X
 } from "lucide-react";
@@ -70,9 +73,11 @@ import { useRouter } from "next/navigation";
 import {
   type ChangeEvent,
   type FormEvent,
+  type MouseEvent,
   use,
   useCallback,
   useEffect,
+  useRef,
   useState
 } from "react";
 
@@ -109,6 +114,76 @@ const CONFLICT_FIELDS: Record<string, string> = {
   email: "Почта"
 };
 
+/** Русские числительные: «1 задача», «2 задачи», «5 задач». */
+function plural(count: number, one: string, few: string, many: string): string {
+  const last = count % 10;
+  const lastTwo = count % 100;
+  if (last === 1 && lastTwo !== 11) {
+    return one;
+  }
+  if (last >= 2 && last <= 4 && (lastTwo < 10 || lastTwo >= 20)) {
+    return few;
+  }
+  return many;
+}
+
+/**
+ * Поездка вместе с анкетами по тому же мероприятию.
+ *
+ * Раньше это были два раздела, и название события повторялось в обоих: сначала «был на
+ * Пикнике 2025», потом отдельно «анкета к Пикнику 2025». Ответы нужны ровно тогда, когда
+ * смотришь на поездку, поэтому они живут в одной строке с ней.
+ */
+interface PersonEventEntry {
+  readonly key: string;
+  readonly eventId: string | null;
+  readonly href: string | null;
+  readonly title: string;
+  readonly meta: string;
+  readonly checkedInAt: string | null;
+  readonly questionnaires: readonly OutreachPersonQuestionnaire[];
+}
+
+function buildPersonEvents(person: OutreachPersonCard): readonly PersonEventEntry[] {
+  const attended = person.participations.map((participation) => ({
+    key: participation.participantId,
+    eventId: participation.eventId,
+    href: `/events/${participation.eventId}/participants`,
+    title: participation.eventTitle,
+    meta: [
+      `${participation.guests} чел.`,
+      participation.sleepingPlaces > 0 ? `мест: ${participation.sleepingPlaces}` : null,
+      participation.ticketTitle || null,
+      participation.amountKopecks ? formatKopecks(participation.amountKopecks) : null
+    ].filter(Boolean).join(" · "),
+    checkedInAt: participation.checkedInAt,
+    questionnaires: person.questionnaires.filter((questionnaire) =>
+      questionnaire.eventId !== null && questionnaire.eventId === participation.eventId)
+  }));
+
+  // Анкета без поездки бывает: человек заполнил её к заказу и не доехал, или анкета вообще
+  // не привязана к мероприятию. Терять такие ответы нельзя.
+  const orphans = person.questionnaires
+    .filter((questionnaire) => !person.participations.some((participation) =>
+      participation.eventId === questionnaire.eventId))
+    .map((questionnaire, index) => ({
+      key: `questionnaire-${questionnaire.eventId ?? index}-${questionnaire.source}`,
+      eventId: questionnaire.eventId,
+      href: questionnaire.eventId
+        ? `/events/${questionnaire.eventId}/questionnaire`
+        : null,
+      title: questionnaire.eventTitle ?? "Без мероприятия",
+      meta: [
+        questionnaire.source === "order" ? "анкета к заказу" : "анкета участника",
+        questionnaire.filledAt ? formatCompactDate(questionnaire.filledAt) : null
+      ].filter(Boolean).join(" · "),
+      checkedInAt: null,
+      questionnaires: [questionnaire]
+    }));
+
+  return [...attended, ...orphans];
+}
+
 export default function OutreachPersonPage(
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -132,6 +207,7 @@ export default function OutreachPersonPage(
   const [noteDraft, setNoteDraft] = useState("");
   const [campaigns, setCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
+  const menuRef = useRef<HTMLDetailsElement>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -168,6 +244,28 @@ export default function OutreachPersonPage(
       .then(setCampaigns)
       .catch(() => setCampaigns([]));
     return () => controller.abort();
+  }, []);
+
+  // <details> сам по себе закрывается только повторным кликом по кнопке. Меню действий,
+  // оставшееся открытым поверх карточки, — это то, что видит менеджер после «Удалить».
+  useEffect(() => {
+    function closeOnOutside(event: PointerEvent) {
+      const menu = menuRef.current;
+      if (menu?.open && !menu.contains(event.target as Node)) {
+        menu.open = false;
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && menuRef.current?.open) {
+        menuRef.current.open = false;
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
   }, []);
 
   function messageFor(caught: unknown, fallback: string): string {
@@ -439,29 +537,38 @@ export default function OutreachPersonPage(
   // разделе.
   const availableCampaigns = campaigns.filter((campaign) =>
     !activeCampaigns.some((item) => item.campaignId === campaign.id));
+  const personEvents = buildPersonEvents(person);
+
+  function menuAction(action: () => void) {
+    return (event: MouseEvent<HTMLButtonElement>) => {
+      event.currentTarget.closest("details")?.removeAttribute("open");
+      action();
+    };
+  }
 
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">
-            <Link className="back-link" href="/base">
-              <ArrowLeft size={14} />
-              База контактов
-            </Link>
-          </p>
+      <p className="eyebrow">
+        <Link className="back-link" href="/base">
+          <ArrowLeft size={14} />
+          База контактов
+        </Link>
+      </p>
+
+      <div className="person-head">
+        <div className="person-title">
           <h1>{person.displayName ?? "Без имени"}</h1>
-          <p>
-            {activeCampaigns.length > 0
-              ? `Сейчас в ${activeCampaigns.length} ${activeCampaigns.length === 1 ? "кампании" : "кампаниях"}`
-              : "Ни в одной кампании не состоит"}
-          </p>
-        </div>
-        <div className="heading-actions">
           {person.archivedAt ? (
             <StatusPill tone="neutral">В архиве</StatusPill>
           ) : null}
           {person.isOwn ? <OwnBadge note={person.ownNote} /> : null}
+          {person.mergedDuplicates > 0 ? (
+            <StatusPill tone="neutral">
+              сведено дублей: {person.mergedDuplicates}
+            </StatusPill>
+          ) : null}
+        </div>
+        <div className="person-head-actions">
           {singleCampaign ? (
             <button
               className="primary-button"
@@ -492,52 +599,94 @@ export default function OutreachPersonPage(
           >
             <RefreshCw size={18} />
           </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={() => setEditing((current) => !current)}
-          >
-            <Pencil size={16} />
-            {editing ? "Отменить" : "Изменить"}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={() => void toggleOwn()}
-          >
-            <ShieldCheck size={16} />
-            {person.isOwn ? "Не свой" : "Это свои"}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={() => void toggleArchive()}
-          >
-            <ArchiveRestore size={16} />
-            {person.archivedAt ? "Вернуть в базу" : "Убрать из базы"}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating || person.mergedIntoContactId !== null}
-            onClick={() => setMerging((current) => !current)}
-          >
-            <Merge size={16} />
-            {merging ? "Отменить" : "Это дубль"}
-          </button>
-          <button
-            className="secondary-button danger"
-            type="button"
-            disabled={mutating}
-            onClick={() => void remove()}
-          >
-            <Trash2 size={16} />
-            Удалить
-          </button>
+          {/* Правка, архив, дубль и удаление — редкие действия. В шапке их восемь штук
+              рвались на вторую строку и отжимали имя человека. */}
+          <details className="more-menu" ref={menuRef}>
+            <summary
+              className="icon-button bordered"
+              title="Ещё действия"
+              aria-label="Ещё действия"
+            >
+              <MoreHorizontal size={18} />
+            </summary>
+            <div className="more-menu-panel">
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={menuAction(() => setEditing((current) => !current))}
+              >
+                <Pencil size={16} />
+                {editing ? "Не менять карточку" : "Изменить карточку"}
+              </button>
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={menuAction(() => void toggleOwn())}
+              >
+                <ShieldCheck size={16} />
+                {person.isOwn ? "Снять пометку «свои»" : "Отметить «свои»"}
+              </button>
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={menuAction(() => void toggleArchive())}
+              >
+                <ArchiveRestore size={16} />
+                {person.archivedAt ? "Вернуть в базу" : "Убрать из базы"}
+              </button>
+              <button
+                type="button"
+                disabled={mutating || person.mergedIntoContactId !== null}
+                onClick={menuAction(() => setMerging((current) => !current))}
+              >
+                <Merge size={16} />
+                {merging ? "Не сводить с дублем" : "Это дубль"}
+              </button>
+              <hr />
+              <button
+                className="danger"
+                type="button"
+                disabled={mutating}
+                onClick={menuAction(() => void remove())}
+              >
+                <Trash2 size={16} />
+                Удалить насовсем
+              </button>
+            </div>
+          </details>
         </div>
+        <p className="person-facts">
+          <span title="Заказы бота плюс оплаты, заведённые руками. Частичные возвраты не вычтены — их видно в самом заказе.">
+            <b>{formatKopecks(person.paidTotalKopecks)}</b> принёс
+          </span>
+          <span>
+            <b>{person.participations.length}</b>
+            {" "}
+            {plural(
+              person.participations.length,
+              "мероприятие",
+              "мероприятия",
+              "мероприятий"
+            )}
+          </span>
+          <span>
+            <b>{person.activities.length}</b>
+            {" "}
+            {plural(person.activities.length, "касание", "касания", "касаний")}
+          </span>
+          <span className={openTasks.length > 0 ? "fact-attention" : undefined}>
+            <b>{openTasks.length}</b>
+            {" "}
+            {plural(openTasks.length, "открытая", "открытые", "открытых")}
+            {" "}
+            {plural(openTasks.length, "задача", "задачи", "задач")}
+          </span>
+          <span>
+            <b>{activeCampaigns.length}</b>
+            {" "}
+            {plural(activeCampaigns.length, "кампания", "кампании", "кампаний")}
+          </span>
+        </p>
       </div>
 
       {notice ? <div className="page-notice">{notice}</div> : null}
@@ -550,12 +699,6 @@ export default function OutreachPersonPage(
           <Link href={`/base/${person.mergedIntoContactId}`}>
             {person.mergedIntoDisplayName ?? "главную карточку"}
           </Link>.
-        </div>
-      ) : null}
-      {person.mergedDuplicates > 0 ? (
-        <div className="page-notice">
-          Сюда сведено дублей: {person.mergedDuplicates}. Их звонки, кампании и мероприятия
-          показаны ниже вместе со своими.
         </div>
       ) : null}
       {person.isOwn ? (
@@ -707,208 +850,305 @@ export default function OutreachPersonPage(
         </section>
       ) : null}
 
-      <div className="metrics-strip">
-        <div>
-          <span title="Заказы бота плюс оплаты, заведённые руками. Частичные возвраты не вычтены — их видно в самом заказе.">
-            Принёс всего
-          </span>
-          <strong>{formatKopecks(person.paidTotalKopecks)}</strong>
-        </div>
-        <div>
-          <span>Мероприятий</span>
-          <strong>{person.participations.length}</strong>
-        </div>
-        <div>
-          <span>Касаний</span>
-          <strong>{person.activities.length}</strong>
-        </div>
-        <div>
-          <span>Открытых задач</span>
-          <strong>{openTasks.length}</strong>
-        </div>
-        <div>
-          <span>В базе с</span>
-          <strong>{formatCompactDate(person.createdAt)}</strong>
-        </div>
-      </div>
+      <div className="person-layout">
+        <div className="person-rail">
 
-      <section className="data-section">
-        <div className="section-title-row">
-          <div><h2>Контакты</h2></div>
-        </div>
-        <dl className="person-identifiers">
-          <div>
-            <dt><Phone size={14} /> Телефон</dt>
-            <dd>{person.phone ?? <span className="muted">не знаем</span>}</dd>
-          </div>
-          <div>
-            <dt><MessageSquare size={14} /> Telegram</dt>
-            <dd>
-              {person.telegramUsername
-                ? `@${person.telegramUsername}`
-                : <span className="muted">не знаем</span>}
-            </dd>
-          </div>
-          <div>
-            <dt><MessageSquare size={14} /> MAX</dt>
-            <dd>{person.maxIdentifier ?? <span className="muted">не знаем</span>}</dd>
-          </div>
-          <div>
-            <dt><Mail size={14} /> Почта</dt>
-            <dd>{person.email ?? <span className="muted">не знаем</span>}</dd>
-          </div>
-          <div>
-            <dt><Bot size={14} /> В боте</dt>
-            <dd>
-              {person.linkedUserId ? (
-                <Link href={`/users/${person.linkedUserId}`}>
-                  Открыть пользователя
-                </Link>
-              ) : (
-                <span className="muted">не заходил</span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>Источник</dt>
-            <dd>{person.source ?? <span className="muted">неизвестен</span>}</dd>
-          </div>
-        </dl>
-        {person.note ? <p className="person-note">{person.note}</p> : null}
-        <p className="muted person-meta">
-          В базе с {formatCompactDate(person.createdAt)}
-          {person.createdByName ? `, завёл ${person.createdByName}` : ""}
-          {person.updatedAt !== person.createdAt
-            ? `, обновлён ${formatCompactDate(person.updatedAt)}`
-            : ""}
-        </p>
-      </section>
-
-      <section className="data-section">
-        <div className="section-title-row">
-          <div>
-            <h2>Заметки</h2>
-            <span>{person.notes.length}</span>
-          </div>
-          {/* Не то же, что комментарий в карточке выше: тот приезжает из импорта и
-              перезаписывается целиком. Заметки копятся и подписаны именем. */}
-          <span className="muted">Что менеджеры узнали о человеке</span>
-        </div>
-        <form className="person-note-form" onSubmit={(event) => void addNote(event)}>
-          <textarea
-            value={noteDraft}
-            onChange={(event) => setNoteDraft(event.target.value)}
-            rows={2}
-            maxLength={4000}
-            placeholder="Например: просил не звонить до сентября, едет с женой"
-          />
-          <button
-            className="secondary-button"
-            type="submit"
-            disabled={mutating || noteDraft.trim().length === 0}
-          >
-            <StickyNote size={16} />
-            Записать
-          </button>
-        </form>
-        {person.notes.length === 0 ? (
-          <p className="muted">Заметок пока нет.</p>
-        ) : (
-          <ol className="person-timeline">
-            {person.notes.map((note) => (
-              <li key={note.id}>
-                <div className="person-timeline-head">
-                  <strong>{note.authorName}</strong>
-                  <span className="muted">{formatDateTime(note.createdAt)}</span>
-                  {/* Снять можно только свою: заметка подписана именем, и стирать чужую
-                      подпись значит менять сказанное другим человеком. */}
-                  {note.canDelete ? (
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label="Снять заметку"
-                      title="Снять заметку"
-                      disabled={mutating}
-                      onClick={() => void removeNote(note.id)}
+          <section className="data-section">
+            <div className="section-title-row"><div><h2>Контакты</h2></div></div>
+            <dl className="person-contacts">
+              <div className="person-contact person-contact-lead">
+                <Phone size={16} />
+                <dt>Телефон</dt>
+                <dd>
+                  {person.phone
+                    ? <a href={`tel:${person.phone.replace(/[^+\d]/g, "")}`}>{person.phone}</a>
+                    : <span className="muted">не знаем</span>}
+                </dd>
+              </div>
+              <div className="person-contact">
+                <Send size={16} />
+                <dt>Telegram</dt>
+                <dd>
+                  {person.telegramUsername ? (
+                    <a
+                      href={`https://t.me/${person.telegramUsername}`}
+                      target="_blank"
+                      rel="noreferrer"
                     >
-                      <Trash2 size={15} />
-                    </button>
-                  ) : null}
-                </div>
-                <p>{note.body}</p>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+                      @{person.telegramUsername}
+                    </a>
+                  ) : <span className="muted">не знаем</span>}
+                </dd>
+              </div>
+              <div className="person-contact">
+                <MessageSquare size={16} />
+                <dt>MAX</dt>
+                <dd>{person.maxIdentifier ?? <span className="muted">не знаем</span>}</dd>
+              </div>
+              <div className="person-contact">
+                <Mail size={16} />
+                <dt>Почта</dt>
+                <dd>
+                  {person.email
+                    ? <a href={`mailto:${person.email}`}>{person.email}</a>
+                    : <span className="muted">не знаем</span>}
+                </dd>
+              </div>
+              <div className="person-contact">
+                <Bot size={16} />
+                <dt>В боте</dt>
+                <dd>
+                  {person.linkedUserId ? (
+                    <Link href={`/users/${person.linkedUserId}`}>Открыть пользователя</Link>
+                  ) : <span className="muted">не заходил</span>}
+                </dd>
+              </div>
+              <div className="person-contact">
+                <Tag size={16} />
+                <dt>Источник</dt>
+                <dd>{person.source ?? <span className="muted">неизвестен</span>}</dd>
+              </div>
+            </dl>
+            <p className="muted person-meta">
+              В базе с {formatCompactDate(person.createdAt)}
+              {person.createdByName ? `, завёл ${person.createdByName}` : ""}
+              {person.updatedAt !== person.createdAt
+                ? `, обновлён ${formatCompactDate(person.updatedAt)}`
+                : ""}
+            </p>
+          </section>
 
-      <section className="data-section">
-        <div className="section-title-row">
-          <div>
-            <h2>Задачи</h2>
-            <span>
-              {openTasks.length > 0
-                ? `${openTasks.length} открытых`
-                : "открытых нет"}
-            </span>
-          </div>
-        </div>
-        {person.tasks.length === 0 ? (
-          <p className="muted">Задач по человеку не ставили.</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Что сделать</th>
-                  <th>Срок</th>
-                  <th>Ответственный</th>
-                  <th>Кампания</th>
-                  <th>Состояние</th>
-                  <th><span className="sr-only">Действия</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {person.tasks.map((task) => (
-                  <tr key={task.id}>
-                    <td>
-                      <div className="stacked-cell">
-                        <strong>{task.text}</strong>
-                        <span className="muted">{taskTypeLabel(task.type)}</span>
-                      </div>
-                    </td>
-                    <td>{formatDateTime(task.dueAt)}</td>
-                    <td>{task.assignedAdminName}</td>
-                    <td>
-                      {task.campaignId ? (
-                        <Link
-                          className="offer-link-inline"
-                          href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+          <section className="data-section">
+            <div className="section-title-row">
+              <div>
+                <h2>Что знаем о человеке</h2>
+                {/* Комментарий приезжает из импорта и перезаписывается целиком, заметки
+                    копятся и подписаны именем. Рядом их и читают. */}
+                <span>Комментарий из импорта и заметки менеджеров</span>
+              </div>
+            </div>
+            {person.note ? <p className="person-note">{person.note}</p> : null}
+            <form className="person-note-form" onSubmit={(event) => void addNote(event)}>
+              <textarea
+                value={noteDraft}
+                onChange={(event) => setNoteDraft(event.target.value)}
+                rows={2}
+                maxLength={4000}
+                placeholder="Например: просил не звонить до сентября, едет с женой"
+              />
+              <button
+                className="secondary-button"
+                type="submit"
+                disabled={mutating || noteDraft.trim().length === 0}
+              >
+                <StickyNote size={16} />
+                Записать
+              </button>
+            </form>
+            {person.notes.length === 0 ? (
+              <p className="muted person-empty">Заметок пока нет.</p>
+            ) : (
+              <ol className="person-spine">
+                {person.notes.map((note) => (
+                  <li key={note.id}>
+                    <div className="person-spine-head">
+                      <strong>{note.authorName}</strong>
+                      <span className="person-spine-time">{formatDateTime(note.createdAt)}</span>
+                      {/* Снять можно только свою: заметка подписана именем, и стирать чужую
+                          подпись значит менять сказанное другим человеком. */}
+                      {note.canDelete ? (
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label="Снять заметку"
+                          title="Снять заметку"
+                          disabled={mutating}
+                          onClick={() => void removeNote(note.id)}
                         >
-                          {task.campaignName}
-                        </Link>
-                      ) : (
-                        <span className="muted">без кампании</span>
-                      )}
-                    </td>
-                    <td>
-                      <StatusPill
-                        tone={
-                          task.status === "completed"
-                            ? "positive"
-                            : task.status === "cancelled"
-                              ? "neutral"
-                              : "warning"
-                        }
-                      >
-                        {task.status === "completed"
-                          ? "Выполнена"
-                          : task.status === "cancelled"
-                            ? "Заменена"
-                            : "Открыта"}
-                      </StatusPill>
-                    </td>
-                    <td>
+                          <Trash2 size={15} />
+                        </button>
+                      ) : null}
+                    </div>
+                    <p>{note.body}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+
+          {person.bot || person.siteRegistrations.length > 0 ? (
+            <section className="data-section">
+              <div className="section-title-row">
+                <div>
+                  <h2>Откуда пришёл</h2>
+                  <span>Бот, метки источника и заявки с сайта</span>
+                </div>
+              </div>
+              {person.bot ? (
+                <dl className="person-contacts">
+                  <div className="person-contact person-contact-plain">
+                    <dt>В боте с</dt>
+                    <dd>{formatDateTime(person.bot.registeredAt)}</dd>
+                  </div>
+                  <div className="person-contact person-contact-plain">
+                    <dt>Последний заход</dt>
+                    <dd>
+                      {person.bot.lastSeenAt
+                        ? formatDateTime(person.bot.lastSeenAt)
+                        : <span className="muted">не заходил после регистрации</span>}
+                    </dd>
+                  </div>
+                  <div className="person-contact person-contact-plain">
+                    <dt>Телефон в боте</dt>
+                    <dd>
+                      {PHONE_STATUS_LABELS[person.bot.phoneStatus] ?? person.bot.phoneStatus}
+                    </dd>
+                  </div>
+                  <div className="person-contact person-contact-plain">
+                    <dt>Кошелёк</dt>
+                    <dd>{formatKopecks(person.bot.walletAvailableKopecks)}</dd>
+                  </div>
+                  {person.bot.isBlocked ? (
+                    <div className="person-contact person-contact-plain">
+                      <dt>Состояние</dt>
+                      <dd>Бот заблокирован — сообщения не дойдут</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              ) : null}
+              {person.bot && person.bot.touchpoints.length === 0 ? (
+                <p className="muted person-empty">
+                  Человек открыл бота напрямую, без метки источника и партнёрской ссылки.
+                </p>
+              ) : null}
+              {(person.bot?.touchpoints.length ?? 0) > 0
+                || person.siteRegistrations.length > 0 ? (
+                <ol className="person-spine">
+                  {(person.bot?.touchpoints ?? []).map((touchpoint) => (
+                    <li
+                      key={`${touchpoint.channel}-${touchpoint.occurredAt}`}
+                      data-kind="touch"
+                    >
+                      <div className="person-spine-head">
+                        <strong>
+                          {touchpoint.partnerCode
+                            ? `Партнёр ${touchpoint.partnerCode}`
+                            : touchpoint.source ?? "Прямой заход"}
+                        </strong>
+                        {touchpoint.isFirstTouch ? (
+                          <StatusPill tone="neutral">первый переход</StatusPill>
+                        ) : null}
+                        <span className="person-spine-time">
+                          {formatDateTime(touchpoint.occurredAt)}
+                        </span>
+                      </div>
+                      {touchpoint.campaign ? (
+                        <div className="person-spine-meta">
+                          Кампания: {touchpoint.campaign}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                  {person.siteRegistrations.map((registration) => (
+                    <li key={registration.id}>
+                      <div className="person-spine-head">
+                        <strong>
+                          Заявка с сайта: {registration.eventTitle ?? "встреча не определена"}
+                        </strong>
+                        <span className="person-spine-time">
+                          {formatDateTime(registration.createdAt)}
+                        </span>
+                      </div>
+                      <div className="person-spine-meta">
+                        {[
+                          registration.page || null,
+                          SITE_REGISTRATION_LABELS[registration.status]
+                            ?? registration.status
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </section>
+          ) : null}
+
+          {person.customFields.length > 0 ? (
+            <section className="data-section">
+              <div className="section-title-row">
+                <div>
+                  <h2>Дополнительные поля</h2>
+                  <span>Заводятся по кампаниям</span>
+                </div>
+              </div>
+              <dl className="person-contacts">
+                {person.customFields.map((field) => (
+                  <div
+                    className="person-contact person-contact-plain"
+                    key={`${field.fieldId}-${field.campaignName}`}
+                  >
+                    <dt>{field.label}</dt>
+                    <dd>
+                      {field.value}
+                      <span className="muted"> · {field.campaignName}</span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+
+        </div>
+
+        <div className="person-main">
+
+          <section className="data-section">
+            <div className="section-title-row">
+              <div>
+                <h2>Задачи</h2>
+                <span>
+                  {openTasks.length > 0
+                    ? `${openTasks.length} ${plural(openTasks.length, "открытая", "открытые", "открытых")}`
+                    : "открытых нет"}
+                </span>
+              </div>
+            </div>
+            {person.tasks.length === 0 ? (
+              <p className="muted person-empty">Задач по человеку не ставили.</p>
+            ) : (
+              <ul className="person-list">
+                {person.tasks.map((task) => (
+                  <li
+                    key={task.id}
+                    className={task.status === "open" ? undefined : "person-list-done"}
+                  >
+                    <div className="person-list-main">
+                      <strong>{task.text}</strong>
+                      <span className="person-list-sub">
+                        {taskTypeLabel(task.type)}
+                        {" · "}
+                        <span
+                          className={task.status === "open"
+                            && new Date(task.dueAt).getTime() < Date.now()
+                            ? "overdue"
+                            : undefined}
+                        >
+                          срок {formatDateTime(task.dueAt)}
+                        </span>
+                        {" · "}
+                        {task.assignedAdminName}
+                        {task.campaignId ? " · " : ""}
+                        {task.campaignId ? (
+                          <Link
+                            className="offer-link-inline"
+                            href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
+                          >
+                            {task.campaignName}
+                          </Link>
+                        ) : null}
+                      </span>
+                    </div>
+                    <div className="person-list-side">
                       {task.status === "open" ? (
                         <div className="outreach-row-actions">
                           <button
@@ -923,71 +1163,95 @@ export default function OutreachPersonPage(
                             Выполнено
                           </button>
                         </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="data-section">
-        <div className="section-title-row">
-          <div>
-            <h2>Кампании</h2>
-            <span>{person.campaigns.length}</span>
-          </div>
-          {availableCampaigns.length > 0 ? (
-            <label className="select-field outreach-assign">
-              <span>Добавить в кампанию</span>
-              <select
-                defaultValue=""
-                disabled={mutating}
-                onChange={(event) => void addToCampaign(event)}
-              >
-                <option value="">Выберите</option>
-                {availableCampaigns.map((campaign) => (
-                  <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </div>
-        {person.campaigns.length === 0 ? (
-          <p className="muted">Человек ещё ни в одной кампании не участвовал.</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Кампания</th>
-                  <th>Стадия</th>
-                  <th>Ответственный</th>
-                  <th><span className="sr-only">Действия</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {person.campaigns.map((membership) => (
-                  <tr key={membership.campaignContactId}>
-                    <td>
-                      <div className="stacked-cell">
-                        <strong>{membership.campaignName}</strong>
-                        {membership.removedAt ? (
-                          <span className="muted">убран из кампании</span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td>{membership.stageLabel}</td>
-                    <td>
-                      {membership.assignedAdminName ?? (
-                        <span className="muted">не назначен</span>
+                      ) : (
+                        <StatusPill tone={task.status === "completed" ? "positive" : "neutral"}>
+                          {task.status === "completed" ? "Выполнена" : "Заменена"}
+                        </StatusPill>
                       )}
-                    </td>
-                    <td>
-                      <div className="outreach-row-actions">
-                        {membership.removedAt ? null : (
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="data-section">
+            <div className="section-title-row">
+              <div>
+                <h2>История</h2>
+                <span>{timeline.length}</span>
+              </div>
+              {/* Ради этой ленты карточка и заведена: раньше история резалась по кампаниям,
+                  и что человеку уже говорили, целиком не видел никто. */}
+              <span className="muted">Звонки, стадии и задачи из всех кампаний</span>
+            </div>
+            {timeline.length === 0 ? (
+              <p className="muted person-empty">С человеком ещё ничего не происходило.</p>
+            ) : (
+              <ol className="person-spine">
+                {timeline.map((entry) => (
+                  <li key={entry.id} data-kind={entry.kind}>
+                    <div className="person-spine-head">
+                      <strong>{entry.title}</strong>
+                      {entry.tone ? (
+                        <StatusPill tone={entry.tone}>{entry.badge}</StatusPill>
+                      ) : null}
+                      <span className="person-spine-time">
+                        {formatDateTime(entry.occurredAt)}
+                      </span>
+                    </div>
+                    <div className="person-spine-meta">
+                      {[entry.actor, entry.campaignName].filter(Boolean).join(" · ")}
+                    </div>
+                    {entry.note ? <p>{entry.note}</p> : null}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+
+          <section className="data-section">
+            <div className="section-title-row">
+              <div>
+                <h2>Кампании</h2>
+                <span>{person.campaigns.length}</span>
+              </div>
+              {availableCampaigns.length > 0 ? (
+                <label className="select-field outreach-assign">
+                  <span>Добавить в кампанию</span>
+                  <select
+                    defaultValue=""
+                    disabled={mutating}
+                    onChange={(event) => void addToCampaign(event)}
+                  >
+                    <option value="">Выберите</option>
+                    {availableCampaigns.map((campaign) => (
+                      <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+            {person.campaigns.length === 0 ? (
+              <p className="muted person-empty">
+                Человек ещё ни в одной кампании не участвовал.
+              </p>
+            ) : (
+              <ul className="person-list">
+                {person.campaigns.map((membership) => (
+                  <li key={membership.campaignContactId}>
+                    <div className="person-list-main">
+                      <strong>{membership.campaignName}</strong>
+                      <span className="person-list-sub">
+                        {membership.removedAt ? "убран из кампании · " : ""}
+                        {membership.stageLabel}
+                        {" · "}
+                        {membership.assignedAdminName ?? "ответственный не назначен"}
+                      </span>
+                    </div>
+                    <div className="person-list-side">
+                      {membership.removedAt ? null : (
+                        <div className="outreach-row-actions">
                           <button
                             type="button"
                             disabled={mutating}
@@ -996,355 +1260,139 @@ export default function OutreachPersonPage(
                             <PhoneCall size={16} />
                             Связаться
                           </button>
-                        )}
-                        <Link
-                          className="row-link"
-                          href={`/outreach/${membership.campaignId}?contact=${membership.campaignContactId}`}
-                        >
-                          Открыть
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {person.participations.length > 0 ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>Мероприятия</h2>
-              <span>{person.participations.length}</span>
-            </div>
-          </div>
-          <ul className="person-events">
-            {person.participations.map((participation) => (
-              <li key={participation.participantId}>
-                <div className="person-event-head">
-                  <CalendarDays size={15} />
-                  <Link href={`/events/${participation.eventId}/participants`}>
-                    {participation.eventTitle}
-                  </Link>
-                  <span className="muted">
-                    {[
-                      `${participation.guests} чел.`,
-                      participation.sleepingPlaces > 0
-                        ? `мест: ${participation.sleepingPlaces}`
-                        : null,
-                      participation.ticketTitle || null,
-                      participation.amountKopecks
-                        ? formatKopecks(participation.amountKopecks)
-                        : null
-                    ].filter(Boolean).join(" · ")}
-                  </span>
-                  {participation.checkedInAt ? (
-                    <StatusPill tone="positive">
-                      Пришёл {formatCompactDate(participation.checkedInAt)}
-                    </StatusPill>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {person.questionnaires.length > 0 ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>Анкеты</h2>
-              <span>{person.questionnaires.length}</span>
-            </div>
-            {/* Ради этого раздела карточка и нужна: чтобы вспомнить, чем человек
-                занимается, не надо помнить, на какое мероприятие он ездил. */}
-            <span className="muted">Ответы по всем мероприятиям</span>
-          </div>
-          <ul className="person-events">
-            {person.questionnaires.map((questionnaire, index) => (
-              <li key={`${questionnaire.source}-${questionnaire.eventId ?? index}`}>
-                <div className="person-event-head">
-                  <CalendarDays size={15} />
-                  {questionnaire.eventId ? (
-                    <Link href={`/events/${questionnaire.eventId}/questionnaire`}>
-                      {questionnaire.eventTitle}
-                    </Link>
-                  ) : (
-                    <strong>{questionnaire.eventTitle ?? "Без мероприятия"}</strong>
-                  )}
-                  <span className="muted">
-                    {questionnaire.source === "order"
-                      ? "анкета к заказу"
-                      : "анкета участника"}
-                    {questionnaire.filledAt
-                      ? ` · ${formatCompactDate(questionnaire.filledAt)}`
-                      : ""}
-                  </span>
-                </div>
-                <dl className="person-answers">
-                  {questionnaire.answers.map((answer) => (
-                    <div key={answer.fieldId}>
-                      <dt>{answer.label}</dt>
-                      <dd>{answer.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {person.customFields.length > 0 ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>Дополнительные поля</h2>
-              <span>{person.customFields.length}</span>
-            </div>
-            <span className="muted">Заводятся по кампаниям</span>
-          </div>
-          <dl className="person-identifiers">
-            {person.customFields.map((field) => (
-              <div key={`${field.fieldId}-${field.campaignName}`}>
-                <dt>{field.label}</dt>
-                <dd>
-                  {field.value}
-                  <span className="muted"> · {field.campaignName}</span>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ) : null}
-
-      {person.orders.length > 0 || person.consents.length > 0 ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>Заказы и согласия</h2>
-              <span>{person.orders.length}</span>
-            </div>
-            <span className="muted">Из бота</span>
-          </div>
-          {person.orders.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Заказ</th>
-                    <th>Мероприятие</th>
-                    <th>Статус</th>
-                    <th>Сумма</th>
-                    <th>Создан</th>
-                    <th><span className="sr-only">Открыть</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {person.orders.map((order) => (
-                    <tr key={order.id}>
-                      <td>
-                        <div className="stacked-cell">
-                          <strong>{order.number}</strong>
-                          {order.excludedAt ? (
-                            <span className="muted">исключён из отчётов</span>
-                          ) : null}
                         </div>
-                      </td>
-                      <td>{order.eventTitle}</td>
-                      <td>
-                        <StatusPill tone={orderStatusTone(order.status)}>
-                          {orderStatusLabel(order.status)}
-                        </StatusPill>
-                      </td>
-                      <td className="money-cell">{formatKopecks(order.totalKopecks)}</td>
-                      <td>{formatCompactDate(order.createdAt)}</td>
-                      <td>
-                        <Link
-                          className="row-link"
-                          href={`/orders/${order.id}`}
-                          aria-label={`Открыть заказ ${order.number}`}
-                        >
-                          <ExternalLink size={17} />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-          {/* Ссылка ведёт на ту редакцию оферты, с которой человек согласился, а не на
-              действующую: ради этого версии и сделаны неизменяемыми. */}
-          {person.consents.length > 0 ? (
-            <ul className="person-events">
-              {person.consents.map((consent) => (
-                <li key={consent.orderId}>
-                  <div className="person-event-head">
-                    <strong>Оферта, редакция {consent.versionNumber}</strong>
-                    <span className="muted">
-                      заказ {consent.orderNumber} · {formatDateTime(consent.acceptedAt)}
-                    </span>
-                    <a
-                      className="offer-link-inline"
-                      href={consent.publicUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Документ
-                      <ExternalLink size={15} />
-                    </a>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-      ) : null}
-
-      {person.bot ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>В боте</h2>
-              <span>
-                {person.bot.isBlocked ? "бот заблокирован" : "активен"}
-              </span>
-            </div>
-            <Link className="row-link" href={`/users/${person.bot.userId}`}>
-              Открыть пользователя
-            </Link>
-          </div>
-          <dl className="person-identifiers">
-            <div>
-              <dt>Зарегистрировался</dt>
-              <dd>{formatDateTime(person.bot.registeredAt)}</dd>
-            </div>
-            <div>
-              <dt>Последний раз заходил</dt>
-              <dd>
-                {person.bot.lastSeenAt
-                  ? formatDateTime(person.bot.lastSeenAt)
-                  : <span className="muted">не заходил после регистрации</span>}
-              </dd>
-            </div>
-            <div>
-              <dt>Телефон</dt>
-              <dd>
-                {PHONE_STATUS_LABELS[person.bot.phoneStatus] ?? person.bot.phoneStatus}
-              </dd>
-            </div>
-            <div>
-              <dt>Кошелёк</dt>
-              <dd>{formatKopecks(person.bot.walletAvailableKopecks)}</dd>
-            </div>
-          </dl>
-          <div className="section-title-row">
-            <div>
-              <h3>Откуда пришёл</h3>
-              <span>
-                {person.bot.touchpoints.length > 0
-                  ? "первое касание сверху"
-                  : "метки источника нет"}
-              </span>
-            </div>
-          </div>
-          {person.bot.touchpoints.length === 0 ? (
-            <p className="muted">
-              Человек открыл бота напрямую, без метки источника и партнёрской ссылки.
-            </p>
-          ) : (
-            <ol className="person-timeline">
-              {person.bot.touchpoints.map((touchpoint) => (
-                <li key={`${touchpoint.channel}-${touchpoint.occurredAt}`}>
-                  <div className="person-timeline-head">
-                    <strong>
-                      {touchpoint.partnerCode
-                        ? `Партнёр ${touchpoint.partnerCode}`
-                        : touchpoint.source ?? "Прямой заход"}
-                    </strong>
-                    {touchpoint.isFirstTouch ? (
-                      <StatusPill tone="neutral">первый переход</StatusPill>
-                    ) : null}
-                    <span className="muted">{formatDateTime(touchpoint.occurredAt)}</span>
-                  </div>
-                  {touchpoint.campaign ? (
-                    <div className="person-timeline-meta muted">
-                      Кампания: {touchpoint.campaign}
+                      )}
+                      <Link
+                        className="row-link"
+                        href={`/outreach/${membership.campaignId}?contact=${membership.campaignContactId}`}
+                        aria-label={`Открыть кампанию ${membership.campaignName}`}
+                      >
+                        <ExternalLink size={17} />
+                      </Link>
                     </div>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-      ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-      {person.siteRegistrations.length > 0 ? (
-        <section className="data-section">
-          <div className="section-title-row">
-            <div>
-              <h2>Заявки с сайта</h2>
-              <span>{person.siteRegistrations.length}</span>
-            </div>
-            <span className="muted">Найдены по телефону</span>
-          </div>
-          <ul className="person-events">
-            {person.siteRegistrations.map((registration) => (
-              <li key={registration.id}>
-                <div className="person-event-head">
-                  <strong>{registration.eventTitle ?? "Встреча не определена"}</strong>
-                  <span className="muted">
-                    {[
-                      registration.page || null,
-                      SITE_REGISTRATION_LABELS[registration.status]
-                        ?? registration.status,
-                      formatDateTime(registration.createdAt)
-                    ].filter(Boolean).join(" · ")}
-                  </span>
+          {personEvents.length > 0 ? (
+            <section className="data-section">
+              <div className="section-title-row">
+                <div>
+                  <h2>Мероприятия и анкеты</h2>
+                  <span>{personEvents.length}</span>
                 </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+                {/* Ради анкет карточка и нужна: чтобы вспомнить, чем человек занимается,
+                    не надо помнить, на какое мероприятие он ездил. Раньше поездка и ответы
+                    жили в разных разделах, и название события повторялось дважды. */}
+                <span className="muted">Ответы видны там же, где поездка</span>
+              </div>
+              <ul className="person-list person-list-blocks">
+                {personEvents.map((entry) => (
+                  <li key={entry.key}>
+                    <div className="person-list-main">
+                      <strong>
+                        {entry.eventId ? (
+                          <Link href={entry.href ?? "#"}>{entry.title}</Link>
+                        ) : entry.title}
+                      </strong>
+                      {entry.meta ? (
+                        <span className="person-list-sub">{entry.meta}</span>
+                      ) : null}
+                      {entry.questionnaires.map((questionnaire, index) => (
+                        <dl className="person-answers" key={`${entry.key}-${index}`}>
+                          {questionnaire.answers.map((answer) => (
+                            <div key={answer.fieldId}>
+                              <dt>{answer.label}</dt>
+                              <dd>{answer.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ))}
+                    </div>
+                    <div className="person-list-side">
+                      {entry.checkedInAt ? (
+                        <StatusPill tone="positive">
+                          Пришёл {formatCompactDate(entry.checkedInAt)}
+                        </StatusPill>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-      <section className="data-section">
-        <div className="section-title-row">
-          <div>
-            <h2>История</h2>
-            <span>{timeline.length}</span>
-          </div>
-          {/* Ради этой ленты карточка и заведена: раньше история резалась по кампаниям,
-              и что человеку уже говорили, целиком не видел никто. */}
-          <span className="muted">Звонки, стадии и задачи из всех кампаний</span>
+          {person.orders.length > 0 || person.consents.length > 0 ? (
+            <section className="data-section">
+              <div className="section-title-row">
+                <div>
+                  <h2>Заказы и согласия</h2>
+                  <span>{person.orders.length}</span>
+                </div>
+                <span className="muted">Из бота</span>
+              </div>
+              <ul className="person-list">
+                {person.orders.map((order) => (
+                  <li key={order.id}>
+                    <div className="person-list-main">
+                      <strong>{order.number}</strong>
+                      <span className="person-list-sub">
+                        {order.eventTitle}
+                        {" · "}
+                        {formatCompactDate(order.createdAt)}
+                        {order.excludedAt ? " · исключён из отчётов" : ""}
+                      </span>
+                    </div>
+                    <div className="person-list-side">
+                      <span className="person-list-money">
+                        {formatKopecks(order.totalKopecks)}
+                      </span>
+                      <StatusPill tone={orderStatusTone(order.status)}>
+                        {orderStatusLabel(order.status)}
+                      </StatusPill>
+                      <Link
+                        className="row-link"
+                        href={`/orders/${order.id}`}
+                        aria-label={`Открыть заказ ${order.number}`}
+                      >
+                        <ExternalLink size={17} />
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+                {/* Ссылка ведёт на ту редакцию оферты, с которой человек согласился, а не на
+                    действующую: ради этого версии и сделаны неизменяемыми. */}
+                {person.consents.map((consent) => (
+                  <li key={consent.orderId}>
+                    <div className="person-list-main">
+                      <strong>Оферта, редакция {consent.versionNumber}</strong>
+                      <span className="person-list-sub">
+                        заказ {consent.orderNumber}
+                        {" · принял "}
+                        {formatDateTime(consent.acceptedAt)}
+                      </span>
+                    </div>
+                    <div className="person-list-side">
+                      <a
+                        className="offer-link-inline"
+                        href={consent.publicUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Документ
+                        <ExternalLink size={15} />
+                      </a>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
         </div>
-        {timeline.length === 0 ? (
-          <p className="muted">С человеком ещё ничего не происходило.</p>
-        ) : (
-          <ol className="person-timeline">
-            {timeline.map((entry) => (
-              <li key={entry.id}>
-                <div className="person-timeline-head">
-                  <strong>{entry.title}</strong>
-                  {entry.tone ? (
-                    <StatusPill tone={entry.tone}>{entry.badge}</StatusPill>
-                  ) : null}
-                  <span className="muted">{formatDateTime(entry.occurredAt)}</span>
-                </div>
-                <div className="person-timeline-meta muted">
-                  {[entry.actor, entry.campaignName].filter(Boolean).join(" · ")}
-                </div>
-                {entry.note ? <p>{entry.note}</p> : null}
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+      </div>
 
       {touchCampaign ? (
         <OutreachTouchDialog
@@ -1385,6 +1433,8 @@ export default function OutreachPersonPage(
 
 interface TimelineEntry {
   readonly id: string;
+  /** Форма метки в ленте: касание, смена этапа или задача. */
+  readonly kind: "touch" | "stage" | "task";
   readonly title: string;
   readonly badge: string | null;
   readonly tone: "positive" | "neutral" | "danger" | "warning" | null;
@@ -1402,6 +1452,7 @@ interface TimelineEntry {
 function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry[] {
   const activities: readonly TimelineEntry[] = person.activities.map((activity) => ({
     id: `activity-${activity.id}`,
+    kind: "touch",
     title: channelLabel(activity.channel),
     badge: statusLabel(activity.result),
     tone: activity.result === "converted" || activity.result === "interested"
@@ -1421,6 +1472,7 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
     .filter((change) => change.fromStage !== null)
     .map((change) => ({
       id: `stage-${change.id}`,
+      kind: "stage",
       title: `Этап: ${change.toLabel}`,
       badge: change.fromLabel ? `из «${change.fromLabel}»` : null,
       tone: change.fromLabel ? "neutral" : null,
@@ -1434,6 +1486,7 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
 
   const tasks: readonly TimelineEntry[] = person.tasks.map((task) => ({
     id: `task-${task.id}`,
+    kind: "task",
     title: task.status === "completed"
       ? "Задача выполнена"
       : task.status === "cancelled"

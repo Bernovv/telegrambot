@@ -2596,28 +2596,6 @@ tbody tr:hover {
   flex: 1 1 320px;
 }
 
-.person-note-form {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-  margin-bottom: 16px;
-}
-
-.person-note-form textarea {
-  width: 100%;
-  padding: 8px 10px;
-  background: #ffffff;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  font: inherit;
-  font-size: 13px;
-  resize: vertical;
-}
-
-.person-timeline .person-timeline-head .icon-button {
-  margin-left: auto;
-}
-
 .outreach-history {
   padding: 18px;
 }
@@ -4404,119 +4382,472 @@ tbody tr:hover {
   border-top: 1px solid var(--line);
 }
 
-.person-identifiers {
+/* ── Карточка человека ────────────────────────────────────────────────────────
+   Страницу открывают перед звонком, и порядок здесь — порядок работы: слева то,
+   кто это (как дозвониться и что о человеке уже знают), справа то, что с ним
+   происходит (задачи, история, кампании, деньги). Раньше всё это шло одной
+   колонкой из одиннадцати одинаковых карточек, и до истории надо было
+   прокрутить три экрана. */
+
+.person-head {
   display: grid;
-  gap: 16px 24px;
-  padding: 16px 18px;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px 24px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
 }
 
-.person-identifiers dt {
+.person-title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.person-title h1 {
+  font-size: clamp(23px, 2.1vw, 29px);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.person-head-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 3px;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 8px;
 }
 
-.person-identifiers dd {
+/* Одна строка вместо полосы из пяти карточек: цифры те же, но не занимают экран
+   и не оставляют пятую ячейку сиротой во второй строке. */
+.person-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  grid-column: 1 / -1;
+  gap: 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.person-facts > span {
+  display: inline-flex;
+  align-items: baseline;
+  margin-right: 13px;
+  padding-right: 13px;
+  gap: 5px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.person-facts > span:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+
+.person-facts b {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-facts .fact-attention b {
+  color: var(--warning);
+}
+
+/* Правка, архив, дубль и удаление уезжают в меню: в шапке остаются только те
+   действия, ради которых карточку и открывают. Восемь кнопок в ряд рвались на
+   две строки и отжимали имя человека в угол. */
+.more-menu {
+  position: relative;
+}
+
+.more-menu > summary {
+  list-style: none;
+}
+
+.more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-menu > summary::marker {
+  content: "";
+}
+
+.more-menu-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 224px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+
+.more-menu-panel button {
+  display: flex;
+  align-items: center;
+  padding: 9px 10px;
+  gap: 10px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-menu-panel button:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.more-menu-panel button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.more-menu-panel button.danger {
+  color: var(--danger);
+}
+
+.more-menu-panel button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.more-menu-panel hr {
+  margin: 5px 4px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.person-layout {
+  display: grid;
+  margin-top: 24px;
+  gap: 20px;
+  grid-template-columns: 380px minmax(0, 1fr);
+  align-items: start;
+}
+
+.person-rail,
+.person-main {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  align-content: start;
+}
+
+.person-layout .data-section {
+  margin-top: 0;
+}
+
+.person-layout .section-title-row {
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.person-layout .section-title-row h2 {
+  font-size: 15px;
+}
+
+.person-contacts {
+  display: grid;
+}
+
+.person-contact {
+  display: grid;
+  padding: 11px 16px;
+  gap: 0 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  border-top: 1px solid var(--line);
+}
+
+.person-contact:first-child {
+  border-top: 0;
+}
+
+.person-contact > svg {
+  grid-area: 1 / 1 / 3 / 2;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.person-contact dt {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.person-contact dd {
   margin: 0;
+  grid-column: 2;
   font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* Служебные поля идут без значка — иконка там ничего бы не добавила. */
+.person-contact-plain {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.person-contact-plain > dt,
+.person-contact-plain > dd {
+  grid-column: 1;
+}
+
+.person-contact dd a {
+  color: var(--ink);
+  text-underline-offset: 3px;
+}
+
+.person-contact dd a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Телефон — то, ради чего карточку чаще всего и открывают. */
+.person-contact-lead dd {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
 .person-note {
   margin: 0;
-  padding: 0 18px 12px;
-  color: var(--ink);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
   white-space: pre-wrap;
 }
 
 .person-meta {
-  padding: 0 18px 16px;
+  padding: 12px 16px;
   font-size: 12px;
 }
 
-.person-events {
-  display: grid;
-  margin: 0;
-  padding: 14px 18px;
-  gap: 10px;
-  list-style: none;
-}
-
-.person-events li {
-  display: grid;
-  gap: 8px;
+.person-empty {
+  padding: 14px 16px;
   color: var(--muted);
 }
 
-.person-event-head {
+.person-note-form {
+  display: grid;
+  padding: 14px 16px;
+  gap: 10px;
+  justify-items: start;
+  border-bottom: 1px solid var(--line);
+}
+
+.person-note-form textarea {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  resize: vertical;
+}
+
+/* Один ряд на все списки карточки: задачи, кампании, заказы, мероприятия. Раньше
+   те же данные показывали то таблицей с min-width 850px, то списком, то <dl>, и
+   в узкой колонке таблицы уезжали в горизонтальную прокрутку. */
+.person-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person-list > li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  padding: 13px 16px;
+  gap: 8px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.person-list > li:first-child {
+  border-top: 0;
+}
+
+.person-list-blocks > li {
+  align-items: flex-start;
+}
+
+.person-list-main {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 260px;
+  gap: 3px;
+}
+
+.person-list-main > strong {
+  font-weight: 650;
+}
+
+.person-list-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.person-list-sub .overdue {
+  color: var(--danger);
+  font-weight: 650;
+}
+
+.person-list-money {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-list-side {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
   gap: 8px;
+}
+
+.person-list-done > .person-list-main > strong {
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .person-answers {
   display: grid;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 10px 12px;
   gap: 10px 20px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   background: var(--surface-muted);
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  border-radius: 7px;
 }
 
 .person-answers dt {
   margin-bottom: 2px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .person-answers dd {
   margin: 0;
-  color: var(--ink);
   font-size: 13px;
 }
 
-.person-answers-empty {
-  font-size: 12px;
-}
-
-.person-events a {
-  color: var(--ink);
-}
-
-.person-timeline {
+/* Лента событий. Метка слева отличается формой, а не только подписью: закрашенный
+   кружок — касание, пустой — смена этапа, квадрат — задача. По ленте видно, что
+   именно с человеком происходило, до того как прочитаешь строку. */
+.person-spine {
   display: grid;
   margin: 0;
-  padding: 14px 18px;
-  gap: 14px;
+  padding: 4px 16px 12px;
   list-style: none;
 }
 
-.person-timeline li {
-  padding-left: 14px;
-  border-left: 2px solid var(--line);
+.person-spine > li {
+  position: relative;
+  padding: 11px 0 11px 24px;
 }
 
-.person-timeline p {
+.person-spine > li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--line);
+}
+
+.person-spine > li:first-child::before {
+  top: 17px;
+}
+
+.person-spine > li:last-child::before {
+  bottom: auto;
+  height: 17px;
+}
+
+.person-spine > li::after {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.person-spine > li[data-kind="touch"]::after {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.person-spine > li[data-kind="task"]::after {
+  border-color: var(--warning);
+  border-radius: 2px;
+}
+
+.person-spine-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.person-spine-head > strong {
+  font-weight: 650;
+}
+
+.person-spine-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-spine-head .icon-button {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+}
+
+.person-spine-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.person-spine p {
   margin: 6px 0 0;
   white-space: pre-wrap;
 }
 
-.person-timeline-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+@media (max-width: 1180px) {
+  .person-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-.person-timeline-meta {
-  margin-top: 3px;
-  font-size: 12px;
+@media (max-width: 760px) {
+  .person-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .person-head-actions {
+    flex-wrap: wrap;
+  }
 }
 
 /* Карточка человека: правка, архив и отказ в удалении. */
