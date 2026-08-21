@@ -10,15 +10,9 @@ import {
   type ReschedulableTask
 } from "@/components/outreach-task-reschedule-dialog";
 import {
-  PersonContactsCard,
-  PersonCustomFieldsCard,
-  PersonEventsCard,
+  PersonBody,
   PersonFacts,
-  PersonHistoryCard,
-  PersonKnowledgeCard,
-  PersonOrdersCard,
-  PersonOriginCard,
-  plural
+  headlineStage
 } from "@/components/person-card";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
@@ -28,6 +22,7 @@ import {
   archiveOutreachPerson,
   completeOutreachTask,
   createOutreachNote,
+  createOutreachPersonTask,
   deleteOutreachNote,
   deleteOutreachPerson,
   getOutreachPerson,
@@ -38,8 +33,7 @@ import {
   restoreOutreachPerson,
   updateOutreachPerson
 } from "@/lib/admin-api";
-import { formatCompactDate, formatDateTime } from "@/lib/format";
-import { taskTypeLabel } from "@/lib/outreach-labels";
+import { formatCompactDate } from "@/lib/format";
 import type {
   OutreachDeleteBlocker,
   OutreachCampaignSummary,
@@ -47,15 +41,13 @@ import type {
   OutreachMergeBlocker,
   OutreachPerson,
   OutreachPersonCampaign,
-  OutreachPersonCard
+  OutreachPersonCard,
+  OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
 import {
   ArchiveRestore,
   ArrowLeft,
   CalendarClock,
-  Clock,
-  CheckCircle2,
-  ExternalLink,
   Merge,
   MoreHorizontal,
   Pencil,
@@ -69,7 +61,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  type ChangeEvent,
   type FormEvent,
   type MouseEvent,
   use,
@@ -118,6 +109,8 @@ export default function OutreachPersonPage(
   const [managers, setManagers] = useState<readonly OutreachManager[]>([]);
   const [touchCampaign, setTouchCampaign] =
     useState<OutreachPersonCampaign | null>(null);
+  /** Текст, написанный в поле внизу ленты: уезжает в разбор касания заметкой. */
+  const [touchNote, setTouchNote] = useState("");
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [campaigns, setCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
@@ -280,6 +273,35 @@ export default function OutreachPersonPage(
     }
   }
 
+  async function createTask(input: {
+    readonly type: string;
+    readonly text: string;
+    readonly dueAt: Date;
+    readonly assignedAdminId: string | null;
+  }): Promise<boolean> {
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await createOutreachPersonTask(id, {
+        type: input.type as OutreachTaskType,
+        text: input.text,
+        dueAt: input.dueAt.toISOString(),
+        ...(input.assignedAdminId
+          ? { assignedAdminId: input.assignedAdminId }
+          : {})
+      });
+      setNotice("Задача поставлена.");
+      await load();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось поставить задачу."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function removeNote(noteId: string) {
     if (!window.confirm("Снять заметку? В карточке её больше не будет.")) {
       return;
@@ -287,12 +309,7 @@ export default function OutreachPersonPage(
     await run(() => deleteOutreachNote(noteId), "Заметка снята.");
   }
 
-  async function addToCampaign(event: ChangeEvent<HTMLSelectElement>) {
-    const campaignId = event.target.value;
-    if (!campaignId) {
-      return;
-    }
-    event.target.value = "";
+  async function addToCampaign(campaignId: string) {
     setMutating(true);
     setError(null);
     setNotice(null);
@@ -412,7 +429,6 @@ export default function OutreachPersonPage(
   }
 
   const activeCampaigns = person.campaigns.filter((item) => !item.removedAt);
-  const openTasks = person.tasks.filter((task) => task.status === "open");
   // Связаться можно только внутри кампании — касание записывается по ней. Когда кампания
   // одна, спрашивать нечего; когда их несколько, кнопка живёт в строке каждой.
   const singleCampaign = activeCampaigns.length === 1 ? activeCampaigns[0] : null;
@@ -421,6 +437,7 @@ export default function OutreachPersonPage(
   // разделе.
   const availableCampaigns = campaigns.filter((campaign) =>
     !activeCampaigns.some((item) => item.campaignId === campaign.id));
+  const stage = headlineStage(person);
 
   function menuAction(action: () => void) {
     return (event: MouseEvent<HTMLButtonElement>) => {
@@ -441,6 +458,12 @@ export default function OutreachPersonPage(
       <div className="person-head">
         <div className="person-title">
           <h1>{person.displayName ?? "Без имени"}</h1>
+          {stage ? (
+            <StatusPill tone="neutral">
+              {stage.stageLabel}
+              <span className="pill-note"> · {stage.campaignName}</span>
+            </StatusPill>
+          ) : null}
           {person.archivedAt ? (
             <StatusPill tone="neutral">В архиве</StatusPill>
           ) : null}
@@ -545,6 +568,9 @@ export default function OutreachPersonPage(
 
       {notice ? <div className="page-notice">{notice}</div> : null}
       {error ? <div className="page-warning">{error}</div> : null}
+      {/* Дубль остаётся во весь размер: он означает «вы смотрите не ту карточку», и свернуть
+          это в строку нельзя. Остальные пометки — про человека, а не про карточку, и раньше
+          шли сплошняком, отодвигая содержимое на третий экран. */}
       {person.mergedIntoContactId ? (
         <div className="page-warning">
           <strong>Это дубль.</strong>{" "}
@@ -555,37 +581,50 @@ export default function OutreachPersonPage(
           </Link>.
         </div>
       ) : null}
-      {person.isOwn ? (
-        <div className="page-notice">
-          <strong>Свои.</strong>{" "}
-          Обзванивать не надо.
-          {person.ownNote ? ` ${person.ownNote}.` : ""}
-          {person.ownMarkedByName
-            ? ` Отметил ${person.ownMarkedByName}${person.ownMarkedAt
-              ? ` ${formatCompactDate(person.ownMarkedAt)}`
-              : ""}.`
-            : ""}
-          {" "}
-          <button className="inline-link" type="button" onClick={() => setOwnOpen(true)}>
-            Изменить или снять
-          </button>
-        </div>
-      ) : null}
-      {person.archivedAt && person.archivedReason ? (
-        <div className="page-notice">
-          Убран из базы: {person.archivedReason}
-        </div>
-      ) : null}
-      {blockers.length > 0 ? (
-        <div className="page-warning">
-          <strong>Стереть насовсем нельзя.</strong>
-          <ul>
-            {blockers.map((blocker) => (
-              <li key={blocker}>{BLOCKER_LABELS[blocker]}</li>
-            ))}
-          </ul>
-          Уберите его из базы — он исчезнет из списков, а история останется.
-        </div>
+      {person.isOwn || person.archivedAt || blockers.length > 0 ? (
+        <details className="person-flags">
+          <summary>
+            {[
+              person.isOwn ? "свои — обзванивать не надо" : null,
+              person.archivedAt ? "убран из базы" : null,
+              blockers.length > 0 ? "стереть насовсем нельзя" : null
+            ].filter(Boolean).join(" · ")}
+          </summary>
+          <div className="person-flags-body">
+            {person.isOwn ? (
+              <p>
+                <strong>Свои.</strong>{" "}
+                Обзванивать не надо.
+                {person.ownNote ? ` ${person.ownNote}.` : ""}
+                {person.ownMarkedByName
+                  ? ` Отметил ${person.ownMarkedByName}${person.ownMarkedAt
+                    ? ` ${formatCompactDate(person.ownMarkedAt)}`
+                    : ""}.`
+                  : ""}
+                {" "}
+                <button className="inline-link" type="button" onClick={() => setOwnOpen(true)}>
+                  Изменить или снять
+                </button>
+              </p>
+            ) : null}
+            {person.archivedAt ? (
+              <p>
+                <strong>Убран из базы.</strong>
+                {person.archivedReason ? ` ${person.archivedReason}.` : ""}
+                {" "}
+                Из списков и подбора в кампании он пропал, история осталась.
+              </p>
+            ) : null}
+            {blockers.length > 0 ? (
+              <p>
+                <strong>Стереть насовсем нельзя:</strong>{" "}
+                {blockers.map((blocker) => BLOCKER_LABELS[blocker]).join("; ")}.
+                {" "}
+                Уберите его из базы — он исчезнет из списков, а история останется.
+              </p>
+            ) : null}
+          </div>
+        </details>
       ) : null}
 
       {merging ? (
@@ -708,185 +747,35 @@ export default function OutreachPersonPage(
         </section>
       ) : null}
 
-      <div className="person-layout">
-        <div className="person-rail">
-          <PersonContactsCard person={person} />
-          <PersonKnowledgeCard
-            person={person}
-            busy={mutating}
-            onSaveNote={saveNote}
-            onRemoveNote={removeNote}
-          />
-          <PersonOriginCard person={person} />
-          <PersonCustomFieldsCard person={person} />
-        </div>
-
-        <div className="person-main">
-
-          <section className="data-section">
-            <div className="section-title-row">
-              <div>
-                <h2>Задачи</h2>
-                <span>
-                  {openTasks.length > 0
-                    ? `${openTasks.length} ${plural(openTasks.length, "открытая", "открытые", "открытых")}`
-                    : "открытых нет"}
-                </span>
-              </div>
-            </div>
-            {person.tasks.length === 0 ? (
-              <p className="muted person-empty">Задач по человеку не ставили.</p>
-            ) : (
-              <ul className="person-list">
-                {person.tasks.map((task) => (
-                  <li
-                    key={task.id}
-                    className={task.status === "open" ? undefined : "person-list-done"}
-                  >
-                    <div className="person-list-main">
-                      <strong>{task.text}</strong>
-                      <span className="person-list-sub">
-                        {taskTypeLabel(task.type)}
-                        {" · "}
-                        <span
-                          className={task.status === "open"
-                            && new Date(task.dueAt).getTime() < Date.now()
-                            ? "overdue"
-                            : undefined}
-                        >
-                          срок {formatDateTime(task.dueAt)}
-                        </span>
-                        {" · "}
-                        {task.assignedAdminName}
-                        {task.campaignId ? " · " : ""}
-                        {task.campaignId ? (
-                          <Link
-                            className="offer-link-inline"
-                            href={`/outreach/${task.campaignId}?contact=${task.campaignContactId}`}
-                          >
-                            {task.campaignName}
-                          </Link>
-                        ) : null}
-                      </span>
-                    </div>
-                    <div className="person-list-side">
-                      {task.status === "open" ? (
-                        <div className="outreach-row-actions">
-                          <button
-                            type="button"
-                            disabled={mutating}
-                            onClick={() => setReschedule({
-                              id: task.id,
-                              type: task.type,
-                              text: task.text,
-                              dueAt: task.dueAt,
-                              assignedAdminId: task.assignedAdminId,
-                              campaignContactId: task.campaignContactId,
-                              contactId: person.contactId,
-                              contactName: person.displayName
-                            })}
-                          >
-                            <Clock size={16} />
-                            Перенести
-                          </button>
-                          <button
-                            type="button"
-                            disabled={mutating}
-                            onClick={() => void run(
-                              () => completeOutreachTask(task.id),
-                              "Задача выполнена."
-                            )}
-                          >
-                            <CheckCircle2 size={16} />
-                            Выполнено
-                          </button>
-                        </div>
-                      ) : (
-                        <StatusPill tone={task.status === "completed" ? "positive" : "neutral"}>
-                          {task.status === "completed" ? "Выполнена" : "Заменена"}
-                        </StatusPill>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <PersonHistoryCard person={person} />
-
-          <section className="data-section">
-            <div className="section-title-row">
-              <div>
-                <h2>Кампании</h2>
-                <span>{person.campaigns.length}</span>
-              </div>
-              {availableCampaigns.length > 0 ? (
-                <label className="select-field outreach-assign">
-                  <span>Добавить в кампанию</span>
-                  <select
-                    defaultValue=""
-                    disabled={mutating}
-                    onChange={(event) => void addToCampaign(event)}
-                  >
-                    <option value="">Выберите</option>
-                    {availableCampaigns.map((campaign) => (
-                      <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-            {person.campaigns.length === 0 ? (
-              <p className="muted person-empty">
-                Человек ещё ни в одной кампании не участвовал.
-              </p>
-            ) : (
-              <ul className="person-list">
-                {person.campaigns.map((membership) => (
-                  <li key={membership.campaignContactId}>
-                    <div className="person-list-main">
-                      <strong>{membership.campaignName}</strong>
-                      <span className="person-list-sub">
-                        {membership.removedAt ? "убран из кампании · " : ""}
-                        {membership.stageLabel}
-                        {" · "}
-                        {membership.assignedAdminName ?? "ответственный не назначен"}
-                      </span>
-                    </div>
-                    <div className="person-list-side">
-                      {membership.removedAt ? null : (
-                        <div className="outreach-row-actions">
-                          <button
-                            type="button"
-                            disabled={mutating}
-                            onClick={() => setTouchCampaign(membership)}
-                          >
-                            <PhoneCall size={16} />
-                            Связаться
-                          </button>
-                        </div>
-                      )}
-                      <Link
-                        className="row-link"
-                        href={`/outreach/${membership.campaignId}?contact=${membership.campaignContactId}`}
-                        aria-label={`Открыть кампанию ${membership.campaignName}`}
-                      >
-                        <ExternalLink size={17} />
-                      </Link>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <PersonEventsCard person={person} />
-
-          <PersonOrdersCard person={person} />
-
-        </div>
-      </div>
+      <PersonBody
+        person={person}
+        managers={managers}
+        busy={mutating}
+        variant="page"
+        availableCampaigns={availableCampaigns}
+        onAddToCampaign={(campaignId) => void addToCampaign(campaignId)}
+        onSaveNote={saveNote}
+        onRemoveNote={removeNote}
+        onCreateTask={createTask}
+        onTouch={(campaign, note) => {
+          setTouchNote(note);
+          setTouchCampaign(campaign);
+        }}
+        onCompleteTask={(taskId) => run(
+          () => completeOutreachTask(taskId),
+          "Задача выполнена."
+        )}
+        onRescheduleTask={(task) => setReschedule({
+          id: task.id,
+          type: task.type,
+          text: task.text,
+          dueAt: task.dueAt,
+          assignedAdminId: task.assignedAdminId,
+          campaignContactId: task.campaignContactId,
+          contactId: person.contactId,
+          contactName: person.displayName
+        })}
+      />
 
       {ownOpen ? (
         <PersonOwnDialog
@@ -925,10 +814,15 @@ export default function OutreachPersonPage(
             isOwn: person.isOwn
           }]}
           columns={null}
-          onClose={() => setTouchCampaign(null)}
+          defaultNote={touchNote}
+          onClose={() => {
+            setTouchCampaign(null);
+            setTouchNote("");
+          }}
           onRecorded={async () => {
             setNotice("Касание записано.");
             setTouchCampaign(null);
+            setTouchNote("");
             await load();
           }}
         />

@@ -47,6 +47,7 @@ export function OutreachTouchDialog({
   campaignId,
   targets,
   columns,
+  defaultNote,
   onClose,
   onRecorded
 }: {
@@ -54,6 +55,11 @@ export function OutreachTouchDialog({
   readonly targets: readonly OutreachTouchTarget[];
   /** Уже загруженные колонки воронки. null — диалог возьмёт их сам. */
   readonly columns: readonly OutreachPipelineColumn[] | null;
+  /**
+   * Текст, уже написанный в поле внизу карточки. Менеджер писал его о разговоре — терять
+   * написанное только потому, что разбор открылся отдельным окном, нельзя.
+   */
+  readonly defaultNote?: string | undefined;
   readonly onClose: () => void;
   readonly onRecorded: (recorded: number) => void | Promise<void>;
 }) {
@@ -241,7 +247,12 @@ export function OutreachTouchDialog({
           </label>
           <label>
             <span>Комментарий</span>
-            <textarea name="note" rows={3} maxLength={2000} />
+            <textarea
+              name="note"
+              rows={3}
+              maxLength={2000}
+              defaultValue={defaultNote ?? ""}
+            />
           </label>
           <button className="primary-button" type="submit" disabled={submitting}>
             {submitting ? "Сохраняем…" : "Записать касание"}

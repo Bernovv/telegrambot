@@ -15,30 +15,42 @@ import {
   taskTypeLabel
 } from "@/lib/outreach-labels";
 import type {
+  OutreachCampaignSummary,
+  OutreachManager,
+  OutreachPersonCampaign,
   OutreachPersonCard,
-  OutreachPersonQuestionnaire
+  OutreachPersonQuestionnaire,
+  OutreachPersonTask
 } from "@ticket-platform/contracts/admin-outreach";
 import {
   Bot,
+  CheckCircle2,
+  Clock,
   ExternalLink,
   Mail,
   MessageSquare,
   Phone,
+  PhoneCall,
   Send,
-  StickyNote,
-  Tag,
   Trash2
 } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
+import { useState } from "react";
+import { PersonComposer } from "@/components/person-composer";
 
 /**
- * Карточка человека по кускам.
+ * Карточка человека.
  *
- * Те же разделы показывают в двух местах: на своей странице в базе контактов и в панели
- * справа, когда контакт открывают прямо из воронки. Раньше в воронке была своя урезанная
- * версия — без денег, заметок, анкет и истории по другим кампаниям, — и менеджер звонил,
- * не зная половины того, что о человеке уже известно.
+ * Одна сборка на два места: своя страница в базе контактов и панель справа, когда контакт
+ * открывают прямо из воронки. Раньше в воронке была своя урезанная версия — без денег,
+ * заметок, анкет и истории по другим кампаниям, — и менеджер звонил, не зная половины того,
+ * что о человеке уже известно.
+ *
+ * Порядок здесь — порядок работы, а не список того, что мы про человека храним. Слева то,
+ * кто это и как до него дотянуться; справа то, что с ним происходит: следующий шаг, лента
+ * событий и поле, которым в эту ленту дописывают. Редкое — поездки, деньги, согласия —
+ * убрано во вкладки: это история, её смотрят изредка, а места она занимала столько же,
+ * сколько задачи.
  */
 
 const PHONE_STATUS_LABELS: Record<string, string> = {
@@ -67,9 +79,60 @@ export function plural(count: number, one: string, few: string, many: string): s
   return many;
 }
 
+/** Кампании, из которых человека не убирали. Работа идёт только по ним. */
+export function activeCampaigns(
+  person: OutreachPersonCard
+): readonly OutreachPersonCampaign[] {
+  return person.campaigns.filter((item) => !item.removedAt);
+}
+
+export function openTasks(
+  person: OutreachPersonCard
+): readonly OutreachPersonTask[] {
+  return person.tasks.filter((task) => task.status === "open");
+}
+
+/**
+ * Стадия, которую показываем в шапке как статус человека.
+ *
+ * Своего статуса у человека нет и заводить его не стоит: стадия принадлежит работе по нему
+ * в конкретной воронке, и второй ответ на тот же вопрос рано или поздно разойдётся с первым.
+ * Поэтому показываем стадию самой свежей воронки и подписываем, из какой она.
+ */
+export function headlineStage(
+  person: OutreachPersonCard
+): OutreachPersonCampaign | null {
+  const active = activeCampaigns(person);
+  if (active.length === 0) {
+    return null;
+  }
+  // Свежесть считаем по последнему переходу стадии в этой воронке: кампания, в которой
+  // сейчас работают, — та, где последний раз двигали карточку.
+  const movedAt = new Map<string, string>();
+  for (const change of person.stageChanges) {
+    const known = movedAt.get(change.campaignId);
+    if (!known || known < change.occurredAt) {
+      movedAt.set(change.campaignId, change.occurredAt);
+    }
+  }
+  return [...active].sort((left, right) =>
+    (movedAt.get(right.campaignId) ?? "").localeCompare(
+      movedAt.get(left.campaignId) ?? ""
+    ))[0] ?? null;
+}
+
+/**
+ * Три цифры в шапке вместо прежних пяти.
+ *
+ * Деньги и поездки нужны перед каждым звонком, следующий шаг — почти перед каждым. «Касаний
+ * 47» и «кампаний 3» во время разговора не говорят ничего: за первым идут в ленту, за вторым
+ * — в список воронок, и оба рядом.
+ */
 export function PersonFacts({ person }: { readonly person: OutreachPersonCard }) {
-  const openTasks = person.tasks.filter((task) => task.status === "open");
-  const activeCampaigns = person.campaigns.filter((item) => !item.removedAt);
+  const open = openTasks(person);
+  const next = [...open].sort((left, right) =>
+    left.dueAt.localeCompare(right.dueAt))[0];
+  const overdue = next ? new Date(next.dueAt).getTime() < Date.now() : false;
   return (
     <p className="person-facts">
       <span title="Заказы бота плюс оплаты, заведённые руками. Частичные возвраты не вычтены — их видно в самом заказе.">
@@ -85,30 +148,160 @@ export function PersonFacts({ person }: { readonly person: OutreachPersonCard })
           "мероприятий"
         )}
       </span>
-      <span>
-        <b>{person.activities.length}</b>
-        {" "}
-        {plural(person.activities.length, "касание", "касания", "касаний")}
-      </span>
-      <span className={openTasks.length > 0 ? "fact-attention" : undefined}>
-        <b>{openTasks.length}</b>
-        {" "}
-        {plural(openTasks.length, "открытая", "открытые", "открытых")}
-        {" "}
-        {plural(openTasks.length, "задача", "задачи", "задач")}
-      </span>
-      <span>
-        <b>{activeCampaigns.length}</b>
-        {" "}
-        {plural(activeCampaigns.length, "кампания", "кампании", "кампаний")}
-      </span>
+      {next ? (
+        <span className={overdue ? "fact-attention" : undefined}>
+          {overdue ? "просрочено с " : "следующий шаг "}
+          <b>{formatDateTime(next.dueAt)}</b>
+        </span>
+      ) : (
+        <span className="fact-attention"><b>шага нет</b></span>
+      )}
     </p>
   );
 }
 
+/**
+ * Всё тело карточки: вкладки, две колонки, лента и поле ввода.
+ *
+ * Страница и панель в воронке отдают сюда одни и те же обработчики. Разница между ними
+ * только в раскладке (`variant`) и живёт в стилях, а не здесь: расхождение двух видов
+ * карточки — та самая ошибка, которую уже однажды исправляли.
+ */
+export function PersonBody({
+  person,
+  managers,
+  busy,
+  variant,
+  availableCampaigns,
+  onAddToCampaign,
+  onSaveNote,
+  onRemoveNote,
+  onCreateTask,
+  onTouch,
+  onCompleteTask,
+  onRescheduleTask
+}: {
+  readonly person: OutreachPersonCard;
+  readonly managers: readonly OutreachManager[];
+  readonly busy: boolean;
+  readonly variant: "page" | "drawer";
+  /** Воронки, в которых человека ещё нет. Пусто — добавлять отсюда некуда. */
+  readonly availableCampaigns: readonly OutreachCampaignSummary[];
+  readonly onAddToCampaign: ((campaignId: string) => void) | null;
+  readonly onSaveNote: (body: string) => Promise<boolean>;
+  readonly onRemoveNote: (noteId: string) => Promise<void>;
+  readonly onCreateTask: (input: {
+    readonly type: string;
+    readonly text: string;
+    readonly dueAt: Date;
+    readonly assignedAdminId: string | null;
+  }) => Promise<boolean>;
+  /** Открывает разбор касания. Пусто — в этом месте касание не записывают. */
+  readonly onTouch: ((campaign: OutreachPersonCampaign, note: string) => void) | null;
+  readonly onCompleteTask: (taskId: string) => Promise<void>;
+  readonly onRescheduleTask: (task: OutreachPersonTask) => void;
+}) {
+  const [tab, setTab] = useState<"work" | "events" | "money">("work");
+  const events = buildPersonEvents(person);
+  const hasMoney = person.orders.length > 0
+    || person.consents.length > 0
+    || person.bot !== null;
+
+  return (
+    <>
+      <div className="person-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "work"}
+          className={tab === "work" ? "person-tab person-tab-active" : "person-tab"}
+          onClick={() => setTab("work")}
+        >
+          Работа
+        </button>
+        {events.length > 0 ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "events"}
+            className={tab === "events" ? "person-tab person-tab-active" : "person-tab"}
+            onClick={() => setTab("events")}
+          >
+            Мероприятия и анкеты
+            <span className="person-tab-count">{events.length}</span>
+          </button>
+        ) : null}
+        {hasMoney ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "money"}
+            className={tab === "money" ? "person-tab person-tab-active" : "person-tab"}
+            onClick={() => setTab("money")}
+          >
+            Деньги и согласия
+          </button>
+        ) : null}
+      </div>
+
+      {tab === "work" ? (
+        <div className={variant === "drawer" ? "person-layout person-layout-narrow" : "person-layout"}>
+          <div className="person-rail">
+            <PersonContactsCard person={person} />
+            <PersonAboutCard person={person} />
+            <PersonCampaignsCard
+              person={person}
+              busy={busy}
+              available={availableCampaigns}
+              onAdd={onAddToCampaign}
+              onTouch={onTouch}
+            />
+          </div>
+          <div className="person-main">
+            <PersonNextStep
+              person={person}
+              busy={busy}
+              onComplete={onCompleteTask}
+              onReschedule={onRescheduleTask}
+            />
+            <section className="data-section person-stream">
+              <PersonFeed person={person} busy={busy} onRemoveNote={onRemoveNote} />
+              <PersonComposer
+                person={person}
+                managers={managers}
+                busy={busy}
+                onSaveNote={onSaveNote}
+                onCreateTask={onCreateTask}
+                onTouch={onTouch}
+              />
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "events" ? <PersonEventsCard person={person} /> : null}
+      {tab === "money" ? <PersonMoneyCard person={person} /> : null}
+    </>
+  );
+}
+
+/**
+ * Как дотянуться до человека.
+ *
+ * Пустые признаки прячутся: строка «Почта — не знаем» занимает столько же места, сколько
+ * настоящая почта, и ровно этим карточка в amoCRM и нечитаема. Исключение — телефон и
+ * Telegram: по ним звонят и пишут, и их отсутствие само по себе новость.
+ */
 export function PersonContactsCard(
   { person }: { readonly person: OutreachPersonCard }
 ) {
+  const [showAll, setShowAll] = useState(false);
+  const hidden = [
+    person.maxIdentifier === null,
+    person.email === null,
+    person.source === null
+  ].filter(Boolean).length;
+
   return (
     <section className="data-section">
       <div className="section-title-row"><div><h2>Контакты</h2></div></div>
@@ -137,243 +330,83 @@ export function PersonContactsCard(
             ) : <span className="muted">не знаем</span>}
           </dd>
         </div>
-        <div className="person-contact">
-          <MessageSquare size={16} />
-          <dt>MAX</dt>
-          <dd>{person.maxIdentifier ?? <span className="muted">не знаем</span>}</dd>
-        </div>
-        <div className="person-contact">
-          <Mail size={16} />
-          <dt>Почта</dt>
-          <dd>
-            {person.email
-              ? <a href={`mailto:${person.email}`}>{person.email}</a>
-              : <span className="muted">не знаем</span>}
-          </dd>
-        </div>
-        <div className="person-contact">
-          <Bot size={16} />
-          <dt>В боте</dt>
-          <dd>
-            {person.linkedUserId ? (
-              <Link href={`/users/${person.linkedUserId}`}>Открыть пользователя</Link>
-            ) : <span className="muted">не заходил</span>}
-          </dd>
-        </div>
-        <div className="person-contact">
-          <Tag size={16} />
-          <dt>Источник</dt>
-          <dd>{person.source ?? <span className="muted">неизвестен</span>}</dd>
-        </div>
+        {person.maxIdentifier || showAll ? (
+          <div className="person-contact">
+            <MessageSquare size={16} />
+            <dt>MAX</dt>
+            <dd>{person.maxIdentifier ?? <span className="muted">не знаем</span>}</dd>
+          </div>
+        ) : null}
+        {person.email || showAll ? (
+          <div className="person-contact">
+            <Mail size={16} />
+            <dt>Почта</dt>
+            <dd>
+              {person.email
+                ? <a href={`mailto:${person.email}`}>{person.email}</a>
+                : <span className="muted">не знаем</span>}
+            </dd>
+          </div>
+        ) : null}
+        {person.bot ? (
+          <div className="person-contact">
+            <Bot size={16} />
+            <dt>В боте</dt>
+            <dd>
+              {person.linkedUserId ? (
+                <Link href={`/users/${person.linkedUserId}`}>
+                  с {formatCompactDate(person.bot.registeredAt)}
+                </Link>
+              ) : `с ${formatCompactDate(person.bot.registeredAt)}`}
+              {person.bot.isBlocked ? (
+                <span className="muted"> · бот заблокирован, сообщения не дойдут</span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
       </dl>
+      {hidden > 0 && !showAll ? (
+        <button
+          className="person-more-fields"
+          type="button"
+          onClick={() => setShowAll(true)}
+        >
+          Показать пустые поля ({hidden})
+        </button>
+      ) : null}
       <p className="muted person-meta">
         В базе с {formatCompactDate(person.createdAt)}
         {person.createdByName ? `, завёл ${person.createdByName}` : ""}
-        {person.updatedAt !== person.createdAt
-          ? `, обновлён ${formatCompactDate(person.updatedAt)}`
-          : ""}
       </p>
     </section>
   );
 }
 
-export function PersonKnowledgeCard({
-  person,
-  busy,
-  onSaveNote,
-  onRemoveNote
-}: {
-  readonly person: OutreachPersonCard;
-  readonly busy: boolean;
-  /** Возвращает true, если заметка сохранена: только тогда чистим поле. */
-  readonly onSaveNote: (body: string) => Promise<boolean>;
-  readonly onRemoveNote: (noteId: string) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState("");
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const body = draft.trim();
-    if (!body) {
-      return;
-    }
-    if (await onSaveNote(body)) {
-      setDraft("");
-    }
-  }
-
-  return (
-    <section className="data-section">
-      <div className="section-title-row">
-        <div>
-          <h2>Что знаем о человеке</h2>
-          {/* Комментарий приезжает из импорта и перезаписывается целиком, заметки копятся
-              и подписаны именем. Рядом их и читают. */}
-          <span>Комментарий из импорта и заметки менеджеров</span>
-        </div>
-      </div>
-      {person.note ? <p className="person-note">{person.note}</p> : null}
-      <form className="person-note-form" onSubmit={(event) => void submit(event)}>
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          rows={2}
-          maxLength={4000}
-          placeholder="Например: просил не звонить до сентября, едет с женой"
-        />
-        <button
-          className="secondary-button"
-          type="submit"
-          disabled={busy || draft.trim().length === 0}
-        >
-          <StickyNote size={16} />
-          Записать
-        </button>
-      </form>
-      {person.notes.length === 0 ? (
-        <p className="muted person-empty">Заметок пока нет.</p>
-      ) : (
-        <ol className="person-spine">
-          {person.notes.map((note) => (
-            <li key={note.id}>
-              <div className="person-spine-head">
-                <strong>{note.authorName}</strong>
-                <span className="person-spine-time">{formatDateTime(note.createdAt)}</span>
-                {/* Снять можно только свою: заметка подписана именем, и стирать чужую
-                    подпись значит менять сказанное другим человеком. */}
-                {note.canDelete ? (
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label="Снять заметку"
-                    title="Снять заметку"
-                    disabled={busy}
-                    onClick={() => void onRemoveNote(note.id)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                ) : null}
-              </div>
-              <p>{note.body}</p>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  );
-}
-
-export function PersonOriginCard(
+/**
+ * Что мы про человека знаем: источник, комментарий из выгрузки и поля кампаний.
+ *
+ * Заметки менеджеров сюда больше не входят — они ушли в ленту, где им и место: у каждой есть
+ * автор и время, и читать их надо вперемешку со звонками, а не отдельным списком.
+ */
+export function PersonAboutCard(
   { person }: { readonly person: OutreachPersonCard }
 ) {
-  if (!person.bot && person.siteRegistrations.length === 0) {
-    return null;
-  }
-  const touchpoints = person.bot?.touchpoints ?? [];
-  return (
-    <section className="data-section">
-      <div className="section-title-row">
-        <div>
-          <h2>Откуда пришёл</h2>
-          <span>Бот, метки источника и заявки с сайта</span>
-        </div>
-      </div>
-      {person.bot ? (
-        <dl className="person-contacts">
-          <div className="person-contact person-contact-plain">
-            <dt>В боте с</dt>
-            <dd>{formatDateTime(person.bot.registeredAt)}</dd>
-          </div>
-          <div className="person-contact person-contact-plain">
-            <dt>Последний заход</dt>
-            <dd>
-              {person.bot.lastSeenAt
-                ? formatDateTime(person.bot.lastSeenAt)
-                : <span className="muted">не заходил после регистрации</span>}
-            </dd>
-          </div>
-          <div className="person-contact person-contact-plain">
-            <dt>Телефон в боте</dt>
-            <dd>{PHONE_STATUS_LABELS[person.bot.phoneStatus] ?? person.bot.phoneStatus}</dd>
-          </div>
-          <div className="person-contact person-contact-plain">
-            <dt>Кошелёк</dt>
-            <dd>{formatKopecks(person.bot.walletAvailableKopecks)}</dd>
-          </div>
-          {person.bot.isBlocked ? (
-            <div className="person-contact person-contact-plain">
-              <dt>Состояние</dt>
-              <dd>Бот заблокирован — сообщения не дойдут</dd>
-            </div>
-          ) : null}
-        </dl>
-      ) : null}
-      {person.bot && touchpoints.length === 0 ? (
-        <p className="muted person-empty">
-          Человек открыл бота напрямую, без метки источника и партнёрской ссылки.
-        </p>
-      ) : null}
-      {touchpoints.length > 0 || person.siteRegistrations.length > 0 ? (
-        <ol className="person-spine">
-          {touchpoints.map((touchpoint) => (
-            <li key={`${touchpoint.channel}-${touchpoint.occurredAt}`} data-kind="touch">
-              <div className="person-spine-head">
-                <strong>
-                  {touchpoint.partnerCode
-                    ? `Партнёр ${touchpoint.partnerCode}`
-                    : touchpoint.source ?? "Прямой заход"}
-                </strong>
-                {touchpoint.isFirstTouch ? (
-                  <StatusPill tone="neutral">первый переход</StatusPill>
-                ) : null}
-                <span className="person-spine-time">
-                  {formatDateTime(touchpoint.occurredAt)}
-                </span>
-              </div>
-              {touchpoint.campaign ? (
-                <div className="person-spine-meta">Кампания: {touchpoint.campaign}</div>
-              ) : null}
-            </li>
-          ))}
-          {person.siteRegistrations.map((registration) => (
-            <li key={registration.id}>
-              <div className="person-spine-head">
-                <strong>
-                  Заявка с сайта: {registration.eventTitle ?? "встреча не определена"}
-                </strong>
-                <span className="person-spine-time">
-                  {formatDateTime(registration.createdAt)}
-                </span>
-              </div>
-              <div className="person-spine-meta">
-                {[
-                  registration.page || null,
-                  SITE_REGISTRATION_LABELS[registration.status] ?? registration.status
-                ].filter(Boolean).join(" · ")}
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-    </section>
-  );
-}
-
-export function PersonCustomFieldsCard(
-  { person }: { readonly person: OutreachPersonCard }
-) {
-  if (person.customFields.length === 0) {
+  const hasAnything = person.source !== null
+    || person.note !== null
+    || person.customFields.length > 0;
+  if (!hasAnything) {
     return null;
   }
   return (
     <section className="data-section">
-      <div className="section-title-row">
-        <div>
-          <h2>Дополнительные поля</h2>
-          <span>Заводятся по кампаниям</span>
-        </div>
-      </div>
+      <div className="section-title-row"><div><h2>Основное</h2></div></div>
       <dl className="person-contacts">
+        {person.source ? (
+          <div className="person-contact person-contact-plain">
+            <dt>Источник</dt>
+            <dd>{person.source}</dd>
+          </div>
+        ) : null}
         {person.customFields.map((field) => (
           <div
             className="person-contact person-contact-plain"
@@ -387,7 +420,277 @@ export function PersonCustomFieldsCard(
           </div>
         ))}
       </dl>
+      {person.note ? <p className="person-note">{person.note}</p> : null}
     </section>
+  );
+}
+
+/** Воронки, в которых человек состоит, и стадия в каждой. */
+export function PersonCampaignsCard({
+  person,
+  busy,
+  available,
+  onAdd,
+  onTouch
+}: {
+  readonly person: OutreachPersonCard;
+  readonly busy: boolean;
+  readonly available: readonly OutreachCampaignSummary[];
+  readonly onAdd: ((campaignId: string) => void) | null;
+  readonly onTouch: ((campaign: OutreachPersonCampaign, note: string) => void) | null;
+}) {
+  const active = activeCampaigns(person);
+  if (person.campaigns.length === 0 && available.length === 0) {
+    return null;
+  }
+  return (
+    <section className="data-section">
+      <div className="section-title-row">
+        <div>
+          <h2>Воронки</h2>
+          <span>{active.length}</span>
+        </div>
+        {onAdd && available.length > 0 ? (
+          <label className="select-field outreach-assign">
+            <span>Добавить</span>
+            <select
+              defaultValue=""
+              disabled={busy}
+              onChange={(event) => {
+                const chosen = event.target.value;
+                event.target.value = "";
+                if (chosen) {
+                  onAdd(chosen);
+                }
+              }}
+            >
+              <option value="">Выберите</option>
+              {available.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+      <ul className="person-list person-list-tight">
+        {person.campaigns.map((membership) => (
+          <li key={membership.campaignContactId}>
+            <div className="person-list-main">
+              <strong>
+                <Link
+                  href={`/outreach/${membership.campaignId}?contact=${membership.campaignContactId}`}
+                >
+                  {membership.campaignName}
+                </Link>
+              </strong>
+              <span className="person-list-sub">
+                {membership.removedAt ? "убран · " : ""}
+                {membership.stageLabel}
+                {membership.assignedAdminName
+                  ? ` · ${membership.assignedAdminName}`
+                  : ""}
+              </span>
+            </div>
+            {!membership.removedAt && onTouch ? (
+              <div className="person-list-side">
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Записать касание"
+                  aria-label={`Записать касание по воронке ${membership.campaignName}`}
+                  disabled={busy}
+                  onClick={() => onTouch(membership, "")}
+                >
+                  <PhoneCall size={16} />
+                </button>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Следующий шаг — первое, что видно справа.
+ *
+ * Открытых задач по человеку может быть несколько: по одной на каждую воронку плюс одна про
+ * него самого. Показываем ближайшую по сроку, остальные — строкой под ней: разбирать их
+ * по одной идут в ленту.
+ */
+export function PersonNextStep({
+  person,
+  busy,
+  onComplete,
+  onReschedule
+}: {
+  readonly person: OutreachPersonCard;
+  readonly busy: boolean;
+  readonly onComplete: (taskId: string) => Promise<void>;
+  readonly onReschedule: (task: OutreachPersonTask) => void;
+}) {
+  const open = [...openTasks(person)].sort((left, right) =>
+    left.dueAt.localeCompare(right.dueAt));
+  const next = open[0];
+  return (
+    <section className="data-section person-next-step">
+      <div className="section-title-row">
+        <div>
+          <h2>Следующий шаг</h2>
+          {open.length > 1 ? (
+            <span>
+              и ещё {open.length - 1}
+              {" "}
+              {plural(open.length - 1, "задача", "задачи", "задач")}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      {next ? (
+        <div className="person-next-body">
+          <div className="person-next-main">
+            <strong>{next.text}</strong>
+            <span className="person-list-sub">
+              {taskTypeLabel(next.type)}
+              {" · "}
+              <span
+                className={new Date(next.dueAt).getTime() < Date.now()
+                  ? "overdue"
+                  : undefined}
+              >
+                срок {formatDateTime(next.dueAt)}
+              </span>
+              {" · "}
+              {next.assignedAdminName}
+              {next.campaignName ? ` · ${next.campaignName}` : ""}
+            </span>
+          </div>
+          <div className="outreach-row-actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onReschedule(next)}
+            >
+              <Clock size={16} />
+              Перенести
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void onComplete(next.id)}
+            >
+              <CheckCircle2 size={16} />
+              Выполнено
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="muted person-empty">
+          Открытой задачи нет. Поставьте следующий шаг полем внизу, иначе человек потеряется.
+        </p>
+      )}
+    </section>
+  );
+}
+
+const FEED_FILTERS = [
+  { key: "all", label: "Всё" },
+  { key: "touch", label: "Звонки" },
+  { key: "note", label: "Заметки" },
+  { key: "stage", label: "Этапы" }
+] as const;
+
+type FeedFilter = typeof FEED_FILTERS[number]["key"];
+
+/**
+ * Одна лента на всё, что с человеком было.
+ *
+ * Раньше лент было три и выглядели они одинаково: «История» со звонками, заметки в «Что
+ * знаем» и «Откуда пришёл» с источниками. По отдельности каждая отвечала на свой вопрос, а
+ * «что с этим человеком вообще происходило» — только все вместе и по времени.
+ */
+export function PersonFeed({
+  person,
+  busy,
+  onRemoveNote
+}: {
+  readonly person: OutreachPersonCard;
+  readonly busy: boolean;
+  readonly onRemoveNote: (noteId: string) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<FeedFilter>("all");
+  const entries = buildPersonTimeline(person);
+  const shown = filter === "all"
+    ? entries
+    : entries.filter((entry) => entry.kind === filter);
+
+  return (
+    <>
+      <div className="section-title-row">
+        <div>
+          <h2>История</h2>
+          <span>{entries.length}</span>
+        </div>
+        <div className="person-feed-filters">
+          {FEED_FILTERS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={filter === option.key
+                ? "person-feed-filter person-feed-filter-active"
+                : "person-feed-filter"}
+              onClick={() => setFilter(option.key)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {shown.length === 0 ? (
+        <p className="muted person-empty">
+          {entries.length === 0
+            ? "С человеком ещё ничего не происходило."
+            : "В этой части истории пусто."}
+        </p>
+      ) : (
+        <ol className="person-spine">
+          {shown.map((entry) => (
+            <li key={entry.id} data-kind={entry.kind}>
+              <div className="person-spine-head">
+                <strong>{entry.title}</strong>
+                {entry.tone ? (
+                  <StatusPill tone={entry.tone}>{entry.badge}</StatusPill>
+                ) : null}
+                <span className="person-spine-time">
+                  {formatDateTime(entry.occurredAt)}
+                </span>
+                {/* Снять можно только свою заметку: она подписана именем, и стирать чужую
+                    подпись значит менять сказанное другим человеком. */}
+                {entry.removableNoteId ? (
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Снять заметку"
+                    title="Снять заметку"
+                    disabled={busy}
+                    onClick={() => void onRemoveNote(entry.removableNoteId as string)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                ) : null}
+              </div>
+              {entry.actor || entry.campaignName ? (
+                <div className="person-spine-meta">
+                  {[entry.actor, entry.campaignName].filter(Boolean).join(" · ")}
+                </div>
+              ) : null}
+              {entry.note ? <p>{entry.note}</p> : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
   );
 }
 
@@ -445,21 +748,60 @@ export function PersonEventsCard(
   );
 }
 
-export function PersonOrdersCard(
+/** Деньги: заказы, согласия и то, что человек принёс через бота. */
+export function PersonMoneyCard(
   { person }: { readonly person: OutreachPersonCard }
 ) {
-  if (person.orders.length === 0 && person.consents.length === 0) {
-    return null;
-  }
+  const unpaid = person.orders.filter((order) =>
+    order.excludedAt === null
+    && (order.status === "awaiting_payment"
+      || order.status === "awaiting_offer"
+      || order.status === "payment_processing"));
   return (
     <section className="data-section">
       <div className="section-title-row">
         <div>
-          <h2>Заказы и согласия</h2>
+          <h2>Деньги и согласия</h2>
           <span>{person.orders.length}</span>
         </div>
         <span className="muted">Из бота</span>
       </div>
+      {/* Незакрытый заказ — самое ценное, что можно знать перед звонком, и раньше его было
+          видно, только если дочитать список заказов до конца. */}
+      {unpaid.length > 0 ? (
+        <p className="page-warning">
+          {plural(unpaid.length, "Висит", "Висят", "Висят")}
+          {" "}
+          {unpaid.length}
+          {" "}
+          {plural(unpaid.length, "неоплаченный заказ", "неоплаченных заказа", "неоплаченных заказов")}
+          {" на "}
+          {formatKopecks(unpaid.reduce(
+            (sum, order) => (BigInt(sum) + BigInt(order.totalKopecks)).toString(),
+            "0"
+          ))}.
+        </p>
+      ) : null}
+      {person.bot ? (
+        <dl className="person-contacts">
+          <div className="person-contact person-contact-plain">
+            <dt>Кошелёк</dt>
+            <dd>{formatKopecks(person.bot.walletAvailableKopecks)}</dd>
+          </div>
+          <div className="person-contact person-contact-plain">
+            <dt>Телефон в боте</dt>
+            <dd>{PHONE_STATUS_LABELS[person.bot.phoneStatus] ?? person.bot.phoneStatus}</dd>
+          </div>
+          <div className="person-contact person-contact-plain">
+            <dt>Последний заход</dt>
+            <dd>
+              {person.bot.lastSeenAt
+                ? formatDateTime(person.bot.lastSeenAt)
+                : <span className="muted">не заходил после регистрации</span>}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
       <ul className="person-list">
         {person.orders.map((order) => (
           <li key={order.id}>
@@ -513,48 +855,6 @@ export function PersonOrdersCard(
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-export function PersonHistoryCard(
-  { person }: { readonly person: OutreachPersonCard }
-) {
-  const timeline = buildPersonTimeline(person);
-  return (
-    <section className="data-section">
-      <div className="section-title-row">
-        <div>
-          <h2>История</h2>
-          <span>{timeline.length}</span>
-        </div>
-        {/* Ради этой ленты карточка и заведена: раньше история резалась по кампаниям, и
-            что человеку уже говорили, целиком не видел никто. */}
-        <span className="muted">Звонки, стадии и задачи из всех кампаний</span>
-      </div>
-      {timeline.length === 0 ? (
-        <p className="muted person-empty">С человеком ещё ничего не происходило.</p>
-      ) : (
-        <ol className="person-spine">
-          {timeline.map((entry) => (
-            <li key={entry.id} data-kind={entry.kind}>
-              <div className="person-spine-head">
-                <strong>{entry.title}</strong>
-                {entry.tone ? (
-                  <StatusPill tone={entry.tone}>{entry.badge}</StatusPill>
-                ) : null}
-                <span className="person-spine-time">
-                  {formatDateTime(entry.occurredAt)}
-                </span>
-              </div>
-              <div className="person-spine-meta">
-                {[entry.actor, entry.campaignName].filter(Boolean).join(" · ")}
-              </div>
-              {entry.note ? <p>{entry.note}</p> : null}
-            </li>
-          ))}
-        </ol>
-      )}
     </section>
   );
 }
@@ -615,8 +915,8 @@ function buildPersonEvents(person: OutreachPersonCard): readonly PersonEventEntr
 
 interface TimelineEntry {
   readonly id: string;
-  /** Форма метки в ленте: касание, смена этапа или задача. */
-  readonly kind: "touch" | "stage" | "task";
+  /** Форма метки в ленте: касание, заметка, смена этапа или задача. */
+  readonly kind: "touch" | "note" | "stage" | "task";
   readonly title: string;
   readonly badge: string | null;
   readonly tone: "positive" | "neutral" | "danger" | "warning" | null;
@@ -624,13 +924,10 @@ interface TimelineEntry {
   readonly campaignName: string | null;
   readonly occurredAt: string;
   readonly note: string | null;
+  /** Заполнено только у своих заметок: чужую снять нельзя, и кнопки для неё быть не должно. */
+  readonly removableNoteId: string | null;
 }
 
-/**
- * Одна лента на всё, что с человеком происходило: звонки и сообщения, движение по стадиям и
- * задачи. По отдельности каждый из трёх списков отвечает на свой вопрос, а «что с этим
- * человеком вообще было» — только все вместе и по времени.
- */
 function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry[] {
   const activities: readonly TimelineEntry[] = person.activities.map((activity) => ({
     id: `activity-${activity.id}`,
@@ -645,7 +942,21 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
     actor: activity.actorName,
     campaignName: activity.campaignName,
     occurredAt: activity.occurredAt,
-    note: activity.note
+    note: activity.note,
+    removableNoteId: null
+  }));
+
+  const notes: readonly TimelineEntry[] = person.notes.map((note) => ({
+    id: `note-${note.id}`,
+    kind: "note",
+    title: "Заметка",
+    badge: null,
+    tone: null,
+    actor: note.authorName,
+    campaignName: null,
+    occurredAt: note.createdAt,
+    note: note.body,
+    removableNoteId: note.canDelete ? note.id : null
   }));
 
   // Заведение карточки в ленту не идёт: первый переход в стадию — это не событие работы с
@@ -663,7 +974,8 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
       occurredAt: change.occurredAt,
       note: change.lostReason
         ? `Причина: ${lostReasonLabel(change.lostReason)}`
-        : null
+        : null,
+      removableNoteId: null
     }));
 
   const tasks: readonly TimelineEntry[] = person.tasks.map((task) => ({
@@ -681,9 +993,41 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
       : task.createdByAdminName,
     campaignName: task.campaignName,
     occurredAt: task.completedAt ?? task.createdAt,
-    note: `${task.text} · срок ${formatDateTime(task.dueAt)}`
+    note: `${task.text} · срок ${formatDateTime(task.dueAt)}`,
+    removableNoteId: null
   }));
 
-  return [...activities, ...stages, ...tasks]
+  // Метки источника и заявки с сайта раньше жили отдельной карточкой «Откуда пришёл». Это
+  // события того же ряда: они случились с человеком в своё время и читаются в общем потоке.
+  const origins: readonly TimelineEntry[] = [
+    ...(person.bot?.touchpoints ?? []).map((touchpoint) => ({
+      id: `touchpoint-${touchpoint.channel}-${touchpoint.occurredAt}`,
+      kind: "touch" as const,
+      title: touchpoint.partnerCode
+        ? `Пришёл по партнёру ${touchpoint.partnerCode}`
+        : `Пришёл: ${touchpoint.source ?? "прямой заход"}`,
+      badge: touchpoint.isFirstTouch ? "первый переход" : null,
+      tone: touchpoint.isFirstTouch ? ("neutral" as const) : null,
+      actor: "",
+      campaignName: touchpoint.campaign,
+      occurredAt: touchpoint.occurredAt,
+      note: null,
+      removableNoteId: null
+    })),
+    ...person.siteRegistrations.map((registration) => ({
+      id: `registration-${registration.id}`,
+      kind: "touch" as const,
+      title: `Заявка с сайта: ${registration.eventTitle ?? "встреча не определена"}`,
+      badge: SITE_REGISTRATION_LABELS[registration.status] ?? registration.status,
+      tone: "neutral" as const,
+      actor: "",
+      campaignName: null,
+      occurredAt: registration.createdAt,
+      note: registration.page || null,
+      removableNoteId: null
+    }))
+  ];
+
+  return [...activities, ...notes, ...stages, ...tasks, ...origins]
     .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 }

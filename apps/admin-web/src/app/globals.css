@@ -5068,14 +5068,15 @@ tbody tr:hover {
 }
 
 /* Внутри панели разделы идут одной лентой: рамка вокруг каждого дала бы коробки в коробке. */
-.person-flow > .data-section {
+.person-flow .data-section {
   margin-top: 0;
   background: transparent;
   border-width: 1px 0 0;
   border-radius: 0;
 }
 
-.person-flow > .data-section:first-of-type {
+.person-flow .person-rail > .data-section:first-child,
+.person-flow .person-main > .data-section:first-child {
   border-top: 0;
 }
 
@@ -5323,4 +5324,296 @@ tbody tr:hover {
 .attendance-row button {
   flex-shrink: 0;
   min-height: 44px;
+}
+
+
+/* ── Вкладки, лента и поле ввода карточки ─────────────────────────────────────
+   Карточка была девятью разделами одного веса в двух колонках: телефон в одном,
+   что человеку обещали — во втором, что делать дальше — в третьем. Теперь слева
+   «кто это», справа «что происходит», а поездки, деньги и согласия — это история,
+   и она уехала во вкладки: смотрят её изредка, а места занимала столько же,
+   сколько задачи. */
+
+.person-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  gap: 4px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.person-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 14px;
+  gap: 7px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.person-tab:hover {
+  color: var(--ink);
+}
+
+.person-tab-active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.person-tab-count {
+  padding: 1px 7px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-tabs + .person-layout,
+.person-tabs + .data-section {
+  margin-top: 20px;
+}
+
+/* В панели воронки колонка одна: 380 пикселей рельса рядом с лентой там не встают. */
+.person-layout-narrow {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Стадия рядом с именем: сама стадия читается, а из какой она воронки — подписью. */
+.pill-note {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Пометки «свои», «убран из базы» и отказ в удалении — про человека, а не про карточку.
+   Раньше они шли сплошняком между шапкой и содержимым, и при двух-трёх сразу карточка
+   начиналась с третьего экрана. */
+.person-flags {
+  margin-bottom: 14px;
+  padding: 9px 14px;
+  background: var(--warning-soft);
+  border-radius: 7px;
+  font-size: 13px;
+}
+
+.person-flags > summary {
+  color: var(--warning);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.person-flags-body > p {
+  margin: 9px 0 0;
+  line-height: 1.5;
+}
+
+.person-more-fields {
+  padding: 10px 16px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.person-more-fields:hover {
+  color: var(--accent);
+}
+
+.person-list-tight > li {
+  padding: 10px 16px;
+}
+
+/* Следующий шаг — первое, что видно справа: ради него карточку перед звонком и открывают. */
+.person-next-step {
+  border-color: var(--line-strong);
+}
+
+.person-next-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 13px 16px;
+  gap: 10px 14px;
+}
+
+.person-next-main {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 240px;
+  gap: 3px;
+}
+
+.person-next-main > strong {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.person-next-main .overdue {
+  color: var(--danger);
+  font-weight: 650;
+}
+
+/* Лента и поле ввода — один блок: пишут туда же, куда смотрят. */
+.person-stream {
+  display: grid;
+}
+
+.person-feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.person-feed-filter {
+  padding: 4px 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.person-feed-filter:hover {
+  color: var(--ink);
+  background: var(--surface-muted);
+}
+
+.person-feed-filter-active {
+  color: var(--ink);
+  background: var(--surface-muted);
+  border-color: var(--line-strong);
+}
+
+/* Одно поле вместо трёх мест: раньше заметку писали в одной карточке, задачу ставили
+   модалкой из шапки, а касание — другой модалкой, и сначала надо было решить, каким из
+   трёх способов записать то, что только что произошло. */
+.person-composer {
+  display: grid;
+  padding: 14px 16px;
+  gap: 10px;
+  background: var(--surface-muted);
+  border-top: 1px solid var(--line);
+}
+
+.person-composer-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.person-mode {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  gap: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.person-mode:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.person-mode-active {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+.person-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.person-composer textarea {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font: inherit;
+  resize: vertical;
+}
+
+.person-composer-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.person-composer-row label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.person-composer-row label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.person-composer-row input,
+.person-composer-row select {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+
+.person-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.person-composer-actions > span {
+  flex: 1 1 220px;
+  font-size: 12px;
+}
+
+/* В панели воронки карточка идёт одной лентой без просветов: рамок у разделов там нет,
+   и промежуток между ними превратился бы в пустую полосу неизвестного назначения. */
+.person-flow .person-tabs {
+  margin-top: 0;
+  padding: 0 18px;
+}
+
+.person-flow .person-layout,
+.person-flow .person-tabs + .person-layout,
+.person-flow .person-tabs + .data-section {
+  margin-top: 0;
+  gap: 0;
+}
+
+.person-flow .person-rail,
+.person-flow .person-main {
+  gap: 0;
+}
+
+.person-flow .person-composer {
+  padding: 14px 18px;
 }

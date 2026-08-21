@@ -5,17 +5,14 @@ import {
   type OutreachTouchTarget
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
+import {
+  OutreachTaskRescheduleDialog,
+  suggestDueAt,
+  type ReschedulableTask
+} from "@/components/outreach-task-reschedule-dialog";
 import { OwnBadge } from "@/components/own-badge";
 import { PersonOwnDialog } from "@/components/person-own-dialog";
-import {
-  PersonContactsCard,
-  PersonEventsCard,
-  PersonFacts,
-  PersonHistoryCard,
-  PersonKnowledgeCard,
-  PersonOrdersCard,
-  PersonOriginCard
-} from "@/components/person-card";
+import { PersonBody, PersonFacts } from "@/components/person-card";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -31,6 +28,7 @@ import {
   getOutreachContact,
   getOutreachPerson,
   createOutreachNote,
+  createOutreachPersonTask,
   deleteOutreachNote,
   addExistingContactsToCampaign,
   importEventParticipantsIntoCampaign,
@@ -75,7 +73,8 @@ import type {
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
-  OutreachTask
+  OutreachTask,
+  OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
 import {
   ArrowLeft,
@@ -153,6 +152,7 @@ export default function OutreachCampaignPage() {
   // своя урезанная версия, и менеджер звонил, не видя ни денег, ни заметок, ни истории по
   // другим кампаниям.
   const [detailPerson, setDetailPerson] = useState<OutreachPersonCard | null>(null);
+  const [reschedule, setReschedule] = useState<ReschedulableTask | null>(null);
   const [detailPersonError, setDetailPersonError] = useState<string | null>(null);
   const [ownOpen, setOwnOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -797,10 +797,15 @@ export default function OutreachCampaignPage() {
   }
 
   async function completeTask(task: OutreachTask) {
+    await completeTaskById(task.id);
+  }
+
+  /** Задача из ленты карточки: там у строки есть только её идентификатор. */
+  async function completeTaskById(taskId: string) {
     setMutating(true);
     setError(null);
     try {
-      await completeOutreachTask(task.id);
+      await completeOutreachTask(taskId);
       setNotice("Задача выполнена.");
       await load();
       if (detail) {
@@ -811,6 +816,49 @@ export default function OutreachCampaignPage() {
     } finally {
       setMutating(false);
     }
+  }
+
+  /**
+   * Задача из поля внизу ленты. Она про человека, а не про его работу в этой воронке:
+   * задачи воронки ставит панель следующего шага выше, и смешивать их значило бы тихо
+   * отменять чужой запланированный звонок — новая задача гасит открытую по своей линии.
+   */
+  async function createPersonTask(input: {
+    readonly type: string;
+    readonly text: string;
+    readonly dueAt: Date;
+    readonly assignedAdminId: string | null;
+  }): Promise<boolean> {
+    if (!detailPerson) {
+      return false;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      await createOutreachPersonTask(detailPerson.contactId, {
+        type: input.type as OutreachTaskType,
+        text: input.text,
+        dueAt: input.dueAt.toISOString(),
+        ...(input.assignedAdminId
+          ? { assignedAdminId: input.assignedAdminId }
+          : {})
+      });
+      setNotice("Задача поставлена.");
+      await refreshDetailPerson();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось поставить задачу."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function refreshDetailPerson() {
+    if (!detailPerson) {
+      return;
+    }
+    setDetailPerson(await getOutreachPerson(detailPerson.contactId));
   }
 
   async function submitContact(event: FormEvent<HTMLFormElement>) {
@@ -1711,6 +1759,20 @@ export default function OutreachCampaignPage() {
         />
       ) : null}
 
+      {reschedule ? (
+        <OutreachTaskRescheduleDialog
+          task={reschedule}
+          suggestedDueAt={suggestDueAt("tomorrow", new Date(reschedule.dueAt))}
+          onClose={() => setReschedule(null)}
+          onDone={async (message) => {
+            setNotice(message);
+            setReschedule(null);
+            await load();
+            await refreshDetailPerson();
+          }}
+        />
+      ) : null}
+
       {ownOpen && detailPerson ? (
         <PersonOwnDialog
           person={detailPerson}
@@ -2090,17 +2152,34 @@ export default function OutreachCampaignPage() {
               ) : (
                 <>
                   <PersonFacts person={detailPerson} />
-                  <PersonContactsCard person={detailPerson} />
-                  <PersonKnowledgeCard
+                  <PersonBody
                     person={detailPerson}
+                    managers={managers}
                     busy={mutating}
+                    variant="drawer"
+                    availableCampaigns={[]}
+                    onAddToCampaign={null}
                     onSaveNote={saveDetailNote}
                     onRemoveNote={removeDetailNote}
+                    onCreateTask={createPersonTask}
+                    /* Касание в воронке записывают её собственной кнопкой «Связаться»:
+                       там уже выбраны и контакт, и колонки. Второй вход в тот же разбор
+                       из ленты только путал бы, по какой строке пишется результат. */
+                    onTouch={null}
+                    onCompleteTask={async (taskId) => {
+                      await completeTaskById(taskId);
+                    }}
+                    onRescheduleTask={(task) => setReschedule({
+                      id: task.id,
+                      type: task.type,
+                      text: task.text,
+                      dueAt: task.dueAt,
+                      assignedAdminId: task.assignedAdminId,
+                      campaignContactId: task.campaignContactId,
+                      contactId: detailPerson.contactId,
+                      contactName: detailPerson.displayName
+                    })}
                   />
-                  <PersonEventsCard person={detailPerson} />
-                  <PersonOrdersCard person={detailPerson} />
-                  <PersonOriginCard person={detailPerson} />
-                  <PersonHistoryCard person={detailPerson} />
                 </>
               )}
             </div>

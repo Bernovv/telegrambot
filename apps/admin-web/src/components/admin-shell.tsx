@@ -11,7 +11,6 @@ import {
   Menu,
   PhoneCall,
   ReceiptText,
-  Search,
   ShieldCheck,
   Sunrise,
   Users,
@@ -21,15 +20,21 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useState } from "react";
 
+/**
+ * Пункты меню.
+ *
+ * Поиска здесь нет намеренно: он же живёт внутри «Базы контактов», а отдельным пунктом
+ * дублировал её. Страница `/search` осталась по своему адресу — на неё просто ничего не
+ * ведёт.
+ */
 const NAVIGATION = [
   { href: "/today", label: "Мой день", icon: Sunrise },
   { href: "/tasks", label: "Задачи", icon: ListChecks },
-  { href: "/search", label: "Поиск", icon: Search },
   { href: "/events", label: "Мероприятия", icon: CalendarDays },
   { href: "/registrations", label: "Заявки с сайта", icon: Globe },
   { href: "/base", label: "База контактов", icon: Contact },
-  { href: "/outreach", label: "Работа с базой", icon: PhoneCall },
-  { href: "/users", label: "Пользователи", icon: Users },
+  { href: "/outreach", label: "Кампании", icon: PhoneCall },
+  { href: "/users", label: "Бот", icon: Users },
   { href: "/orders", label: "Заказы", icon: ReceiptText },
   { href: "/broadcasts", label: "Рассылки", icon: Megaphone }
 ] as const;
