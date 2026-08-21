@@ -244,5 +244,20 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260821140000_outreach_own_contacts",
     description: "Mark people who must not be cold-called so the badge follows them everywhere they show up",
     destructive: false
+  },
+  {
+    id: "20260821160000_outreach_person_fields",
+    description: "Store shared person fields, ownership, and personal meeting dates independently of campaign membership",
+    destructive: false
+  },
+  {
+    id: "20260821180000_outreach_standing_campaign",
+    description: "Create the standing Business Wednesday outreach campaign shared across recurring events",
+    destructive: false
+  },
+  {
+    id: "20260821200000_outreach_task_rules",
+    description: "Create configurable automatic follow-up task rules with idempotent trigger evidence",
+    destructive: false
   }
 ];
