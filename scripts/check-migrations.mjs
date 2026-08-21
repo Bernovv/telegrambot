@@ -21,6 +21,31 @@ const destructivePatterns = [
 const files = (await readdir(migrationDir)).filter((file) => file.endsWith(".sql")).sort();
 const violations = [];
 
+// Манифест обязан совпадать с папкой файл в файл: по нему выкладка и решает, что
+// применять. Забытая в манифесте миграция не применяется вовсе — выкладка падает с
+// «files do not exactly match the ordered migration manifest», и это выясняется на
+// сервере, а не здесь.
+const manifestSource = await readFile(
+  join(process.cwd(), "packages", "database", "src", "migrations.ts"),
+  "utf8"
+);
+const manifestIds = [...manifestSource.matchAll(/^\s*id:\s*"([^"]+)"/gm)]
+  .map((match) => match[1]);
+const fileIds = files.map((file) => file.slice(0, -4));
+
+for (const missing of fileIds.filter((id) => !manifestIds.includes(id))) {
+  violations.push(`${missing}.sql: миграции нет в манифесте packages/database/src/migrations.ts`);
+}
+for (const extra of manifestIds.filter((id) => !fileIds.includes(id))) {
+  violations.push(`${extra}: в манифесте есть, а файла миграции нет`);
+}
+if (
+  violations.length === 0
+  && JSON.stringify(manifestIds) !== JSON.stringify(fileIds)
+) {
+  violations.push("порядок миграций в манифесте не совпадает с порядком файлов");
+}
+
 for (const file of files) {
   const content = await readFile(join(migrationDir, file), "utf8");
   const stripped = stripApprovedVendorStatements(file, stripSqlComments(content));
@@ -33,7 +58,7 @@ for (const file of files) {
 }
 
 if (violations.length > 0) {
-  console.error("Potential destructive migration statements found:");
+  console.error("Миграции не в порядке:");
   for (const violation of violations) {
     console.error(`- ${violation}`);
   }
