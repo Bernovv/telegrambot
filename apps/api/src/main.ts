@@ -47,6 +47,7 @@ import {
   PublishAdminEventOfferVersionService,
   PublishAdminEventService,
   PublishAdminEventScenarioVersionService,
+  ReceiveZvonobotCallService,
   RegisterFromSiteService,
   RequestTelegramTicketRedeliveryService,
   ResumeTelegramScenarioAfterOfferService,
@@ -90,6 +91,7 @@ import {
   createTelegramAccessPersistence,
   createScenarioRuntimePersistence,
   createSiteRegistrationPersistence,
+  createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
   createOrderSalesPersistence,
   createTelegramPurchaseFlowPersistence,
@@ -376,6 +378,19 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
         config.siteRegistration
       );
     })();
+    // Обратная связь Звонобота. Поднимается только вместе с ключом: путь без ключа — это
+    // способ насыпать в воронку кого угодно, и молча открытым он быть не должен.
+    const zvonobot = config.zvonobot.enabled
+      ? new ReceiveZvonobotCallService(
+          createZvonobotIntakePersistence(pool).repository,
+          new LibPhoneNumberNormalizer(
+            config.telegramWebhook.enabled
+              ? config.telegramWebhook.defaultCountry
+              : "RU"
+          ),
+          idGenerator
+        )
+      : undefined;
     const orders = adminAuth
       ? (() => {
           const persistence = createOrderSalesPersistence(pool, idGenerator);
@@ -618,6 +633,18 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminOverview ? { adminOverview } : {}),
       ...(adminEventReport ? { adminEventReport } : {}),
       siteRegistration: { handler: siteRegistration, logger },
+      ...(zvonobot && config.zvonobot.enabled
+        ? {
+            zvonobot: {
+              config: {
+                secret: config.zvonobot.secret,
+                bodyLimitBytes: config.zvonobot.bodyLimitBytes
+              },
+              handler: zvonobot,
+              logger
+            }
+          }
+        : {}),
       ...(tbank?.refunds ? { fullRefunds: tbank.refunds } : {}),
       ...(tbank
         ? {

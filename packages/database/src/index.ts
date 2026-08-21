@@ -46,3 +46,4 @@ export * from "./admin-event-overview-persistence.js";
 export * from "./admin-event-report-persistence.js";
 export * from "./telegram-access-persistence.js";
 export * from "./site-registration-persistence.js";
+export * from "./zvonobot-persistence.js";

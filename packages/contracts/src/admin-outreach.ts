@@ -801,7 +801,8 @@ export const OUTREACH_TASK_TRIGGERS = [
   "attended",
   "no_show",
   "meeting_upcoming",
-  "stage_entered"
+  "stage_entered",
+  "zvonobot_feedback"
 ] as const;
 
 export type OutreachTaskTrigger = typeof OUTREACH_TASK_TRIGGERS[number];

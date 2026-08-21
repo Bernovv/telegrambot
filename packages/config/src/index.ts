@@ -110,6 +110,7 @@ export interface ApiConfig extends AppConfig {
   /** Single-event MVP: which published event's catalog "Купить билет" sells from in chat. */
   readonly purchaseEventSlug: string;
   readonly siteRegistration: SiteRegistrationConfig;
+  readonly zvonobot: ZvonobotConfig;
   readonly tbankPayments: TBankPaymentsConfig;
 }
 
@@ -125,6 +126,21 @@ export interface SiteRegistrationConfig {
   /** Служебная учётная запись из миграции 20260820120000: от её имени заводится участник. */
   readonly systemAdminId: string;
 }
+
+/**
+ * Приёмник обратной связи Звонобота.
+ *
+ * Выключен, пока не задан `ZVONOBOT_WEBHOOK_SECRET`, и это не забывчивость, а поведение:
+ * открытый путь, принимающий чужие тела без ключа, — это способ насыпать в воронку
+ * выдуманных людей. Нет ключа — нет и пути, приложение поднимается без него.
+ */
+export type ZvonobotConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly secret: string;
+      readonly bodyLimitBytes: number;
+    };
 
 export interface WorkerConfig extends AppConfig {
   readonly databasePoolMax: number;
@@ -143,6 +159,10 @@ export interface WorkerConfig extends AppConfig {
   readonly eventCampaignSyncPollIntervalMs: number;
   readonly autoTaskBatchSize: number;
   readonly autoTaskPollIntervalMs: number;
+  readonly zvonobotBatchSize: number;
+  readonly zvonobotPollIntervalMs: number;
+  /** Служебная учётная запись из миграции 20260822160000: от её имени заводится заявка. */
+  readonly zvonobotSystemAdminId: string;
   /** Страна по умолчанию при разборе телефонов: та же, что у вебхука Telegram. */
   readonly phoneDefaultCountry: string;
   readonly tbankReconciliation: TBankReconciliationConfig;
@@ -283,6 +303,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       ),
       systemAdminId: "00000000-0000-4000-8000-000000000001"
     },
+    zvonobot: loadZvonobotConfig(env),
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
 }
@@ -471,8 +492,44 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       30_000,
       3_600_000
     ),
+    zvonobotBatchSize: parseBoundedInteger(
+      env.ZVONOBOT_BATCH_SIZE ?? "100",
+      "ZVONOBOT_BATCH_SIZE",
+      1,
+      1_000
+    ),
+    // Минута: человек только что сказал роботу «интересно», и звонок по горячему следу —
+    // это и есть весь смысл затеи. Проход по пустой очереди стоит одного запроса.
+    zvonobotPollIntervalMs: parseBoundedInteger(
+      env.ZVONOBOT_POLL_INTERVAL_MS ?? "60000",
+      "ZVONOBOT_POLL_INTERVAL_MS",
+      10_000,
+      3_600_000
+    ),
+    zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
     tbankReconciliation,
     telegramNotifications
+  };
+}
+
+/** Приёмник Звонобота: без ключа путь не поднимается вовсе. */
+function loadZvonobotConfig(env: NodeJS.ProcessEnv): ZvonobotConfig {
+  const secret = (env.ZVONOBOT_WEBHOOK_SECRET ?? "").trim();
+  if (secret === "") {
+    return { enabled: false };
+  }
+  if (secret.length < 16) {
+    throw new Error("ZVONOBOT_WEBHOOK_SECRET must be at least 16 characters long");
+  }
+  return {
+    enabled: true,
+    secret,
+    bodyLimitBytes: parseBoundedInteger(
+      env.ZVONOBOT_BODY_LIMIT_BYTES ?? "65536",
+      "ZVONOBOT_BODY_LIMIT_BYTES",
+      1_024,
+      1_048_576
+    )
   };
 }
 

@@ -269,5 +269,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260822100000_outreach_stage_task_rules",
     description: "Let the panel add task rules per trigger, including entering a pipeline stage",
     destructive: false
+  },
+  {
+    id: "20260822160000_zvonobot_calls",
+    description: "Store Zvonobot call webhooks verbatim and turn answered calls into funnel leads",
+    destructive: false
   }
 ];

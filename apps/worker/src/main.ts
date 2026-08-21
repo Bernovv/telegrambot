@@ -11,6 +11,7 @@ import {
   ReconcileTBankPaymentsBatchService,
   ReconcileTBankRefundsBatchService,
   ResumeTelegramScenarioAfterPaymentService,
+  ProcessZvonobotCallsBatchService,
   RunAutoTasksBatchService,
   SendEventRemindersBatchService,
   SyncEventCampaignsBatchService,
@@ -23,6 +24,7 @@ import {
   createAdminOutreachPersistence,
   createEventCampaignSyncPersistence,
   createAutoTaskPersistence,
+  createZvonobotProcessingPersistence,
   createEventReminderPersistence,
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
@@ -108,6 +110,13 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     createAutoTaskPersistence(pool),
     idGenerator
   );
+  // Звонобот: кто ответил роботу — тот новая заявка. Проход разбирает принятые вебхуки;
+  // сам приём живёт в api и до базы доходит одной вставкой.
+  const processZvonobotCalls = new ProcessZvonobotCallsBatchService(
+    createZvonobotProcessingPersistence(pool).repository,
+    idGenerator,
+    { systemAdminId: config.zvonobotSystemAdminId }
+  );
   const tbankReconciliation = config.tbankReconciliation.enabled
     ? (() => {
         const provider = new TBankPaymentProvider({
@@ -153,22 +162,26 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextTBankReconciliationSweepAt = 0;
   let nextEventCampaignSyncSweepAt = 0;
   let nextAutoTaskSweepAt = 0;
+  let nextZvonobotSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
   let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
   let lastEventCampaignSyncSweepAt: string | null = null;
   let lastAutoTaskSweepAt: string | null = null;
+  let lastZvonobotSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
   const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
   const eventCampaignSyncWorkload = "event-campaign-sync";
   const autoTaskWorkload = "outreach-auto-tasks";
+  const zvonobotWorkload = "zvonobot-calls";
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
     reminderWorkload,
     eventCampaignSyncWorkload,
     autoTaskWorkload,
+    zvonobotWorkload,
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -204,7 +217,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           lastReminderSweepAt,
           lastTBankReconciliationSweepAt,
           lastEventCampaignSyncSweepAt,
-          lastAutoTaskSweepAt
+          lastAutoTaskSweepAt,
+          lastZvonobotSweepAt
         }
       });
     } catch (error) {
@@ -429,6 +443,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextAutoTaskSweepAt = Date.now() + config.autoTaskPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextZvonobotSweepAt) {
+        currentJobId = zvonobotWorkload;
+
+        try {
+          const result = await processZvonobotCalls.execute({
+            at: new Date(),
+            batchSize: config.zvonobotBatchSize
+          });
+          lastZvonobotSweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("zvonobot calls processed", {
+              claimed: result.claimed,
+              leads: result.leads,
+              ignored: result.ignored,
+              unparsed: result.unparsed
+            });
+          }
+        } catch (error) {
+          logger.error("zvonobot batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextZvonobotSweepAt = Date.now() + config.zvonobotPollIntervalMs;
         }
       }
 

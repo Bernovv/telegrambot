@@ -93,6 +93,11 @@ import {
   type SiteRegistrationHandler
 } from "./site-registration-api.js";
 import {
+  ZvonobotWebhookModule,
+  type ZvonobotWebhookEndpointConfig,
+  type ZvonobotWebhookHandler
+} from "./zvonobot-webhook.js";
+import {
   TBankWebhookModule,
   type TBankWebhookEndpointConfig,
   type TBankWebhookHandler,
@@ -177,6 +182,12 @@ export interface ApiApplicationOptions {
     readonly handler: SiteRegistrationHandler;
     readonly logger: Logger;
   };
+  /** Обратная связь с автообзвона. Поднимается, только когда задан ключ вебхука. */
+  readonly zvonobot?: {
+    readonly config: ZvonobotWebhookEndpointConfig;
+    readonly handler: ZvonobotWebhookHandler;
+    readonly logger: Logger;
+  };
   readonly tbankWebhook?: {
     readonly config: TBankWebhookEndpointConfig;
     readonly verifier: TBankWebhookVerifier;
@@ -254,6 +265,13 @@ class ApiModule {
           ? [SiteRegistrationApiModule.register(
               options.siteRegistration.handler,
               options.siteRegistration.logger
+            )]
+          : []),
+        ...(options.zvonobot
+          ? [ZvonobotWebhookModule.register(
+              options.zvonobot.config,
+              options.zvonobot.handler,
+              options.zvonobot.logger
             )]
           : []),
         ...(options.tbankWebhook

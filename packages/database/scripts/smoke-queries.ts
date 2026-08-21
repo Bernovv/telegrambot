@@ -23,6 +23,10 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
+import {
+  createZvonobotIntakePersistence,
+  createZvonobotProcessingPersistence
+} from "../src/zvonobot-persistence.js";
 
 const CONNECTION = process.env.SMOKE_DATABASE_URL;
 if (!CONNECTION) {
@@ -33,6 +37,8 @@ if (!CONNECTION) {
 /** Служебные учётные записи заводит миграция городского формата. */
 const SITE_ADMIN = "00000000-0000-4000-8000-000000000001";
 const AUTOMATION_ADMIN = "00000000-0000-4000-8000-000000000002";
+/** Учётная запись Звонобота: миграция 20260822160000. */
+const ZVONOBOT_ADMIN = "00000000-0000-4000-8000-000000000003";
 
 const now = new Date();
 const failures: string[] = [];
@@ -384,6 +390,54 @@ async function main(): Promise<void> {
       }
     })
   ));
+
+  // Звонобот: приём вебхука и разбор принятого. Разбор заводит человека, карточку в
+  // воронке и звонок — то есть трогает те же таблицы, что и заявка с сайта, и ломается
+  // от той же ошибки в колонке.
+  const zvonobotIntake = createZvonobotIntakePersistence(pool);
+  const zvonobot = createZvonobotProcessingPersistence(pool);
+  const zvonobotCallId = randomUUID();
+  await check("zvonobot store", () => zvonobotIntake.repository.store({
+    id: zvonobotCallId,
+    externalCallId: `smoke-${zvonobotCallId}`,
+    campaignName: "Проверка",
+    phoneE164: smokePhone(),
+    pressedButton: "1",
+    durationSeconds: 42,
+    payload: { phone: "+79990000000", button: "1" },
+    receivedAt: now
+  }));
+  await check("zvonobot loadSettings", () => zvonobot.repository.loadSettings());
+  await check("zvonobot findCampaign", async () => {
+    const found = await zvonobot.repository.findCampaign("sreda");
+    console.log(`        колонка заявок робота: ${found?.stage ?? "нет воронки"}`);
+  });
+  await check("zvonobot claimPending", () => zvonobot.repository.claimPending(10));
+  await check("zvonobot createLead с карточкой и звонком", () =>
+    zvonobot.repository.createLead({
+      callId: zvonobotCallId,
+      phoneE164: smokePhone(),
+      campaignName: "Проверка",
+      pressedButton: "1",
+      contactSeedId: randomUUID(),
+      noteId: randomUUID(),
+      campaignId,
+      campaignContactId: randomUUID(),
+      stage: "new",
+      assignedAdminId: ZVONOBOT_ADMIN,
+      task: {
+        taskId: randomUUID(),
+        ruleId: null,
+        text: "Позвонить: человек ответил роботу",
+        dueAt: new Date(now.getTime() + 3_600_000)
+      },
+      processedAt: now
+    }));
+  await check("zvonobot markSettled", () => zvonobot.repository.markSettled({
+    callId: randomUUID(),
+    status: "ignored",
+    processedAt: now
+  }));
 
   await pool.close();
 

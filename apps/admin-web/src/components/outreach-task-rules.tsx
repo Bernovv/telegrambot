@@ -52,13 +52,27 @@ const TRIGGERS: Record<
   stage_entered: {
     label: "Карточка перешла в стадию",
     anchor: "считается от самого перехода"
+  },
+  zvonobot_feedback: {
+    label: "Ответил роботу",
+    anchor: "сразу после звонка, в ближайшее окно обзвона"
   }
 };
+
+/**
+ * Поводы без сдвига по дням: заявка уже пришла, и звонить по ней надо не «через день», а в
+ * ближайшее окно обзвона. Поле сдвига у них скрыто, иначе оно читалось бы как влияющее.
+ */
+const IMMEDIATE_TRIGGERS: readonly OutreachTaskTrigger[] = [
+  "site_registration",
+  "zvonobot_feedback"
+];
 
 /** Поводы в том порядке, в каком их выбирают: сначала воронка, потом всё остальное. */
 const TRIGGER_ORDER: readonly OutreachTaskTrigger[] = [
   "stage_entered",
   "site_registration",
+  "zvonobot_feedback",
   "no_answer",
   "event_upcoming",
   "attended",
@@ -169,7 +183,7 @@ function TaskRuleRow({
 }) {
   const [saving, setSaving] = useState(false);
   const trigger = TRIGGERS[rule.trigger];
-  const timed = rule.trigger !== "site_registration";
+  const timed = !IMMEDIATE_TRIGGERS.includes(rule.trigger);
 
   async function save(changes: Parameters<typeof updateOutreachTaskRule>[1]) {
     setSaving(true);
@@ -347,7 +361,7 @@ function NewTaskRuleForm({
         ...(trigger === "stage_entered" ? { stage } : {}),
         taskType: (formValue(data, "taskType") || "call") as OutreachTaskType,
         taskText: text,
-        ...(trigger === "site_registration"
+        ...(IMMEDIATE_TRIGGERS.includes(trigger)
           ? {}
           : { offsetDays: Number(formValue(data, "offsetDays") || "0") })
       });
@@ -396,7 +410,7 @@ function NewTaskRuleForm({
             </select>
           </label>
         ) : null}
-        {trigger === "site_registration" ? null : (
+        {IMMEDIATE_TRIGGERS.includes(trigger) ? null : (
           <label>
             <span>Сдвиг, дней</span>
             <input name="offsetDays" type="number" min={-30} max={30} defaultValue={0} />
