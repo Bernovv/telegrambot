@@ -2,6 +2,11 @@
 
 import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
 import {
+  OutreachTaskRescheduleDialog,
+  suggestDueAt,
+  type ReschedulableTask
+} from "@/components/outreach-task-reschedule-dialog";
+import {
   OutreachTouchDialog,
   type OutreachTouchTarget
 } from "@/components/outreach-touch-dialog";
@@ -20,7 +25,9 @@ import type {
   OutreachTaskUrgency
 } from "@ticket-platform/contracts/admin-outreach";
 import {
+  CalendarClock,
   Check,
+  GripVertical,
   MessageCircle,
   Phone,
   PhoneCall,
@@ -29,7 +36,7 @@ import {
   Sparkles
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { type DragEvent, useCallback, useEffect, useState } from "react";
 
 /**
  * Цель касания для задачи. Пусто у задачи про человека вообще: касание записывается по
@@ -84,6 +91,13 @@ export default function OutreachTasksPage() {
     readonly target: OutreachTouchTarget;
   } | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  // Что переносим и куда предлагаем перенести. Колонка задаёт день, время дня остаётся
+  // прежним — и то и другое менеджер ещё увидит и сможет поправить.
+  const [reschedule, setReschedule] = useState<{
+    readonly task: ReschedulableTask;
+    readonly suggestedDueAt: Date;
+  } | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -132,6 +146,50 @@ export default function OutreachTasksPage() {
     } finally {
       setMutating(false);
     }
+  }
+
+  /**
+   * Колонки доски — это сроки, а не состояния: перетащить карточку значит назначить новый
+   * срок. Поэтому бросок открывает диалог с подставленной датой, а не переносит молча:
+   * «на неделе» — это не конкретный день, и угадывать за менеджера тут нечего.
+   */
+  function dropOnColumn(event: DragEvent<HTMLDivElement>, urgency: OutreachTaskUrgency) {
+    event.preventDefault();
+    const dropped = tasks.find((item) => item.id === draggedId);
+    setDraggedId(null);
+    if (!dropped || dropped.status !== "open" || dropped.urgency === urgency) {
+      return;
+    }
+    if (urgency === "completed") {
+      void complete(dropped.id);
+      return;
+    }
+    if (urgency === "overdue") {
+      return;
+    }
+    setReschedule({
+      task: {
+        id: dropped.id,
+        type: dropped.type,
+        text: dropped.text,
+        dueAt: dropped.dueAt,
+        assignedAdminId: dropped.assignedAdminId,
+        campaignContactId: dropped.campaignContactId,
+        contactId: dropped.contactId,
+        contactName: dropped.contactName
+      },
+      suggestedDueAt: suggestDueAt(urgency, new Date(dropped.dueAt))
+    });
+  }
+
+  // В «Просрочено» ничего не назначают нарочно, а из своей колонки карточка никуда не
+  // едет. Не разрешаем бросок — курсор скажет об этом раньше, чем менеджер отпустит кнопку.
+  function droppable(urgency: OutreachTaskUrgency): boolean {
+    const dragged = tasks.find((item) => item.id === draggedId);
+    return dragged !== undefined
+      && dragged.status === "open"
+      && urgency !== "overdue"
+      && dragged.urgency !== urgency;
   }
 
   const columns = URGENCY_COLUMNS.map((column) => ({
@@ -191,21 +249,46 @@ export default function OutreachTasksPage() {
       {!error && tasks.length > 0 ? (
         <div className={loading ? "outreach-board table-refreshing" : "outreach-board"}>
           {columns.map((column) => (
-            <div className={`outreach-column outreach-task-column-${column.key}`} key={column.key}>
+            <div
+              className={[
+                "outreach-column",
+                `outreach-task-column-${column.key}`,
+                droppable(column.key) ? "outreach-column-droppable" : ""
+              ].filter(Boolean).join(" ")}
+              key={column.key}
+              onDragOver={(event) => {
+                if (droppable(column.key)) {
+                  event.preventDefault();
+                }
+              }}
+              onDrop={(event) => dropOnColumn(event, column.key)}
+            >
               <header>
                 <span>{column.label}</span>
                 <strong>{column.items.length}</strong>
               </header>
               <div className="outreach-column-cards">
                 {column.items.map((task) => (
-                  <article className="outreach-lead-card outreach-task-card" key={task.id}>
+                  <article
+                    className="outreach-lead-card outreach-task-card"
+                    key={task.id}
+                    draggable={task.status === "open" && !mutating}
+                    onDragStart={() => setDraggedId(task.id)}
+                    onDragEnd={() => setDraggedId(null)}
+                  >
                     {/* Имя всюду ведёт в карточку клиента. Работа по кампании — отдельной
                         ссылкой ниже: там своя воронка, а здесь нужен человек. */}
                     <Link
                       className="outreach-card-main"
                       href={`/base/${task.contactId}`}
+                      // Ссылку браузер тащит сам, и перетаскивание карточки началось бы с
+                      // перетаскивания адреса.
+                      draggable={false}
                     >
                       <span className="outreach-card-title">
+                        {task.status === "open" ? (
+                          <GripVertical size={15} aria-hidden="true" />
+                        ) : null}
                         {task.type === "call" ? <Phone size={15} aria-hidden="true" /> : null}
                         {task.type === "message" ? <MessageCircle size={15} aria-hidden="true" /> : null}
                         {task.type === "other" ? <Sparkles size={15} aria-hidden="true" /> : null}
@@ -249,6 +332,27 @@ export default function OutreachTasksPage() {
                         ) : null}
                         <button
                           type="button"
+                          aria-label="Перенести срок"
+                          title="Перенести срок"
+                          disabled={mutating}
+                          onClick={() => setReschedule({
+                            task: {
+                              id: task.id,
+                              type: task.type,
+                              text: task.text,
+                              dueAt: task.dueAt,
+                              assignedAdminId: task.assignedAdminId,
+                              campaignContactId: task.campaignContactId,
+                              contactId: task.contactId,
+                              contactName: task.contactName
+                            },
+                            suggestedDueAt: suggestDueAt("tomorrow", new Date(task.dueAt))
+                          })}
+                        >
+                          <CalendarClock size={15} />
+                        </button>
+                        <button
+                          type="button"
                           aria-label="Отметить выполненной"
                           title="Отметить выполненной"
                           disabled={mutating}
@@ -261,7 +365,13 @@ export default function OutreachTasksPage() {
                   </article>
                 ))}
                 {column.items.length === 0 ? (
-                  <div className="outreach-column-empty">Пусто</div>
+                  <div className="outreach-column-empty">
+                    {draggedId && droppable(column.key)
+                      ? (column.key === "completed"
+                        ? "Отпустите — задача закроется"
+                        : "Отпустите — назначим новый срок")
+                      : "Пусто"}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -278,6 +388,19 @@ export default function OutreachTasksPage() {
           onRecorded={async () => {
             setNotice("Касание записано, задача закрыта.");
             setTouch(null);
+            await load();
+          }}
+        />
+      ) : null}
+
+      {reschedule ? (
+        <OutreachTaskRescheduleDialog
+          task={reschedule.task}
+          suggestedDueAt={reschedule.suggestedDueAt}
+          onClose={() => setReschedule(null)}
+          onDone={async (message) => {
+            setNotice(message);
+            setReschedule(null);
             await load();
           }}
         />

@@ -4,6 +4,11 @@ import { OutreachNewTaskDialog } from "@/components/outreach-new-task-dialog";
 import { OutreachTouchDialog } from "@/components/outreach-touch-dialog";
 import { OwnBadge } from "@/components/own-badge";
 import {
+  OutreachTaskRescheduleDialog,
+  suggestDueAt,
+  type ReschedulableTask
+} from "@/components/outreach-task-reschedule-dialog";
+import {
   PersonContactsCard,
   PersonCustomFieldsCard,
   PersonEventsCard,
@@ -48,6 +53,7 @@ import {
   ArchiveRestore,
   ArrowLeft,
   CalendarClock,
+  Clock,
   CheckCircle2,
   ExternalLink,
   Merge,
@@ -116,6 +122,7 @@ export default function OutreachPersonPage(
   const [campaigns, setCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
   const menuRef = useRef<HTMLDetailsElement>(null);
+  const [reschedule, setReschedule] = useState<ReschedulableTask | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -788,6 +795,23 @@ export default function OutreachPersonPage(
                           <button
                             type="button"
                             disabled={mutating}
+                            onClick={() => setReschedule({
+                              id: task.id,
+                              type: task.type,
+                              text: task.text,
+                              dueAt: task.dueAt,
+                              assignedAdminId: task.assignedAdminId,
+                              campaignContactId: task.campaignContactId,
+                              contactId: person.contactId,
+                              contactName: person.displayName
+                            })}
+                          >
+                            <Clock size={16} />
+                            Перенести
+                          </button>
+                          <button
+                            type="button"
+                            disabled={mutating}
                             onClick={() => void run(
                               () => completeOutreachTask(task.id),
                               "Задача выполнена."
@@ -883,6 +907,19 @@ export default function OutreachPersonPage(
 
         </div>
       </div>
+
+      {reschedule ? (
+        <OutreachTaskRescheduleDialog
+          task={reschedule}
+          suggestedDueAt={suggestDueAt("tomorrow", new Date(reschedule.dueAt))}
+          onClose={() => setReschedule(null)}
+          onDone={async (message) => {
+            setNotice(message);
+            setReschedule(null);
+            await load();
+          }}
+        />
+      ) : null}
 
       {touchCampaign ? (
         <OutreachTouchDialog

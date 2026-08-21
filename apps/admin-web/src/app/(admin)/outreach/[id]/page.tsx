@@ -622,6 +622,41 @@ export default function OutreachCampaignPage() {
     }
   }
 
+  /**
+   * Убрать одного человека — из шторки контакта.
+   *
+   * До этого убрать из кампании можно было только пачкой, отметив галочки, а галочки есть
+   * только в таблице: с доски человека было не убрать вовсе.
+   */
+  async function removeFromCampaign(contact: OutreachCampaignContactDetail) {
+    if (!window.confirm(
+      `Убрать ${contact.displayName ?? "контакт"} из кампании? Человек останется в общей `
+      + "базе, история звонков сохранится."
+    )) {
+      return;
+    }
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await removeOutreachContacts({
+        campaignId: id,
+        campaignContactIds: [contact.id]
+      });
+      if (result.removed === 0) {
+        setError("Контакт уже убран из кампании.");
+        return;
+      }
+      setNotice("Человек убран из кампании.");
+      setDetail(null);
+      await load();
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось убрать контакт из кампании."));
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function removeSelected() {
     if (selected.length === 0 || !window.confirm(
       `Убрать ${selected.length} контактов из кампании? Человек останется в общей базе, `
@@ -1988,6 +2023,21 @@ export default function OutreachCampaignPage() {
                   />
                 </details>
               </section>
+
+              <div className="person-drawer-campaign-footer">
+                <button
+                  className="secondary-button danger"
+                  type="button"
+                  disabled={mutating}
+                  onClick={() => void removeFromCampaign(detail)}
+                >
+                  <Trash2 size={16} />
+                  Убрать из кампании
+                </button>
+                <span className="muted">
+                  Человек останется в базе, история звонков сохранится
+                </span>
+              </div>
             </div>
 
             {/* Дальше — та же карточка, что открывается на своей странице: деньги, заметки,

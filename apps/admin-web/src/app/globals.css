@@ -2187,6 +2187,19 @@ tbody tr:hover {
   color: #237453;
 }
 
+/* Колонки доски задач — это сроки: карточку в них не «кладут», а назначают ей новый.
+   Пока карточку тащат, подсвечиваем те колонки, куда её действительно можно бросить. */
+.outreach-column-droppable {
+  background: var(--accent-soft);
+  outline: 2px dashed #8dbfa9;
+  outline-offset: -2px;
+}
+
+.outreach-column-droppable .outreach-column-empty {
+  color: var(--accent);
+  border-color: #8dbfa9;
+}
+
 .outreach-column-empty {
   display: grid;
   min-height: 74px;
@@ -4927,6 +4940,42 @@ tbody tr:hover {
 .person-drawer-campaign .outreach-task-panel {
   margin: 4px 18px 18px;
   background: var(--surface);
+}
+
+/* Диалог переноса срока: два поля в узкой модалке ставим одной колонкой. */
+.reschedule-form {
+  margin-top: 0;
+  padding: 4px 18px 18px;
+}
+
+.reschedule-form form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.reschedule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 10px;
+}
+
+/* Длинное «что сделать» распирало форму: у элементов сетки min-width по умолчанию auto. */
+.outreach-task-create form input,
+.outreach-task-create form select {
+  min-width: 0;
+}
+
+.person-drawer-campaign-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0 18px 18px;
+  gap: 8px 14px;
+}
+
+.person-drawer-campaign-footer > span {
+  flex: 1 1 200px;
+  font-size: 12px;
 }
 
 /* Внутри панели разделы идут одной лентой: рамка вокруг каждого дала бы коробки в коробке. */
