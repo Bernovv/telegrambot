@@ -65,7 +65,8 @@ describe("RegisterFromSiteService", () => {
     const enrollment = state.created[0]?.enrollment;
     assert.equal(enrollment?.campaignId, STANDING_CAMPAIGN.campaignId);
     assert.equal(enrollment?.stage, "new");
-    assert.equal(enrollment?.dueAt.toISOString(), NOW.toISOString());
+    assert.equal(enrollment?.task?.dueAt.toISOString(), NOW.toISOString());
+    assert.equal(enrollment?.task?.text, "Позвонить по заявке с сайта");
   });
 
   it("ночную заявку двигает на начало обзвона следующего дня", async () => {
@@ -81,9 +82,30 @@ describe("RegisterFromSiteService", () => {
     });
 
     assert.equal(
-      state.created[0]?.enrollment?.dueAt.toISOString(),
+      state.created[0]?.enrollment?.task?.dueAt.toISOString(),
       "2026-08-21T09:00:00.000Z"
     );
+  });
+
+  it("выключенное правило оставляет карточку без звонка", async () => {
+    const state = repositoryState({
+      standingCampaign: {
+        ...STANDING_CAMPAIGN,
+        taskRule: { ...STANDING_CAMPAIGN.taskRule, isEnabled: false }
+      }
+    });
+    const service = createService(state.repository, []);
+
+    await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      now: NOW
+    });
+
+    // Карточка в воронке остаётся: заявка есть, работать по ней надо. Нет только звонка.
+    assert.equal(state.created[0]?.enrollment?.campaignId, STANDING_CAMPAIGN.campaignId);
+    assert.equal(state.created[0]?.enrollment?.task, null);
   });
 
   it("без воронки направления заявку всё равно принимает", async () => {
@@ -209,7 +231,12 @@ const STANDING_CAMPAIGN = {
   stage: "new",
   callWindowStart: 12,
   callWindowEnd: 19,
-  callWindowTimezone: "Europe/Moscow"
+  callWindowTimezone: "Europe/Moscow",
+  taskRule: {
+    ruleId: "rule-1",
+    isEnabled: true,
+    taskText: "Позвонить по заявке с сайта"
+  }
 };
 
 function repositoryState(options: {

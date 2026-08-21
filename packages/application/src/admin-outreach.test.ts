@@ -1236,6 +1236,8 @@ function repository(
     async getPerson() { return null; },
     async setPersonFieldValue() { return true; },
     async getTaskGuard() { return { requireOpenTask: false, hasOpenTask: false }; },
+    async listTaskRules() { return []; },
+    async updateTaskRule() { return null; },
     async importPeople() {
       return {
         received: 0,

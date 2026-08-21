@@ -141,6 +141,8 @@ export interface WorkerConfig extends AppConfig {
   readonly reminderPollIntervalMs: number;
   readonly eventCampaignSyncBatchSize: number;
   readonly eventCampaignSyncPollIntervalMs: number;
+  readonly autoTaskBatchSize: number;
+  readonly autoTaskPollIntervalMs: number;
   /** Страна по умолчанию при разборе телефонов: та же, что у вебхука Telegram. */
   readonly phoneDefaultCountry: string;
   readonly tbankReconciliation: TBankReconciliationConfig;
@@ -453,6 +455,20 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       env.EVENT_CAMPAIGN_SYNC_POLL_INTERVAL_MS ?? "60000",
       "EVENT_CAMPAIGN_SYNC_POLL_INTERVAL_MS",
       10_000,
+      3_600_000
+    ),
+    autoTaskBatchSize: parseBoundedInteger(
+      env.AUTO_TASK_BATCH_SIZE ?? "100",
+      "AUTO_TASK_BATCH_SIZE",
+      1,
+      1_000
+    ),
+    // Пять минут: автозадача — это напоминание на завтра или на следующий день, и минута
+    // задержки здесь ничего не решает. Проход отбирает поводы одним запросом.
+    autoTaskPollIntervalMs: parseBoundedInteger(
+      env.AUTO_TASK_POLL_INTERVAL_MS ?? "300000",
+      "AUTO_TASK_POLL_INTERVAL_MS",
+      30_000,
       3_600_000
     ),
     tbankReconciliation,

@@ -51,6 +51,8 @@ import type {
   OutreachPipelineColumn,
   OutreachPipelineStage,
   OutreachTaskBoardItem,
+  OutreachTaskRule,
+  UpdateOutreachTaskRuleRequest,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
 
@@ -649,6 +651,27 @@ export function getOutreachCampaign(
   return requestAdminApi(
     `outreach/campaigns/${encodeURIComponent(campaignId)}`,
     signal
+  );
+}
+
+export function listOutreachTaskRules(
+  campaignId: string,
+  signal?: AbortSignal
+): Promise<readonly OutreachTaskRule[]> {
+  return requestAdminApi(
+    `outreach/campaigns/${encodeURIComponent(campaignId)}/task-rules`,
+    signal
+  );
+}
+
+export function updateOutreachTaskRule(
+  ruleId: string,
+  changes: UpdateOutreachTaskRuleRequest
+): Promise<OutreachTaskRule> {
+  return requestAdminMutation(
+    `outreach/task-rules/${encodeURIComponent(ruleId)}`,
+    "PATCH",
+    changes
   );
 }
 

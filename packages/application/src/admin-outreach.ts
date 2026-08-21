@@ -33,12 +33,14 @@ import type {
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
   UpdateOutreachPersonRequest,
+  UpdateOutreachTaskRuleRequest,
   OutreachPersonFilter,
   OutreachPersonPage,
   OutreachPipelineColumn,
   OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
   OutreachTaskBoardItem,
+  OutreachTaskRule,
   OutreachTaskType,
   OutreachTaskUrgency
 } from "@ticket-platform/contracts";
@@ -215,6 +217,13 @@ export interface AdminOutreachRepository {
     readonly value: string | null;
     readonly now: Date;
   }): Promise<boolean>;
+  /** Правила автозадач воронки. Пусто — правил не заводили. */
+  listTaskRules(campaignId: string): Promise<readonly OutreachTaskRule[]>;
+  updateTaskRule(input: {
+    readonly ruleId: string;
+    readonly changes: UpdateOutreachTaskRuleRequest;
+    readonly now: Date;
+  }): Promise<OutreachTaskRule | null>;
   listTaskBoard(input: {
     readonly assignedAdminId: string | null;
     readonly now: Date;
@@ -775,6 +784,63 @@ export class AdminOutreachService {
       now: input.now
     });
     return changed ? this.repository.getCampaign(input.campaignId) : null;
+  }
+
+  /**
+   * Правила автозадач воронки.
+   *
+   * Их заводит миграция, а кабинет включает, выключает и переписывает: набор поводов — это
+   * то, что умеет автоматика, а не то, что придумывает менеджер.
+   */
+  async listTaskRules(input: {
+    readonly actor: AdminRequestActor;
+    readonly campaignId: string;
+  }): Promise<readonly OutreachTaskRule[]> {
+    requirePermission(input.actor, "outreach.read");
+    requireUuid(input.campaignId);
+    return this.repository.listTaskRules(input.campaignId);
+  }
+
+  async updateTaskRule(input: {
+    readonly actor: AdminRequestActor;
+    readonly ruleId: string;
+    readonly changes: UpdateOutreachTaskRuleRequest;
+    readonly now: Date;
+  }): Promise<OutreachTaskRule | null> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.ruleId);
+    if (input.changes.taskText !== undefined) {
+      requiredText(input.changes.taskText, 500, "Outreach task text");
+    }
+    if (
+      input.changes.offsetDays !== undefined
+      && (!Number.isInteger(input.changes.offsetDays)
+        || Math.abs(input.changes.offsetDays) > 30)
+    ) {
+      throw new Error("Outreach task rule offset is invalid");
+    }
+    // Час нужен только тогда, когда окно обзвона не используется: иначе он ничего не
+    // значит, и хранить его — значит хранить настройку, которая ни на что не влияет.
+    const useCallWindow = input.changes.useCallWindow;
+    const atHour = input.changes.atHour;
+    if (
+      useCallWindow === false
+      && (atHour === undefined || atHour === null)
+    ) {
+      throw new Error("Outreach task rule needs an hour without the call window");
+    }
+    if (
+      atHour !== undefined
+      && atHour !== null
+      && (!Number.isInteger(atHour) || atHour < 0 || atHour > 23)
+    ) {
+      throw new Error("Outreach task rule hour is invalid");
+    }
+    return this.repository.updateTaskRule({
+      ruleId: input.ruleId,
+      changes: input.changes,
+      now: input.now
+    });
   }
 
   listPipelineColumns(input: {

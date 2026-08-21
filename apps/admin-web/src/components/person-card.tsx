@@ -719,6 +719,7 @@ export function PersonNextStep({
             <strong>{next.text}</strong>
             <span className="person-list-sub">
               {taskTypeLabel(next.type)}
+              {next.autoRuleId ? " · поставлена автоматически" : ""}
               {" · "}
               <span
                 className={new Date(next.dueAt).getTime() < Date.now()
@@ -1152,11 +1153,17 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
       : task.status === "cancelled"
         ? "Задача заменена"
         : "Задача поставлена",
-    badge: taskTypeLabel(task.type),
+    badge: task.autoRuleId
+      ? `${taskTypeLabel(task.type)} · автоматически`
+      : taskTypeLabel(task.type),
     tone: "neutral",
-    actor: task.status === "completed"
-      ? task.completedByAdminName ?? task.createdByAdminName
-      : task.createdByAdminName,
+    // У автозадачи автор — служебная учётка. Показывать её именем — значит утверждать,
+    // что задачу поставил человек с таким именем.
+    actor: task.autoRuleId && task.status !== "completed"
+      ? "автоматика"
+      : task.status === "completed"
+        ? task.completedByAdminName ?? task.createdByAdminName
+        : task.createdByAdminName,
     campaignName: task.campaignName,
     occurredAt: task.completedAt ?? task.createdAt,
     note: `${task.text} · срок ${formatDateTime(task.dueAt)}`,

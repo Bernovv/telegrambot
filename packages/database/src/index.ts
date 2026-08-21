@@ -32,6 +32,7 @@ export * from "./referral-persistence.js";
 export * from "./referral-balance-persistence.js";
 export * from "./event-reminder-persistence.js";
 export * from "./event-campaign-sync-persistence.js";
+export * from "./auto-task-persistence.js";
 export * from "./participants-export-persistence.js";
 export * from "./admin-broadcast-persistence.js";
 export * from "./admin-outreach-persistence.js";

@@ -18,6 +18,7 @@ import type {
   OutreachCampaignSummary,
   OutreachCustomFieldDefinition,
   OutreachCustomFieldType,
+  OutreachTaskRule,
   OutreachCustomFieldValue,
   AddExistingContactsResult,
   MoveOutreachContactsResult,
@@ -120,6 +121,7 @@ interface ContactRow {
   readonly open_task_text: string | null;
   readonly open_task_due_at: Date | string | null;
   readonly open_task_created_at: Date | string | null;
+  readonly open_task_auto_rule_id: string | null;
   readonly custom_fields: readonly CustomFieldJsonRow[] | null;
   readonly total_count?: string;
 }
@@ -213,6 +215,18 @@ interface PersonCardRow {
   readonly created_by_name: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
+}
+
+interface TaskRuleRow {
+  readonly id: string;
+  readonly campaign_id: string;
+  readonly trigger_code: OutreachTaskRule["trigger"];
+  readonly is_enabled: boolean;
+  readonly offset_days: number;
+  readonly use_call_window: boolean;
+  readonly at_hour: number | null;
+  readonly task_type: OutreachTaskRule["taskType"];
+  readonly task_text: string;
 }
 
 interface PersonFieldRow {
@@ -552,6 +566,7 @@ interface TaskRow {
   readonly status: OutreachTask["status"];
   readonly created_at: Date | string;
   readonly completed_at: Date | string | null;
+  readonly auto_rule_id: string | null;
 }
 
 interface StageHistoryRow {
@@ -1583,7 +1598,7 @@ implements AdminOutreachRepository {
                 task.completed_by_admin_id,
                 coalesce(completer.display_name, completer.email_normalized) as completed_by_admin_name,
                 task.task_type, task.task_text, task.due_at, task.status,
-                task.created_at, task.completed_at
+                task.created_at, task.completed_at, task.auto_rule_id
          from public.outreach_tasks task
          left join public.outreach_campaign_contacts member
            on member.id = task.campaign_contact_id
@@ -2026,6 +2041,62 @@ implements AdminOutreachRepository {
         occurredAt: input.now
       });
       return { status: "updated" as const };
+    });
+  }
+
+  listTaskRules(campaignId: string): Promise<readonly OutreachTaskRule[]> {
+    return this.read(async (connection) => {
+      const result = await connection.query<TaskRuleRow>(
+        `${TASK_RULE_SELECT}
+          where rule.campaign_id = $1::uuid
+          order by rule.trigger_code`,
+        [campaignId]
+      );
+      return result.rows.map(mapTaskRule);
+    });
+  }
+
+  updateTaskRule(
+    input: Parameters<AdminOutreachRepository["updateTaskRule"]>[0]
+  ): Promise<OutreachTaskRule | null> {
+    return this.write(async (connection) => {
+      const sets = ["updated_at = $2"];
+      const values: unknown[] = [input.ruleId, input.now];
+      const push = (column: string, value: unknown, cast: string) => {
+        values.push(value);
+        sets.push(`${column} = $${values.length}${cast}`);
+      };
+      const changes = input.changes;
+      if (changes.isEnabled !== undefined) {
+        push("is_enabled", changes.isEnabled, "::boolean");
+      }
+      if (changes.offsetDays !== undefined) {
+        push("offset_days", changes.offsetDays, "::smallint");
+      }
+      if (changes.useCallWindow !== undefined) {
+        push("use_call_window", changes.useCallWindow, "::boolean");
+      }
+      if (changes.atHour !== undefined) {
+        push("at_hour", changes.atHour, "::smallint");
+      }
+      if (changes.taskType !== undefined) {
+        push("task_type", changes.taskType, "::text");
+      }
+      if (changes.taskText !== undefined) {
+        push("task_text", changes.taskText, "::text");
+      }
+      await connection.query(
+        `update public.outreach_task_rules
+            set ${sets.join(", ")}
+          where id = $1::uuid`,
+        values
+      );
+      const result = await connection.query<TaskRuleRow>(
+        `${TASK_RULE_SELECT} where rule.id = $1::uuid`,
+        [input.ruleId]
+      );
+      const row = result.rows[0];
+      return row ? mapTaskRule(row) : null;
     });
   }
 
@@ -2509,7 +2580,7 @@ implements AdminOutreachRepository {
                 task.completed_by_admin_id,
                 coalesce(completer.display_name, completer.email_normalized) as completed_by_admin_name,
                 task.task_type, task.task_text, task.due_at, task.status,
-                task.created_at, task.completed_at
+                task.created_at, task.completed_at, task.auto_rule_id
          from public.outreach_tasks task
          join public.admin_accounts assignee on assignee.id = task.assigned_admin_id
          join public.admin_accounts creator on creator.id = task.created_by_admin_id
@@ -3658,6 +3729,26 @@ async function updateContact(
   );
 }
 
+const TASK_RULE_SELECT = `
+  select rule.id, rule.campaign_id, rule.trigger_code, rule.is_enabled,
+         rule.offset_days, rule.use_call_window, rule.at_hour,
+         rule.task_type, rule.task_text
+    from public.outreach_task_rules rule`;
+
+function mapTaskRule(row: TaskRuleRow): OutreachTaskRule {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    trigger: row.trigger_code,
+    isEnabled: row.is_enabled,
+    offsetDays: row.offset_days,
+    useCallWindow: row.use_call_window,
+    atHour: row.at_hour,
+    taskType: row.task_type,
+    taskText: row.task_text
+  };
+}
+
 function mapCampaign(row: CampaignRow): OutreachCampaignSummary {
   return {
     id: row.id,
@@ -3719,7 +3810,8 @@ function mapContact(row: ContactRow): OutreachCampaignContactSummary {
           dueAt: toIso(row.open_task_due_at),
           status: "open",
           createdAt: toIso(row.open_task_created_at),
-          completedAt: null
+          completedAt: null,
+          autoRuleId: row.open_task_auto_rule_id
         }
       : null,
     customFields: (row.custom_fields ?? []).map(mapCustomFieldValue)
@@ -3997,7 +4089,8 @@ function mapTask(row: TaskRow): OutreachTask {
     dueAt: toIso(row.due_at),
     status: row.status,
     createdAt: toIso(row.created_at),
-    completedAt: nullableIso(row.completed_at)
+    completedAt: nullableIso(row.completed_at),
+    autoRuleId: row.auto_rule_id
   };
 }
 
@@ -4075,6 +4168,7 @@ const CONTACT_SUMMARY_SELECT = `
          open_task.task_text as open_task_text,
          open_task.due_at as open_task_due_at,
          open_task.created_at as open_task_created_at,
+         open_task.auto_rule_id as open_task_auto_rule_id,
          custom_fields.fields as custom_fields`;
 
 // Shared lateral join adding every custom field (global + campaign-scoped)

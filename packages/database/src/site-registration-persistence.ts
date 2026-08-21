@@ -23,6 +23,9 @@ interface StandingCampaignRow {
   readonly call_window_start: number;
   readonly call_window_end: number;
   readonly call_window_timezone: string;
+  readonly rule_id: string | null;
+  readonly is_enabled: boolean | null;
+  readonly task_text: string | null;
 }
 
 interface RegistrationEventRow {
@@ -93,8 +96,14 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
                 pipeline_column.stage,
                 campaign.call_window_start,
                 campaign.call_window_end,
-                campaign.call_window_timezone
+                campaign.call_window_timezone,
+                rule.id as rule_id,
+                rule.is_enabled,
+                rule.task_text
            from public.outreach_campaigns campaign
+           left join public.outreach_task_rules rule
+             on rule.campaign_id = campaign.id
+            and rule.trigger_code = 'site_registration'
            join lateral (
              select stage
                from public.outreach_pipeline_columns
@@ -115,7 +124,14 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
             stage: row.stage,
             callWindowStart: row.call_window_start,
             callWindowEnd: row.call_window_end,
-            callWindowTimezone: row.call_window_timezone
+            callWindowTimezone: row.call_window_timezone,
+            taskRule: row.rule_id
+              ? {
+                  ruleId: row.rule_id,
+                  isEnabled: row.is_enabled ?? false,
+                  taskText: row.task_text ?? ""
+                }
+              : null
           }
         : null;
     } finally {
@@ -236,17 +252,19 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
       ]
     );
     const campaignContactId = membership.rows[0]?.id;
-    if (!campaignContactId) {
+    if (!campaignContactId || enrollment.task === null) {
       return;
     }
     await this.session.query(
       `insert into public.outreach_tasks (
          id, contact_id, campaign_contact_id, assigned_admin_id,
-         created_by_admin_id, task_type, task_text, due_at, status, created_at
+         created_by_admin_id, task_type, task_text, due_at, status, created_at,
+         auto_rule_id, auto_key
        )
        select $1::uuid, $2::uuid, $3::uuid,
               coalesce(contact.assigned_admin_id, member.assigned_admin_id, $4::uuid),
-              $4::uuid, 'call', $5::text, $6::timestamptz, 'open', now()
+              $4::uuid, 'call', $5::text, $6::timestamptz, 'open', now(),
+              $7::uuid, $8::text
          from public.outreach_campaign_contacts member
          join public.outreach_contacts contact on contact.id = member.contact_id
         where member.id = $3::uuid
@@ -254,14 +272,20 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
             select 1 from public.outreach_tasks open_task
              where open_task.campaign_contact_id = member.id
                and open_task.status = 'open'
-          )`,
+          )
+       on conflict do nothing`,
       [
-        enrollment.taskId,
+        enrollment.task.taskId,
         contactId,
         campaignContactId,
         enrollment.assignedAdminId,
-        "Позвонить по заявке с сайта",
-        enrollment.dueAt
+        enrollment.task.text,
+        enrollment.task.dueAt,
+        enrollment.task.ruleId,
+        // Ключ повтора описывает повод: одна заявка — один звонок. Повторная отправка
+        // формы тем же человеком заводит новую заявку и новый ключ, но задача всё равно
+        // не встанет, пока открыта прежняя.
+        enrollment.task.ruleId ? `registration:${enrollment.task.taskId}` : null
       ]
     );
   }

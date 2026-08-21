@@ -25,6 +25,9 @@ const LATE_REGISTRATION_HOURS = 6;
 
 export const SITE_REGISTRATION_NAME_LIMIT = 200;
 
+/** Текст звонка по заявке, если правило автозадач ещё не заводили. */
+const DEFAULT_SITE_TASK_TEXT = "Позвонить по заявке с сайта";
+
 export interface SiteRegistrationEvent {
   readonly id: string;
   readonly title: string;
@@ -56,12 +59,17 @@ export interface SiteRegistrationEnrollment {
   readonly campaignId: string;
   readonly campaignContactId: string;
   readonly stage: string;
-  readonly taskId: string;
-  readonly dueAt: Date;
+  /** Пусто — правило выключено: карточку заводим, звонок не ставим. */
+  readonly task: {
+    readonly taskId: string;
+    readonly ruleId: string | null;
+    readonly text: string;
+    readonly dueAt: Date;
+  } | null;
   readonly assignedAdminId: string;
 }
 
-/** Постоянная воронка направления вместе с её окном обзвона. */
+/** Постоянная воронка направления вместе с её окном обзвона и правилом автозадачи. */
 export interface SiteRegistrationCampaign {
   readonly campaignId: string;
   /** Первая колонка воронки: у среды это «Новые заявки». */
@@ -69,6 +77,15 @@ export interface SiteRegistrationCampaign {
   readonly callWindowStart: number;
   readonly callWindowEnd: number;
   readonly callWindowTimezone: string;
+  /**
+   * Правило автозадачи по заявке. `null` — правила не заводили: тогда звонок ставится с
+   * текстом по умолчанию, как было до появления правил.
+   */
+  readonly taskRule: {
+    readonly ruleId: string;
+    readonly isEnabled: boolean;
+    readonly taskText: string;
+  } | null;
 }
 
 export interface RecordSiteRegistrationInput {
@@ -230,16 +247,23 @@ export class RegisterFromSiteService {
     if (!campaign) {
       return null;
     }
+    const rule = campaign.taskRule;
     return {
       campaignId: campaign.campaignId,
       campaignContactId: this.idGenerator.newId(),
       stage: campaign.stage,
-      taskId: this.idGenerator.newId(),
-      dueAt: nextCallSlot(now, {
-        startHour: campaign.callWindowStart,
-        endHour: campaign.callWindowEnd,
-        timeZone: campaign.callWindowTimezone
-      }),
+      task: rule !== null && !rule.isEnabled
+        ? null
+        : {
+            taskId: this.idGenerator.newId(),
+            ruleId: rule?.ruleId ?? null,
+            text: rule?.taskText ?? DEFAULT_SITE_TASK_TEXT,
+            dueAt: nextCallSlot(now, {
+              startHour: campaign.callWindowStart,
+              endHour: campaign.callWindowEnd,
+              timeZone: campaign.callWindowTimezone
+            })
+          },
       assignedAdminId: this.options.systemAdminId
     };
   }

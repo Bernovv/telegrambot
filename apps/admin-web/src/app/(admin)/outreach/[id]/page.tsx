@@ -5,6 +5,7 @@ import {
   type OutreachTouchTarget
 } from "@/components/outreach-touch-dialog";
 import { OutreachTaskForm } from "@/components/outreach-task-form";
+import { OutreachTaskRules } from "@/components/outreach-task-rules";
 import {
   OutreachNextStepDialog,
   type OutreachNextStepValue
@@ -47,6 +48,7 @@ import {
   removeOutreachContacts,
   listOutreachContacts,
   listOutreachCustomFieldDefinitions,
+  listOutreachTaskRules,
   listOutreachManagers,
   listOutreachPipelineColumns,
   setOutreachCustomFieldValue,
@@ -81,6 +83,7 @@ import type {
   OutreachPipelineColumnOutcome,
   OutreachPipelineStage,
   OutreachTask,
+  OutreachTaskRule,
   OutreachTaskType
 } from "@ticket-platform/contracts/admin-outreach";
 import {
@@ -166,6 +169,7 @@ export default function OutreachCampaignPage() {
   /** Перенос, который ждёт следующего шага: воронка требует задачу. */
   const [nextStep, setNextStep] = useState<StageTarget | null>(null);
   const [onlyWithoutTask, setOnlyWithoutTask] = useState(false);
+  const [taskRules, setTaskRules] = useState<readonly OutreachTaskRule[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OutreachCampaignContactDetail | null>(null);
   // Полная карточка человека — та же, что на своей странице в базе. Раньше в панели была
@@ -217,6 +221,11 @@ export default function OutreachCampaignPage() {
       setPipelineColumns(resolvedPipeline);
       setPipelineDraft(toPipelineDraft(resolvedPipeline));
       setSelected([]);
+      // Правила автозадач — надстройка: без них воронка работает, просто следующий шаг
+      // придётся ставить руками. Их отказ не должен ронять всю страницу.
+      void listOutreachTaskRules(id, signal)
+        .then(setTaskRules)
+        .catch(() => setTaskRules([]));
       try {
         setCustomFields(await listOutreachCustomFieldDefinitions(id, signal));
       } catch {
@@ -1848,6 +1857,26 @@ export default function OutreachCampaignPage() {
                 {mutating ? "Сохраняем…" : "Сохранить воронку"}
               </button>
             </form>
+
+            <div className="section-title-row">
+              <div>
+                <h3>Автозадачи</h3>
+                <span>
+                  Следующий шаг ставится сам. Открытую задачу автоматика не трогает —
+                  запланированное менеджером главнее.
+                </span>
+              </div>
+            </div>
+            <OutreachTaskRules
+              rules={taskRules}
+              busy={mutating}
+              onSaved={(saved) => {
+                setTaskRules((current) => current.map((rule) =>
+                  rule.id === saved.id ? saved : rule));
+                setNotice("Правило сохранено.");
+              }}
+              onError={setError}
+            />
 
             <div className="section-title-row">
               <div>

@@ -40,7 +40,7 @@ export function isAllowedAdminApiPath(
       || /^outreach\/site-registrations(?:\?.*)?$/i.test(path)
       || path === "outreach/managers"
       || path === "outreach/tasks/board"
-      || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields)?$/i.test(path)
+      || /^outreach\/campaigns\/[0-9a-f-]{36}(?:\/contacts|\/export|\/pipeline|\/custom-fields|\/task-rules)?$/i.test(path)
       || /^outreach\/campaign-contacts\/[0-9a-f-]{36}$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/participants$/i.test(path)
@@ -109,6 +109,7 @@ export function isAllowedAdminApiPath(
     || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/stage$/i.test(path)
     || /^outreach\/campaign-contacts\/[0-9a-f-]{36}\/custom-fields\/[0-9a-f-]{36}$/i.test(path)
     || /^outreach\/tasks\/[0-9a-f-]{36}\/complete$/i.test(path)
+    || /^outreach\/task-rules\/[0-9a-f-]{36}$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/general$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/content-blocks\/[0-9a-f-]{36}$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/offer\/deactivate$/i.test(path)

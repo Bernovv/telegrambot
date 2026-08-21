@@ -5786,3 +5786,79 @@ a.person-channel:hover {
 .metric-attention strong {
   color: var(--warning);
 }
+
+/* Правила автозадач: строка на повод. Подпись «считается от начала мероприятия» стоит
+   рядом с числом не для красоты — «за день до» и «на следующий день» это одно число с
+   разным знаком, и без якоря его ставят наугад. */
+.outreach-rules {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+
+.outreach-rule {
+  display: grid;
+  padding: 12px 14px;
+  gap: 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.outreach-rule-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+
+.outreach-rule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.outreach-rule-toggle input {
+  width: auto;
+}
+
+.outreach-rule-head > .muted {
+  font-size: 12px;
+}
+
+.outreach-rule-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 110px 150px minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.outreach-rule-fields label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.outreach-rule-fields label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.outreach-rule-fields input,
+.outreach-rule-fields select {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+
+@media (max-width: 720px) {
+  .outreach-rule-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

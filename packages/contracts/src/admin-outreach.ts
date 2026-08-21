@@ -245,6 +245,11 @@ export interface OutreachTask {
   readonly status: OutreachTaskStatus;
   readonly createdAt: string;
   readonly completedAt: string | null;
+  /**
+   * Правило, по которому задачу поставила автоматика. Пусто — задачу поставил человек, и
+   * это существенная разница: за ручной задачей стоит его решение.
+   */
+  readonly autoRuleId: string | null;
 }
 
 export interface OutreachStageHistoryEntry {
@@ -775,4 +780,45 @@ export interface OutreachCampaignExport {
 export interface SetOutreachPersonFieldRequest {
   readonly fieldId: string;
   readonly value: string | null;
+}
+
+/**
+ * Поводы для автозадач.
+ *
+ * У каждого свой якорь времени: заявка и недозвон случаются сейчас, встреча и мероприятие
+ * ждут впереди, а «дошёл» и «не дошёл» становятся известны, когда мероприятие кончилось.
+ */
+export const OUTREACH_TASK_TRIGGERS = [
+  "site_registration",
+  "no_answer",
+  "event_upcoming",
+  "attended",
+  "no_show",
+  "meeting_upcoming"
+] as const;
+
+export type OutreachTaskTrigger = typeof OUTREACH_TASK_TRIGGERS[number];
+
+export interface OutreachTaskRule {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly trigger: OutreachTaskTrigger;
+  readonly isEnabled: boolean;
+  /** Сдвиг от повода в днях: −1 — за день до, 1 — на следующий день, 0 — сразу. */
+  readonly offsetDays: number;
+  /** Ставить срок в ближайшее окно обзвона воронки. Иначе — в час `atHour`. */
+  readonly useCallWindow: boolean;
+  readonly atHour: number | null;
+  readonly taskType: OutreachTaskType;
+  readonly taskText: string;
+}
+
+/** Правка правила. Пропущенное поле не меняется. */
+export interface UpdateOutreachTaskRuleRequest {
+  readonly isEnabled?: boolean | undefined;
+  readonly offsetDays?: number | undefined;
+  readonly useCallWindow?: boolean | undefined;
+  readonly atHour?: number | null | undefined;
+  readonly taskType?: OutreachTaskType | undefined;
+  readonly taskText?: string | undefined;
 }

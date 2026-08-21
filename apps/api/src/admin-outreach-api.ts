@@ -143,6 +143,15 @@ const updatePersonBody = z.object({
   nextMeetingAt: z.string().datetime({ offset: true }).nullable().optional()
 }).strict().refine((value) => Object.keys(value).length > 0);
 
+const taskRuleBody = z.object({
+  isEnabled: z.boolean().optional(),
+  offsetDays: z.number().int().min(-30).max(30).optional(),
+  useCallWindow: z.boolean().optional(),
+  atHour: z.number().int().min(0).max(23).nullable().optional(),
+  taskType: taskType.optional(),
+  taskText: z.string().trim().min(1).max(500).optional()
+}).strict().refine((value) => Object.keys(value).length > 0);
+
 const personFieldBody = z.object({
   fieldId: z.string().uuid(),
   value: z.string().trim().max(500).nullable()
@@ -304,6 +313,8 @@ export type AdminOutreachHandler = Pick<
   | "getPerson"
   | "updatePerson"
   | "setPersonField"
+  | "listTaskRules"
+  | "updateTaskRule"
   | "archivePerson"
   | "restorePerson"
   | "deletePerson"
@@ -646,6 +657,44 @@ export class AdminOutreachController {
       })
     );
     if (!result.saved) {
+      throw outreachNotFound();
+    }
+    return result;
+  }
+
+  @Get("campaigns/:id/task-rules")
+  @RequireAdminPermission("outreach.read")
+  async listTaskRules(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const campaignId = parse(uuid, id);
+    return executeOutreach(() =>
+      this.handler.listTaskRules({
+        actor: requireActor(request),
+        campaignId
+      })
+    );
+  }
+
+  @Patch("task-rules/:id")
+  @RequireAdminPermission("outreach.write")
+  async updateTaskRule(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const ruleId = parse(uuid, id);
+    const parsed = parse(taskRuleBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.updateTaskRule({
+        actor: requireActor(request),
+        ruleId,
+        changes: parsed,
+        now: new Date()
+      })
+    );
+    if (!result) {
       throw outreachNotFound();
     }
     return result;

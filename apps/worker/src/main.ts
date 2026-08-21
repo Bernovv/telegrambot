@@ -11,6 +11,7 @@ import {
   ReconcileTBankPaymentsBatchService,
   ReconcileTBankRefundsBatchService,
   ResumeTelegramScenarioAfterPaymentService,
+  RunAutoTasksBatchService,
   SendEventRemindersBatchService,
   SyncEventCampaignsBatchService,
   AdminOutreachService,
@@ -21,6 +22,7 @@ import type { DomainEventJobV1 } from "@ticket-platform/contracts";
 import {
   createAdminOutreachPersistence,
   createEventCampaignSyncPersistence,
+  createAutoTaskPersistence,
   createEventReminderPersistence,
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
@@ -100,6 +102,12 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
       idGenerator
     )
   );
+  // Автозадачи: следующий шаг ставится сам, когда с человеком что-то произошло. Проход
+  // не трогает карточки с открытой задачей — запланированное менеджером главнее.
+  const runAutoTasks = new RunAutoTasksBatchService(
+    createAutoTaskPersistence(pool),
+    idGenerator
+  );
   const tbankReconciliation = config.tbankReconciliation.enabled
     ? (() => {
         const provider = new TBankPaymentProvider({
@@ -144,19 +152,23 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextReminderSweepAt = 0;
   let nextTBankReconciliationSweepAt = 0;
   let nextEventCampaignSyncSweepAt = 0;
+  let nextAutoTaskSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
   let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
   let lastEventCampaignSyncSweepAt: string | null = null;
+  let lastAutoTaskSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
   const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
   const eventCampaignSyncWorkload = "event-campaign-sync";
+  const autoTaskWorkload = "outreach-auto-tasks";
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
     reminderWorkload,
     eventCampaignSyncWorkload,
+    autoTaskWorkload,
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -191,7 +203,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           lastOrderExpirySweepAt,
           lastReminderSweepAt,
           lastTBankReconciliationSweepAt,
-          lastEventCampaignSyncSweepAt
+          lastEventCampaignSyncSweepAt,
+          lastAutoTaskSweepAt
         }
       });
     } catch (error) {
@@ -390,6 +403,32 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           currentJobId = null;
           nextEventCampaignSyncSweepAt =
             Date.now() + config.eventCampaignSyncPollIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextAutoTaskSweepAt) {
+        currentJobId = autoTaskWorkload;
+
+        try {
+          const result = await runAutoTasks.execute({
+            at: new Date(),
+            batchSize: config.autoTaskBatchSize
+          });
+          lastAutoTaskSweepAt = new Date().toISOString();
+
+          if (result.created > 0) {
+            logger.info("auto tasks created", {
+              candidates: result.candidates,
+              created: result.created
+            });
+          }
+        } catch (error) {
+          logger.error("auto task batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextAutoTaskSweepAt = Date.now() + config.autoTaskPollIntervalMs;
         }
       }
 

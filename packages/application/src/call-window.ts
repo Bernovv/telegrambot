@@ -42,6 +42,27 @@ export function nextCallSlot(now: Date, window: CallWindow): Date {
   );
 }
 
+/**
+ * Тот же местный день, что у `instant`, но сдвинутый на `offsetDays` и в указанный час.
+ *
+ * Именно так считается срок автозадачи: «на следующий день после мероприятия» — это
+ * следующий местный день, а не «через двадцать четыре часа». Мероприятие кончилось в
+ * десять вечера, и звонок через сутки попал бы снова в десять вечера.
+ */
+export function atLocalHour(
+  instant: Date,
+  timeZone: string,
+  hour: number,
+  offsetDays: number
+): Date | null {
+  const parts = zoneParts(instant, timeZone);
+  if (parts === null) {
+    return null;
+  }
+  const day = offsetDays === 0 ? parts : addDays(parts, offsetDays);
+  return zonedInstant({ ...day, hour, minute: 0 }, timeZone);
+}
+
 interface ZoneParts {
   readonly year: number;
   readonly month: number;
