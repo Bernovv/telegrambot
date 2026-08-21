@@ -3,6 +3,7 @@ import type {
   SiteRegistrationStatus
 } from "@ticket-platform/contracts";
 import type { DomainEvent } from "@ticket-platform/domain";
+import { nextCallSlot } from "./call-window.js";
 import type { IdGenerator, OutboxWriter, UnitOfWork } from "./identity.js";
 import type { PhoneNormalizer } from "./phone.js";
 
@@ -40,6 +41,34 @@ export interface CreateSiteParticipantInput {
   readonly consentAt: Date;
   readonly page: string;
   readonly createdByAdminId: string;
+  /** Куда положить карточку и когда по ней звонить. Пусто — воронки направления нет. */
+  readonly enrollment: SiteRegistrationEnrollment | null;
+}
+
+/**
+ * Карточка в постоянной воронке направления и звонок по ней.
+ *
+ * Заводится в той же транзакции, что и участник: заявка, по которой никому не поручено
+ * позвонить, — это заявка, о которой вспомнят через неделю. Раньше человек попадал в
+ * воронку только следующим проходом сверки и без всякой задачи.
+ */
+export interface SiteRegistrationEnrollment {
+  readonly campaignId: string;
+  readonly campaignContactId: string;
+  readonly stage: string;
+  readonly taskId: string;
+  readonly dueAt: Date;
+  readonly assignedAdminId: string;
+}
+
+/** Постоянная воронка направления вместе с её окном обзвона. */
+export interface SiteRegistrationCampaign {
+  readonly campaignId: string;
+  /** Первая колонка воронки: у среды это «Новые заявки». */
+  readonly stage: string;
+  readonly callWindowStart: number;
+  readonly callWindowEnd: number;
+  readonly callWindowTimezone: string;
 }
 
 export interface RecordSiteRegistrationInput {
@@ -54,6 +83,8 @@ export interface RecordSiteRegistrationInput {
 }
 
 export interface SiteRegistrationRepository {
+  /** Воронка направления, в которую попадают заявки. `null` — её не завели. */
+  findStandingCampaign(slugPrefix: string): Promise<SiteRegistrationCampaign | null>;
   /** Ближайшая встреча, на которую сейчас идёт запись с сайта. */
   findRegistrationEvent(input: {
     readonly slugPrefix: string;
@@ -160,6 +191,9 @@ export class RegisterFromSiteService {
     }
 
     const participantId = this.idGenerator.newId();
+    // Повторную заявку в воронку не заводим: человек попал туда с первой, и вторая карточка
+    // означала бы два места, где по нему ведут работу.
+    const enrollment = await this.buildEnrollment(input.now);
     await this.unitOfWork.transact(async () => {
       await this.repository.createParticipant({
         registrationId,
@@ -170,7 +204,8 @@ export class RegisterFromSiteService {
         phoneE164,
         consentAt: input.now,
         page,
-        createdByAdminId: this.options.systemAdminId
+        createdByAdminId: this.options.systemAdminId,
+        enrollment
       });
       await this.outboxWriter.append(
         submittedEvent(registrationId, this.idGenerator.newId(), input.now)
@@ -178,6 +213,35 @@ export class RegisterFromSiteService {
     });
 
     return response("registered", event.title, event.startsAt);
+  }
+
+  /**
+   * Куда положить заявку и когда звонить.
+   *
+   * Воронки может не быть — направление ещё не завели или префикс сменили. Это не повод
+   * терять заявку: участник заведётся и без неё, а организаторы получат сообщение.
+   */
+  private async buildEnrollment(
+    now: Date
+  ): Promise<SiteRegistrationEnrollment | null> {
+    const campaign = await this.repository.findStandingCampaign(
+      this.options.eventSlugPrefix
+    );
+    if (!campaign) {
+      return null;
+    }
+    return {
+      campaignId: campaign.campaignId,
+      campaignContactId: this.idGenerator.newId(),
+      stage: campaign.stage,
+      taskId: this.idGenerator.newId(),
+      dueAt: nextCallSlot(now, {
+        startHour: campaign.callWindowStart,
+        endHour: campaign.callWindowEnd,
+        timeZone: campaign.callWindowTimezone
+      }),
+      assignedAdminId: this.options.systemAdminId
+    };
   }
 
   private normalizePhone(rawPhone: string): string {

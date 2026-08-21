@@ -50,6 +50,57 @@ describe("RegisterFromSiteService", () => {
     });
   });
 
+  it("кладёт заявку в воронку направления и назначает звонок на окно обзвона", async () => {
+    const state = repositoryState();
+    const service = createService(state.repository, []);
+
+    // 10:00 UTC — это 13:00 по Москве, окно обзвона уже идёт: звонить надо сейчас.
+    await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      now: NOW
+    });
+
+    const enrollment = state.created[0]?.enrollment;
+    assert.equal(enrollment?.campaignId, STANDING_CAMPAIGN.campaignId);
+    assert.equal(enrollment?.stage, "new");
+    assert.equal(enrollment?.dueAt.toISOString(), NOW.toISOString());
+  });
+
+  it("ночную заявку двигает на начало обзвона следующего дня", async () => {
+    const state = repositoryState();
+    const service = createService(state.repository, []);
+
+    // 22:30 UTC 20 августа — это половина второго ночи 21-го по Москве.
+    await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      now: new Date("2026-08-20T22:30:00.000Z")
+    });
+
+    assert.equal(
+      state.created[0]?.enrollment?.dueAt.toISOString(),
+      "2026-08-21T09:00:00.000Z"
+    );
+  });
+
+  it("без воронки направления заявку всё равно принимает", async () => {
+    const state = repositoryState({ standingCampaign: null });
+    const service = createService(state.repository, []);
+
+    const result = await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      now: NOW
+    });
+
+    assert.equal(result.status, "registered");
+    assert.equal(state.created[0]?.enrollment, null);
+  });
+
   it("не заводит человека дважды и не пишет организаторам о повторе", async () => {
     const state = repositoryState({ existingParticipantId: "019c0123-4567-789a-bcde-f01234567802" });
     const appended: DomainEvent[] = [];
@@ -153,9 +204,18 @@ function createService(
   );
 }
 
+const STANDING_CAMPAIGN = {
+  campaignId: "campaign-1",
+  stage: "new",
+  callWindowStart: 12,
+  callWindowEnd: 19,
+  callWindowTimezone: "Europe/Moscow"
+};
+
 function repositoryState(options: {
   readonly event?: typeof EVENT | null;
   readonly existingParticipantId?: string;
+  readonly standingCampaign?: typeof STANDING_CAMPAIGN | null;
 } = {}) {
   const created: CreateSiteParticipantInput[] = [];
   const recorded: RecordSiteRegistrationInput[] = [];
@@ -166,6 +226,11 @@ function repositoryState(options: {
     async findRegistrationEvent(input) {
       lookups.push(input);
       return event;
+    },
+    async findStandingCampaign() {
+      return options.standingCampaign === undefined
+        ? STANDING_CAMPAIGN
+        : options.standingCampaign;
     },
     async findParticipantByPhone() {
       return options.existingParticipantId ?? null;

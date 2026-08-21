@@ -1,6 +1,7 @@
 import type {
   CreateSiteParticipantInput,
   RecordSiteRegistrationInput,
+  SiteRegistrationCampaign,
   SiteRegistrationEvent,
   SiteRegistrationRepository
 } from "@ticket-platform/application";
@@ -15,6 +16,14 @@ import {
   TransactionSession,
   type SqlConnectionPool
 } from "./postgres.js";
+
+interface StandingCampaignRow {
+  readonly campaign_id: string;
+  readonly stage: string;
+  readonly call_window_start: number;
+  readonly call_window_end: number;
+  readonly call_window_timezone: string;
+}
 
 interface RegistrationEventRow {
   readonly id: string;
@@ -61,6 +70,53 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
       const row = result.rows[0];
       return row
         ? { id: row.id, title: row.title, startsAt: new Date(row.starts_at) }
+        : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * Постоянная воронка направления вместе с её окном обзвона.
+   *
+   * Стадия — первая колонка воронки: у среды это «Новые заявки». Имя стадии в коде не
+   * зашито намеренно — колонки переименовывают из кабинета, и заявка должна попадать туда,
+   * куда её кладут сейчас, а не туда, как колонка называлась при написании этой строки.
+   */
+  async findStandingCampaign(
+    slugPrefix: string
+  ): Promise<SiteRegistrationCampaign | null> {
+    const connection = await this.pool.connect();
+    try {
+      const result = await connection.query<StandingCampaignRow>(
+        `select campaign.id as campaign_id,
+                pipeline_column.stage,
+                campaign.call_window_start,
+                campaign.call_window_end,
+                campaign.call_window_timezone
+           from public.outreach_campaigns campaign
+           join lateral (
+             select stage
+               from public.outreach_pipeline_columns
+              where campaign_id = campaign.id
+              order by position
+              limit 1
+           ) pipeline_column on true
+          where campaign.event_slug_prefix = $1::text
+            and campaign.archived_at is null
+            and campaign.status <> 'completed'
+          limit 1`,
+        [slugPrefix]
+      );
+      const row = result.rows[0];
+      return row
+        ? {
+            campaignId: row.campaign_id,
+            stage: row.stage,
+            callWindowStart: row.call_window_start,
+            callWindowEnd: row.call_window_end,
+            callWindowTimezone: row.call_window_timezone
+          }
         : null;
     } finally {
       connection.release();
@@ -142,6 +198,70 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
         input.phoneE164,
         input.consentAt,
         input.page
+      ]
+    );
+
+    // Контакта может не быть: он заводится по опознавателю, а у заявки с сайта его роль
+    // играет телефон. Без него класть в воронку нечего.
+    if (input.enrollment && contactId !== null) {
+      await this.enroll(contactId, input.enrollment);
+    }
+  }
+
+  /**
+   * Карточка в воронке направления и звонок по ней.
+   *
+   * Человек мог быть в воронке и раньше — приходил на прошлую встречу или его завели
+   * руками. Тогда карточка остаётся как есть, со своей стадией и историей: заявка не
+   * повод отматывать работу к началу. А вот задача нужна в обоих случаях — если открытой
+   * нет, звонить по свежей заявке всё равно надо.
+   */
+  private async enroll(
+    contactId: string,
+    enrollment: NonNullable<CreateSiteParticipantInput["enrollment"]>
+  ): Promise<void> {
+    const membership = await this.session.query<{ readonly id: string }>(
+      `insert into public.outreach_campaign_contacts (
+         id, campaign_id, contact_id, pipeline_stage, current_status
+       ) values ($1::uuid, $2::uuid, $3::uuid, $4::text, 'new')
+       on conflict (campaign_id, contact_id) do update
+          set removed_at = null,
+              updated_at = now()
+       returning id`,
+      [
+        enrollment.campaignContactId,
+        enrollment.campaignId,
+        contactId,
+        enrollment.stage
+      ]
+    );
+    const campaignContactId = membership.rows[0]?.id;
+    if (!campaignContactId) {
+      return;
+    }
+    await this.session.query(
+      `insert into public.outreach_tasks (
+         id, contact_id, campaign_contact_id, assigned_admin_id,
+         created_by_admin_id, task_type, task_text, due_at, status, created_at
+       )
+       select $1::uuid, $2::uuid, $3::uuid,
+              coalesce(contact.assigned_admin_id, member.assigned_admin_id, $4::uuid),
+              $4::uuid, 'call', $5::text, $6::timestamptz, 'open', now()
+         from public.outreach_campaign_contacts member
+         join public.outreach_contacts contact on contact.id = member.contact_id
+        where member.id = $3::uuid
+          and not exists (
+            select 1 from public.outreach_tasks open_task
+             where open_task.campaign_contact_id = member.id
+               and open_task.status = 'open'
+          )`,
+      [
+        enrollment.taskId,
+        contactId,
+        campaignContactId,
+        enrollment.assignedAdminId,
+        "Позвонить по заявке с сайта",
+        enrollment.dueAt
       ]
     );
   }
