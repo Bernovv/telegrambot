@@ -28,6 +28,7 @@
     "db:pgboss:generate": "node scripts/generate-pgboss-migration.mjs",
     "db:pgboss:check": "node scripts/generate-pgboss-migration.mjs --check",
     "admin:bootstrap": "node --import tsx scripts/bootstrap-admin.ts",
+    "admin:grant": "node --import tsx scripts/grant-admin.ts",
     "db:migrate": "pnpm --filter @ticket-platform/database db:migrate",
     "db:migrate:deploy": "pnpm --filter @ticket-platform/database db:migrate:deploy",
     "graphify:update": "graphify update ."

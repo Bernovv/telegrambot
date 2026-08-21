@@ -8,6 +8,7 @@ export * from "./outbox-persistence.js";
 export * from "./health-persistence.js";
 export * from "./admin-authorization-persistence.js";
 export * from "./admin-bootstrap-persistence.js";
+export * from "./admin-role-grant-persistence.js";
 export * from "./admin-operations-persistence.js";
 export * from "./admin-events-persistence.js";
 export * from "./admin-event-management-persistence.js";

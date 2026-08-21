@@ -23,6 +23,7 @@ export * from "./admin-event-offer-management.js";
 export * from "./admin-event-scenario-management.js";
 export * from "./scenario-runtime.js";
 export * from "./admin-bootstrap.js";
+export * from "./admin-role-grant.js";
 export * from "./orders.js";
 export * from "./order-references.js";
 export * from "./offer-acceptance.js";
