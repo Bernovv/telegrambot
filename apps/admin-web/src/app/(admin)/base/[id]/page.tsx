@@ -31,6 +31,7 @@ import {
   listOutreachPeople,
   mergeOutreachPeople,
   restoreOutreachPerson,
+  setOutreachPersonField,
   updateOutreachPerson
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
@@ -299,6 +300,53 @@ export default function OutreachPersonPage(
       return true;
     } catch (caught) {
       setError(messageFor(caught, "Не удалось поставить задачу."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  /**
+   * Правка одного поля прямо в карточке.
+   *
+   * Идёт той же ручкой, что и форма правки: там же живёт разбор опознавателей и проверка
+   * занятости. Занятый признак приходит обычным ответом, а не ошибкой, — поэтому его надо
+   * разобрать и здесь, иначе правка молча не сохранится.
+   */
+  async function saveContactFields(changes: {
+    readonly source?: string | null;
+    readonly assignedAdminId?: string | null;
+    readonly nextMeetingAt?: string | null;
+  }): Promise<boolean> {
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await updateOutreachPerson(id, changes);
+      if (result.status === "conflict") {
+        setError("Значение уже занято другим контактом.");
+        return false;
+      }
+      await load();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить поле."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function saveField(fieldId: string, value: string | null): Promise<boolean> {
+    setMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await setOutreachPersonField(id, fieldId, value);
+      await load();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить поле."));
       return false;
     } finally {
       setMutating(false);
@@ -759,6 +807,8 @@ export default function OutreachPersonPage(
         onAddToCampaign={(campaignId) => void addToCampaign(campaignId)}
         onSaveNote={saveNote}
         onRemoveNote={removeNote}
+        onSaveContact={saveContactFields}
+        onSaveField={saveField}
         onCreateTask={createTask}
         onTouch={(campaign, note, channel) => {
           setTouchNote(note);

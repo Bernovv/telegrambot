@@ -135,8 +135,15 @@ const updatePersonBody = z.object({
   max: editableIdentifier.optional(),
   email: editableIdentifier.optional(),
   source: z.string().trim().max(200).nullable().optional(),
-  note: z.string().trim().max(2000).nullable().optional()
+  note: z.string().trim().max(2000).nullable().optional(),
+  assignedAdminId: z.string().uuid().nullable().optional(),
+  nextMeetingAt: z.string().datetime({ offset: true }).nullable().optional()
 }).strict().refine((value) => Object.keys(value).length > 0);
+
+const personFieldBody = z.object({
+  fieldId: z.string().uuid(),
+  value: z.string().trim().max(500).nullable()
+}).strict();
 
 const archivePersonBody = z.object({
   reason: z.string().trim().max(500).optional()
@@ -283,6 +290,7 @@ export type AdminOutreachHandler = Pick<
   | "listPeople"
   | "getPerson"
   | "updatePerson"
+  | "setPersonField"
   | "archivePerson"
   | "restorePerson"
   | "deletePerson"
@@ -597,6 +605,36 @@ export class AdminOutreachController {
     // Занятый признак отдаём обычным ответом, а не ошибкой: это не поломка, а развилка —
     // опечатка или дубль, который пора объединить. Панели нужно имя второго человека, чтобы
     // спросить об этом внятно, а через ошибку структура не проходит.
+    return result;
+  }
+
+  /**
+   * Ниша, запрос и прочие общие поля.
+   *
+   * Отдельной ручкой: набор полей заводит администратор и он заранее неизвестен, а правка
+   * карточки — фиксированный список признаков, каждый из которых проверяется на занятость.
+   */
+  @Post("base/:id/fields")
+  @RequireAdminPermission("outreach.write")
+  async setPersonField(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const parsed = parse(personFieldBody, body);
+    const result = await executeOutreach(() =>
+      this.handler.setPersonField({
+        actor: requireActor(request),
+        contactId,
+        fieldId: parsed.fieldId,
+        value: parsed.value,
+        now: new Date()
+      })
+    );
+    if (!result.saved) {
+      throw outreachNotFound();
+    }
     return result;
   }
 

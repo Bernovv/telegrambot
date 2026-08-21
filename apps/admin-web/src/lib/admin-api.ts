@@ -829,6 +829,19 @@ export function updateOutreachPerson(
   );
 }
 
+/** Ниша, запрос и прочие общие поля: набор их заводит администратор. */
+export function setOutreachPersonField(
+  contactId: string,
+  fieldId: string,
+  value: string | null
+): Promise<{ readonly saved: boolean }> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/fields`,
+    "POST",
+    { fieldId, value }
+  );
+}
+
 export function archiveOutreachPerson(
   contactId: string,
   reason?: string

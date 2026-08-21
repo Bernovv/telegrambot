@@ -199,12 +199,24 @@ interface PersonCardRow {
   readonly merged_into_contact_id: string | null;
   readonly merged_into_display_name: string | null;
   readonly is_own: boolean;
+  readonly assigned_admin_id: string | null;
+  readonly assigned_admin_name: string | null;
+  readonly next_meeting_at: Date | string | null;
   readonly own_note: string | null;
   readonly own_marked_at: Date | string | null;
   readonly own_marked_by_name: string | null;
   readonly created_by_name: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
+}
+
+interface PersonFieldRow {
+  readonly field_id: string;
+  readonly field_key: string;
+  readonly label: string;
+  readonly field_type: string;
+  readonly options: readonly string[] | null;
+  readonly value: string | null;
 }
 
 interface PersonTaskRow extends TaskRow {
@@ -1433,6 +1445,10 @@ implements AdminOutreachRepository {
            contact.note,
            contact.linked_user_id,
            contact.is_own,
+           contact.assigned_admin_id,
+           coalesce(assignee.display_name, assignee.email_normalized)
+             as assigned_admin_name,
+           contact.next_meeting_at,
            contact.own_note,
            contact.own_marked_at,
            coalesce(owner.display_name, owner.email_normalized) as own_marked_by_name,
@@ -1450,6 +1466,8 @@ implements AdminOutreachRepository {
            on creator.id = contact.created_by_admin_id
          left join public.admin_accounts owner
            on owner.id = contact.own_marked_by_admin_id
+         left join public.admin_accounts assignee
+           on assignee.id = contact.assigned_admin_id
          where contact.id = $1::uuid`,
         [contactId]
       );
@@ -1618,6 +1636,35 @@ implements AdminOutreachRepository {
         [chain]
       );
 
+      // Общие поля приезжают вместе с определениями, а не только заполненные: пустое поле
+      // в карточке — это приглашение его заполнить, и без определения его негде показать.
+      // Значение берём по всей цепочке дублей: заполнить его могли в карточке дубля.
+      const sharedFields = await connection.query<PersonFieldRow>(
+        `select definition.id as field_id,
+                definition.field_key,
+                definition.label,
+                definition.field_type,
+                definition.options,
+                coalesce(
+                  value.value_text,
+                  value.value_number::text,
+                  value.value_date::text
+                ) as value
+         from public.outreach_custom_field_definitions definition
+         left join lateral (
+           select field_value.value_text, field_value.value_number, field_value.value_date
+             from public.outreach_contact_field_values field_value
+            where field_value.field_definition_id = definition.id
+              and field_value.contact_id = any($1::uuid[])
+            order by field_value.updated_at desc
+            limit 1
+         ) value on true
+         where definition.campaign_id is null
+         order by definition.position, definition.id
+         limit 50`,
+        [chain]
+      );
+
       // Снятые заметки в карточку не едут: пометка нужна базе, а не менеджеру.
       const notes = await connection.query<NoteRow>(
         `select note.id, note.body, note.author_admin_id,
@@ -1735,6 +1782,9 @@ implements AdminOutreachRepository {
         note: contact.note,
         linkedUserId: contact.linked_user_id,
         isOwn: contact.is_own,
+        assignedAdminId: contact.assigned_admin_id,
+        assignedAdminName: contact.assigned_admin_name,
+        nextMeetingAt: nullableIso(contact.next_meeting_at),
         ownNote: contact.own_note,
         ownMarkedAt: nullableIso(contact.own_marked_at),
         ownMarkedByName: contact.own_marked_by_name,
@@ -1790,6 +1840,14 @@ implements AdminOutreachRepository {
           campaignName: row.campaign_name,
           value: row.value
         })),
+        fields: sharedFields.rows.map((row) => ({
+          fieldId: row.field_id,
+          key: row.field_key,
+          label: row.label,
+          type: row.field_type as OutreachCustomFieldType,
+          options: row.options,
+          value: row.value
+        })),
         questionnaires: buildQuestionnaires(participationList, orderAnswers),
         bot: botProfile,
         orders: orders.map((row) => ({
@@ -1830,7 +1888,8 @@ implements AdminOutreachRepository {
     return this.write(async (connection) => {
       const existing = await connection.query<PersonCardRow>(
         `select id as contact_id, display_name, phone_e164, telegram_username,
-                max_identifier, email, source, note
+                max_identifier, email, source, note,
+                assigned_admin_id, next_meeting_at
            from public.outreach_contacts
           where id = $1::uuid
           for update`,
@@ -1886,6 +1945,14 @@ implements AdminOutreachRepository {
                 email_normalized = $9::text,
                 source = $10::text,
                 note = $11::text,
+                -- Пропущенное поле оставляем как было: правка ответственного не должна
+                -- отменять назначенную встречу и наоборот.
+                assigned_admin_id = case
+                  when $13::boolean then $14::uuid else assigned_admin_id
+                end,
+                next_meeting_at = case
+                  when $15::boolean then $16::timestamptz else next_meeting_at
+                end,
                 updated_at = $12::timestamptz
           where id = $1::uuid`,
         [
@@ -1900,7 +1967,11 @@ implements AdminOutreachRepository {
           input.fields.emailNormalized,
           input.fields.source,
           input.fields.note,
-          input.now
+          input.now,
+          input.assignedAdminId !== undefined,
+          input.assignedAdminId ?? null,
+          input.nextMeetingAt !== undefined,
+          input.nextMeetingAt ?? null
         ]
       );
       await writeOutreachAudit(connection, {
@@ -1916,12 +1987,74 @@ implements AdminOutreachRepository {
           max: before.max_identifier,
           email: before.email,
           source: before.source,
-          note: before.note
+          note: before.note,
+          assignedAdminId: before.assigned_admin_id ?? null,
+          nextMeetingAt: before.next_meeting_at
+            ? toIso(before.next_meeting_at)
+            : null
         },
-        after: { ...input.fields },
+        after: {
+          ...input.fields,
+          ...(input.assignedAdminId !== undefined
+            ? { assignedAdminId: input.assignedAdminId }
+            : {}),
+          ...(input.nextMeetingAt !== undefined
+            ? {
+                nextMeetingAt: input.nextMeetingAt
+                  ? input.nextMeetingAt.toISOString()
+                  : null
+              }
+            : {})
+        },
         occurredAt: input.now
       });
       return { status: "updated" as const };
+    });
+  }
+
+  setPersonFieldValue(
+    input: Parameters<AdminOutreachRepository["setPersonFieldValue"]>[0]
+  ): Promise<boolean> {
+    return this.write(async (connection) => {
+      // Пустое значение — это «стереть», а не «сохранить пустую строку»: пустая строка
+      // выглядела бы в карточке заполненным полем без содержимого.
+      if (input.value === null) {
+        const removed = await connection.query(
+          `delete from public.outreach_contact_field_values
+            where contact_id = $1::uuid and field_definition_id = $2::uuid`,
+          [input.contactId, input.fieldId]
+        );
+        return (removed.rowCount ?? 0) > 0;
+      }
+      const definition = await connection.query<{
+        readonly field_type: string;
+      }>(
+        `select field_type from public.outreach_custom_field_definitions
+          where id = $1::uuid and campaign_id is null`,
+        [input.fieldId]
+      );
+      const type = definition.rows[0]?.field_type;
+      if (!type) {
+        return false;
+      }
+      await connection.query(
+        `insert into public.outreach_contact_field_values (
+           contact_id, field_definition_id, value_text, value_number, value_date, updated_at
+         ) values (
+           $1::uuid, $2::uuid,
+           case when $3::text = 'text' or $3::text = 'select' then $4::text end,
+           case when $3::text = 'number' then $4::numeric end,
+           case when $3::text = 'date' then $4::date end,
+           $5::timestamptz
+         )
+         on conflict (contact_id, field_definition_id) do update
+            set value_text = excluded.value_text,
+                value_number = excluded.value_number,
+                value_date = excluded.value_date,
+                updated_at = excluded.updated_at`,
+        [input.contactId, input.fieldId, type, input.value, input.now]
+      );
+      return true;
     });
   }
 

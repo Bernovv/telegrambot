@@ -435,6 +435,7 @@ function handler(
     },
     async dismissImportRow() { return true; },
     async updatePerson() { return { status: "updated" as const }; },
+    async setPersonField() { return { saved: true }; },
     async archivePerson() { return true; },
     async restorePerson() { return true; },
     async deletePerson() { return { deleted: true, blockers: [] }; },

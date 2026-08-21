@@ -30,6 +30,8 @@ import {
   createOutreachNote,
   createOutreachPersonTask,
   deleteOutreachNote,
+  setOutreachPersonField,
+  updateOutreachPerson,
   addExistingContactsToCampaign,
   importEventParticipantsIntoCampaign,
   listEvents,
@@ -848,6 +850,53 @@ export default function OutreachCampaignPage() {
       return true;
     } catch (caught) {
       setError(messageFor(caught, "Не удалось поставить задачу."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function savePersonFields(changes: {
+    readonly source?: string | null;
+    readonly assignedAdminId?: string | null;
+    readonly nextMeetingAt?: string | null;
+  }): Promise<boolean> {
+    if (!detailPerson) {
+      return false;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      const result = await updateOutreachPerson(detailPerson.contactId, changes);
+      if (result.status === "conflict") {
+        setError("Значение уже занято другим контактом.");
+        return false;
+      }
+      await refreshDetailPerson();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить поле."));
+      return false;
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function savePersonField(
+    fieldId: string,
+    value: string | null
+  ): Promise<boolean> {
+    if (!detailPerson) {
+      return false;
+    }
+    setMutating(true);
+    setError(null);
+    try {
+      await setOutreachPersonField(detailPerson.contactId, fieldId, value);
+      await refreshDetailPerson();
+      return true;
+    } catch (caught) {
+      setError(messageFor(caught, "Не удалось сохранить поле."));
       return false;
     } finally {
       setMutating(false);
@@ -2161,6 +2210,8 @@ export default function OutreachCampaignPage() {
                     onAddToCampaign={null}
                     onSaveNote={saveDetailNote}
                     onRemoveNote={removeDetailNote}
+                    onSaveContact={savePersonFields}
+                    onSaveField={savePersonField}
                     onCreateTask={createPersonTask}
                     /* Касание в воронке записывают её собственной кнопкой «Связаться»:
                        там уже выбраны и контакт, и колонки. Второй вход в тот же разбор

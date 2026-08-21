@@ -5670,3 +5670,95 @@ a.person-channel:hover {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Основное о человеке: правка по клику вместо режима «изменить карточку», который
+   разворачивался во всю ширину и требовал помнить, что пустое поле в нём стирает значение.
+   Пустые поля видны — заполнять их некому, если их не видно, — но выглядят приглашением, а
+   не отсутствием данных. */
+.person-fields {
+  display: grid;
+  margin: 0;
+}
+
+.person-field {
+  display: grid;
+  padding: 9px 16px;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+}
+
+.person-field:first-child {
+  border-top: 0;
+}
+
+.person-field dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.person-field dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.person-field-open {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 6px 2px 0;
+  gap: 8px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.person-field-open > svg {
+  flex: none;
+  color: transparent;
+}
+
+.person-field-open:hover {
+  background: var(--surface-muted);
+}
+
+.person-field-open:hover > svg {
+  color: var(--muted);
+}
+
+.person-field-open:disabled {
+  cursor: default;
+}
+
+.person-field-soon {
+  font-weight: 650;
+}
+
+.person-field-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.person-field-edit input,
+.person-field-edit select {
+  min-width: 0;
+  flex: 1 1 140px;
+  padding: 5px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+
+.person-field-edit .icon-button {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}

@@ -1214,6 +1214,7 @@ function repository(
     async listBaseContacts() { return []; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async setPersonFieldValue() { return true; },
     async importPeople() {
       return {
         received: 0,
@@ -1382,6 +1383,9 @@ function personCard() {
     note: null,
     linkedUserId: null,
     isOwn: false,
+    assignedAdminId: null,
+    assignedAdminName: null,
+    nextMeetingAt: null,
     ownNote: null,
     ownMarkedAt: null,
     ownMarkedByName: null,
@@ -1399,6 +1403,7 @@ function personCard() {
     notes: [],
     stageChanges: [],
     customFields: [],
+    fields: [],
     participations: [],
     questionnaires: [],
     bot: null,

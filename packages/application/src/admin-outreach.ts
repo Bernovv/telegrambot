@@ -221,10 +221,21 @@ export interface AdminOutreachRepository {
       readonly field: OutreachPersonConflict["field"];
       readonly value: string;
     }[];
+    /** `undefined` — не трогать, `null` — снять ответственного. */
+    readonly assignedAdminId: string | null | undefined;
+    /** `undefined` — не трогать, `null` — встреча отменена. */
+    readonly nextMeetingAt: Date | null | undefined;
     readonly actorAdminId: string;
     readonly auditId: string;
     readonly now: Date;
   }): Promise<OutreachPersonUpdateResult>;
+  /** Значение общего поля у человека. Пустое значение стирает строку. */
+  setPersonFieldValue(input: {
+    readonly contactId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+    readonly now: Date;
+  }): Promise<boolean>;
   archivePerson(input: {
     readonly contactId: string;
     readonly reason: string | null;
@@ -1037,14 +1048,55 @@ export class AdminOutreachService {
       conflictCandidates.push({ field: "email", value: fields.emailNormalized });
     }
 
+    // Ответственный и встреча идут мимо разбора опознавателей: они ничего не говорят о том,
+    // как человека найти, и проверять их на занятость незачем.
+    const assignedAdminId = input.changes.assignedAdminId === undefined
+      ? undefined
+      : input.changes.assignedAdminId || null;
+    if (assignedAdminId) {
+      requireUuid(assignedAdminId);
+    }
+    const nextMeetingAt = input.changes.nextMeetingAt === undefined
+      ? undefined
+      : parseOptionalInstant(input.changes.nextMeetingAt);
+
     return this.repository.updatePerson({
       contactId: input.contactId,
       fields,
       conflictCandidates,
+      assignedAdminId,
+      nextMeetingAt,
       actorAdminId: input.actor.adminId,
       auditId: this.idGenerator.newId(),
       now: input.now
     });
+  }
+
+  /**
+   * Ниша, запрос и прочие общие поля.
+   *
+   * Отдельной ручкой, а не частью правки карточки: поля заводятся администратором и
+   * набор их заранее неизвестен, а правка карточки — это фиксированный список признаков,
+   * каждый из которых проверяется на занятость другим человеком.
+   */
+  async setPersonField(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly fieldId: string;
+    readonly value: string | null;
+    readonly now: Date;
+  }): Promise<{ readonly saved: boolean }> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    requireUuid(input.fieldId);
+    return {
+      saved: await this.repository.setPersonFieldValue({
+        contactId: input.contactId,
+        fieldId: input.fieldId,
+        value: optionalText(input.value ?? "", 500),
+        now: input.now
+      })
+    };
   }
 
   async archivePerson(input: {
@@ -1925,6 +1977,21 @@ function requireUuid(value: string): void {
   if (!UUID_PATTERN.test(value)) {
     throw new Error("Outreach identifier is invalid");
   }
+}
+
+/**
+ * Время из панели. Пустая строка означает «встречи нет», а не «оставить как было»: правка
+ * приходит целиком, и отличать одно от другого умеет только `undefined` выше по стеку.
+ */
+function parseOptionalInstant(value: string | null): Date | null {
+  if (value === null || value.trim() === "") {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Outreach meeting time is invalid");
+  }
+  return parsed;
 }
 
 function requiredText(value: string, maximum: number, label: string): string {

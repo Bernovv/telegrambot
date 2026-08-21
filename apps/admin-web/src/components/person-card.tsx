@@ -39,6 +39,7 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 import { PersonComposer } from "@/components/person-composer";
+import { PersonFieldsCard } from "@/components/person-fields";
 
 /**
  * Карточка человека.
@@ -190,6 +191,8 @@ export function PersonBody({
   onAddToCampaign,
   onSaveNote,
   onRemoveNote,
+  onSaveContact,
+  onSaveField,
   onCreateTask,
   onTouch,
   onCompleteTask,
@@ -204,6 +207,12 @@ export function PersonBody({
   readonly onAddToCampaign: ((campaignId: string) => void) | null;
   readonly onSaveNote: (body: string) => Promise<boolean>;
   readonly onRemoveNote: (noteId: string) => Promise<void>;
+  readonly onSaveContact: (changes: {
+    readonly source?: string | null;
+    readonly assignedAdminId?: string | null;
+    readonly nextMeetingAt?: string | null;
+  }) => Promise<boolean>;
+  readonly onSaveField: (fieldId: string, value: string | null) => Promise<boolean>;
   readonly onCreateTask: (input: {
     readonly type: string;
     readonly text: string;
@@ -270,6 +279,13 @@ export function PersonBody({
                 ? activeCampaigns(person)[0] ?? null
                 : null}
               onTouch={onTouch}
+            />
+            <PersonFieldsCard
+              person={person}
+              managers={managers}
+              busy={busy}
+              onSaveContact={onSaveContact}
+              onSaveField={onSaveField}
             />
             <PersonAboutCard person={person} />
             <PersonCampaignsCard
@@ -541,22 +557,22 @@ export function PersonContactsCard({
 export function PersonAboutCard(
   { person }: { readonly person: OutreachPersonCard }
 ) {
-  const hasAnything = person.source !== null
-    || person.note !== null
-    || person.customFields.length > 0;
+  const hasAnything = person.note !== null || person.customFields.length > 0;
   if (!hasAnything) {
     return null;
   }
   return (
     <section className="data-section">
-      <div className="section-title-row"><div><h2>Основное</h2></div></div>
+      <div className="section-title-row">
+        <div>
+          <h2>Что знаем</h2>
+          {/* Комментарий приезжает из импорта и перезаписывается целиком, поля воронок
+              заполняются в них же. Править их здесь нельзя — не потому, что нельзя вообще,
+              а потому, что у поля воронки значение своё в каждой из них. */}
+          <span>Комментарий из импорта и поля воронок</span>
+        </div>
+      </div>
       <dl className="person-contacts">
-        {person.source ? (
-          <div className="person-contact person-contact-plain">
-            <dt>Источник</dt>
-            <dd>{person.source}</dd>
-          </div>
-        ) : null}
         {person.customFields.map((field) => (
           <div
             className="person-contact person-contact-plain"

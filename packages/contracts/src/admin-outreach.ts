@@ -376,6 +376,22 @@ export interface OutreachPersonStageChange extends OutreachStageHistoryEntry {
   readonly toLabel: string;
 }
 
+/**
+ * Поле уровня человека: ниша, запрос и всё, что заведено общим.
+ *
+ * В отличие от `OutreachPersonCustomField` не привязано к кампании и приезжает вместе с
+ * определением: карточка показывает и заполненные поля, и пустые — заполнить их можно
+ * прямо в ней.
+ */
+export interface OutreachPersonField {
+  readonly fieldId: string;
+  readonly key: string;
+  readonly label: string;
+  readonly type: OutreachCustomFieldType;
+  readonly options: readonly string[] | null;
+  readonly value: string | null;
+}
+
 /** Значение дополнительного поля. Поля заводятся по кампаниям, отсюда её название. */
 export interface OutreachPersonCustomField {
   readonly fieldId: string;
@@ -474,6 +490,11 @@ export interface OutreachPersonCard {
   readonly note: string | null;
   readonly linkedUserId: string | null;
   readonly isOwn: boolean;
+  /** Ответственный за человека целиком. Ему достаются задачи, когда менеджера не выбрали. */
+  readonly assignedAdminId: string | null;
+  readonly assignedAdminName: string | null;
+  /** Личная встреча с менеджером. Мероприятия живут отдельно, в `participations`. */
+  readonly nextMeetingAt: string | null;
   /** Кто это: «жена организатора», «наш подрядчик». Пусто, если объяснять не стали. */
   readonly ownNote: string | null;
   readonly ownMarkedAt: string | null;
@@ -496,6 +517,8 @@ export interface OutreachPersonCard {
   readonly notes: readonly OutreachNote[];
   readonly stageChanges: readonly OutreachPersonStageChange[];
   readonly customFields: readonly OutreachPersonCustomField[];
+  /** Общие поля с их значениями: и заполненные, и пустые — заполняют их прямо в карточке. */
+  readonly fields: readonly OutreachPersonField[];
   readonly participations: readonly OutreachContactParticipation[];
   readonly questionnaires: readonly OutreachPersonQuestionnaire[];
   /** Пусто, если человека нет в боте. Тогда нет ни заказов, ни согласий. */
@@ -518,6 +541,9 @@ export interface UpdateOutreachPersonRequest {
   readonly max?: string | null | undefined;
   readonly email?: string | null | undefined;
   readonly source?: string | null | undefined;
+  readonly assignedAdminId?: string | null | undefined;
+  /** ISO-время личной встречи. `null` — встреча не назначена или её отменили. */
+  readonly nextMeetingAt?: string | null | undefined;
   readonly note?: string | null | undefined;
 }
 
@@ -732,4 +758,10 @@ export interface RetryOutreachImportRowResult {
 export interface OutreachCampaignExport {
   readonly filename: string;
   readonly csv: string;
+}
+
+/** Правка поля уровня человека. Пустая строка стирает значение. */
+export interface SetOutreachPersonFieldRequest {
+  readonly fieldId: string;
+  readonly value: string | null;
 }
