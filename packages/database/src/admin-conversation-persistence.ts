@@ -7,7 +7,7 @@ import type {
 import type {
   AdminConversationsRepository,
   AttachmentFileRepository,
-  ConversationTransport,
+  ConversationQueueScope,
   StoredAttachmentFile,
   ConversationReplyQueueRepository,
   ConversationReplyRepository,
@@ -438,12 +438,14 @@ implements ConversationReplyQueueRepository {
   constructor(
     private readonly pool: SqlConnectionPool,
     /**
-     * Чей это ответ. Очередь одна на всех, а отправителей двое и живут они в разных
-     * процессах: воркер умеет писать от имени бота, аккаунт компании — от своего имени.
-     * Без отбора ответ, написанный в аккаунт, уходил бы от бота — то есть человек получал
-     * бы его от другого собеседника, чем тот, с которым разговаривал.
+     * Чей это ответ. Очередь одна на всех, а отправителей несколько и живут они в разных
+     * процессах: воркер умеет писать от имени бота, аккаунт Telegram и аккаунт MAX — каждый
+     * от своего имени. Без отбора по транспорту ответ, написанный в аккаунт, уходил бы от
+     * бота — то есть человек получал бы его от другого собеседника, чем тот, с которым
+     * разговаривал; без отбора по каналу один аккаунт уносил бы ответы другого и хоронил
+     * их с пометкой «канал отключён», потому что отправителя чужого канала у него нет.
      */
-    private readonly transport: ConversationTransport
+    private readonly scope: ConversationQueueScope
   ) {}
 
   async claimQueued(input: {
@@ -471,6 +473,7 @@ implements ConversationReplyQueueRepository {
                on conversation.id = message.conversation_id
             where message.delivery_status = 'queued'
               and conversation.transport = $4::text
+              and conversation.channel = any($5::text[])
               and (message.next_attempt_at is null
                    or message.next_attempt_at <= $2::timestamptz)
             order by message.next_attempt_at nulls first, message.occurred_at
@@ -499,7 +502,13 @@ implements ConversationReplyQueueRepository {
               order by created_at
               limit 1
            ) attachment on true`,
-        [input.batchSize, input.at, REPLY_LEASE_SECONDS, this.transport]
+        [
+          input.batchSize,
+          input.at,
+          REPLY_LEASE_SECONDS,
+          this.scope.transport,
+          this.scope.channels
+        ]
       );
 
       return result.rows.map((row) => ({
@@ -579,16 +588,16 @@ export function createConversationReplyPersistence(pool: SqlConnectionPool) {
 }
 
 /**
- * Очередь отправки — отдельной фабрикой и обязательно с транспортом.
+ * Очередь отправки — отдельной фабрикой и обязательно с областью ответственности.
  *
  * Отдельной, потому что читают её не там же, где пишут: панель через api кладёт ответ в
- * очередь, а забирают его два разных процесса, каждый свой транспорт.
+ * очередь, а забирают его разные процессы, каждый за свой транспорт и свои каналы.
  */
 export function createConversationReplyQueue(
   pool: SqlConnectionPool,
-  transport: ConversationTransport
+  scope: ConversationQueueScope
 ) {
-  return { queue: new PostgresConversationReplyQueueRepository(pool, transport) } as const;
+  return { queue: new PostgresConversationReplyQueueRepository(pool, scope) } as const;
 }
 
 /**

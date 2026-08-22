@@ -1,6 +1,6 @@
 import type {
   AttachmentDownloadRepository,
-  ConversationTransport,
+  ConversationQueueScope,
   PendingAttachment
 } from "@ticket-platform/application";
 import type { SqlConnectionPool } from "./postgres.js";
@@ -39,7 +39,7 @@ export class PostgresAttachmentDownloadRepository
 implements AttachmentDownloadRepository {
   constructor(
     private readonly pool: SqlConnectionPool,
-    private readonly transport: ConversationTransport
+    private readonly scope: ConversationQueueScope
   ) {}
 
   async claimPending(input: {
@@ -62,6 +62,7 @@ implements AttachmentDownloadRepository {
                on conversation.id = message.conversation_id
             where attachment.download_status = 'pending'
               and conversation.transport = $4::text
+              and conversation.channel = any($5::text[])
               and (attachment.next_attempt_at is null
                    or attachment.next_attempt_at <= $2::timestamptz)
             order by attachment.next_attempt_at nulls first, attachment.created_at
@@ -83,7 +84,7 @@ implements AttachmentDownloadRepository {
            from leased
            join public.conversation_messages message on message.id = leased.message_id
            join public.conversations conversation on conversation.id = message.conversation_id`,
-        [input.batchSize, input.at, LEASE_SECONDS, this.transport]
+        [input.batchSize, input.at, LEASE_SECONDS, this.scope.transport, this.scope.channels]
       );
       return result.rows.map((row) => ({
         id: row.id,
@@ -164,7 +165,7 @@ implements AttachmentDownloadRepository {
 
 export function createAttachmentDownloadPersistence(
   pool: SqlConnectionPool,
-  transport: ConversationTransport
+  scope: ConversationQueueScope
 ) {
-  return { repository: new PostgresAttachmentDownloadRepository(pool, transport) } as const;
+  return { repository: new PostgresAttachmentDownloadRepository(pool, scope) } as const;
 }

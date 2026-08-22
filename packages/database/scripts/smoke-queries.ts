@@ -576,12 +576,29 @@ async function main(): Promise<void> {
   // Очередь скачивания вложений. Отбор здесь — не обычный select: одним запросом идут
   // блокировка с пропуском занятых, аренда строки и join до канала через две таблицы.
   // Ровно такой запрос Postgres и отвергает целиком, если в нём ошибиться колонкой.
-  const accountAttachments = createAttachmentDownloadPersistence(pool, "account").repository;
+  //
+  // Заодно проверяем область ответственности: процесс, забравший чужой канал, отправить
+  // его не может и только похоронит реплику с пометкой «канал отключён».
+  const assertChannelsWithin = (
+    claimed: readonly { readonly channel: string }[],
+    allowed: readonly string[],
+    what: string
+  ): void => {
+    const alien = claimed.find((row) => !allowed.includes(row.channel));
+    if (alien) {
+      throw new Error(`${what}: забран чужой канал ${alien.channel}`);
+    }
+  };
+  const accountAttachments = createAttachmentDownloadPersistence(pool, {
+    transport: "account",
+    channels: ["telegram"]
+  }).repository;
   await check("attachments claimPending (аккаунт)", async () => {
-    // Тот же запрос с другим транспортом. Проверка дешёвая, а смысл в ней есть: очередь
-    // аккаунта читает отдельный процесс, и её молчание выглядит точно так же, как пустая
-    // очередь, — то есть никак.
+    // Тот же запрос с другим транспортом и отбором по каналу. Проверка дешёвая, а смысл в
+    // ней есть: очередь аккаунта читает отдельный процесс, и её молчание выглядит точно так
+    // же, как пустая очередь, — то есть никак.
     const claimed = await accountAttachments.claimPending({ batchSize: 5, at: now });
+    assertChannelsWithin(claimed, ["telegram"], "вложения аккаунта Telegram");
     console.log(`        вложений аккаунта в очереди: ${String(claimed.length)}`);
     for (const attachment of claimed) {
       await accountAttachments.markAttemptFailed({
@@ -593,9 +610,13 @@ async function main(): Promise<void> {
     }
   });
 
-  const attachments = createAttachmentDownloadPersistence(pool, "bot").repository;
+  const attachments = createAttachmentDownloadPersistence(pool, {
+    transport: "bot",
+    channels: ["telegram", "max"]
+  }).repository;
   await check("attachments claimPending", async () => {
     const claimed = await attachments.claimPending({ batchSize: 5, at: now });
+    assertChannelsWithin(claimed, ["telegram", "max"], "вложения ботов");
     console.log(`        вложений в очереди: ${String(claimed.length)}`);
     for (const attachment of claimed) {
       // Возвращаем взятое обратно в очередь: смоук не должен оставлять за собой
@@ -651,8 +672,14 @@ async function main(): Promise<void> {
   // блокировкой с арендой и джойном до диалога: и то и другое Postgres отвергает целиком,
   // если ошибиться колонкой, а тесты этого не видят.
   const replies = createConversationReplyPersistence(pool);
-  const replyQueue = createConversationReplyQueue(pool, "bot");
-  const accountReplyQueue = createConversationReplyQueue(pool, "account");
+  const replyQueue = createConversationReplyQueue(pool, {
+    transport: "bot",
+    channels: ["telegram", "max"]
+  });
+  const accountReplyQueue = createConversationReplyQueue(pool, {
+    transport: "account",
+    channels: ["telegram"]
+  });
   await check("conversations queueReply в несуществующий диалог", async () => {
     const result = await replies.repository.queueReply({
       conversationId: randomUUID(),
@@ -666,16 +693,16 @@ async function main(): Promise<void> {
       throw new Error("несуществующий диалог не должен принимать ответ");
     }
   });
-  await check("conversations claimQueued", () => replyQueue.queue.claimQueued({
-    batchSize: 5,
-    at: now
-  }));
-  // Та же очередь другим транспортом: её читает процесс аккаунта, и её молчание выглядит
-  // ровно так же, как отсутствие ответов, — то есть никак.
-  await check("conversations claimQueued (аккаунт)", () => accountReplyQueue.queue.claimQueued({
-    batchSize: 5,
-    at: now
-  }));
+  await check("conversations claimQueued", async () => {
+    const claimed = await replyQueue.queue.claimQueued({ batchSize: 5, at: now });
+    assertChannelsWithin(claimed, ["telegram", "max"], "ответы ботов");
+  });
+  // Та же очередь другим транспортом и другим каналом: её читает процесс аккаунта, и её
+  // молчание выглядит ровно так же, как отсутствие ответов, — то есть никак.
+  await check("conversations claimQueued (аккаунт)", async () => {
+    const claimed = await accountReplyQueue.queue.claimQueued({ batchSize: 5, at: now });
+    assertChannelsWithin(claimed, ["telegram"], "ответы аккаунта Telegram");
+  });
   await check("conversations markSent", () => replyQueue.queue.markSent({
     messageId: randomUUID(),
     providerMessageId: "1",

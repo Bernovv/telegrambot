@@ -208,9 +208,12 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   const attachmentsConfig = config.conversationAttachments;
   const downloadAttachments = attachmentsConfig.enabled
     ? new DownloadConversationAttachmentsBatchService(
-      // Только вложения бота: файлы аккаунта компании забирает его собственный процесс,
-      // потому что идентификатор такого файла живёт внутри сессии TDLib.
-      createAttachmentDownloadPersistence(pool, "bot").repository,
+      // Только вложения ботов, обоих каналов: файлы аккаунтов компании забирают их
+      // собственные процессы, потому что идентификатор такого файла живёт внутри их сессии.
+      createAttachmentDownloadPersistence(pool, {
+        transport: "bot",
+        channels: ["telegram", "max"]
+      }).repository,
       {
         ...(config.telegramNotifications.enabled
           ? {
@@ -348,7 +351,12 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         ...(maxSender ? { max: maxSender } : {})
       };
       sendReplies = new SendConversationRepliesBatchService(
-        createConversationReplyQueue(pool, "bot").queue,
+        // Каналы перечислены оба независимо от того, включён ли MAX: выключенный канал
+        // должен отказать с причиной в первой же попытке, а не оставить ответ в очереди.
+        createConversationReplyQueue(pool, {
+          transport: "bot",
+          channels: ["telegram", "max"]
+        }).queue,
         replySenders,
         {
           maxAttempts: config.conversationReplies.maxAttempts,

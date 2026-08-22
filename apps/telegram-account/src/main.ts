@@ -96,7 +96,10 @@ async function main(): Promise<void> {
 
   const downloads = attachments.enabled
     ? new DownloadConversationAttachmentsBatchService(
-      createAttachmentDownloadPersistence(pool, "account").repository,
+      createAttachmentDownloadPersistence(pool, {
+        transport: "account",
+        channels: ["telegram"]
+      }).repository,
       {
         telegram: createTdlibAttachmentSource(client, {
           onCleanupFailure: (error) => {
@@ -121,12 +124,17 @@ async function main(): Promise<void> {
     });
   }
 
-  // Ответы менеджера из панели. Очередь та же, что у бота, но отобранная по транспорту:
-  // ответ, написанный в аккаунт, обязан уйти от аккаунта. Ушедший от бота — это письмо от
-  // другого собеседника, чем тот, с которым человек разговаривал.
+  // Ответы менеджера из панели. Очередь та же, что у бота, но отобранная по транспорту и
+  // каналу: ответ, написанный в аккаунт, обязан уйти от аккаунта. Ушедший от бота — это
+  // письмо от другого собеседника, чем тот, с которым человек разговаривал. Канал назван
+  // явно, потому что аккаунтов больше одного: чужую строку этот процесс отправить не может
+  // и, забрав её, только похоронил бы.
   const replyOptions = loadConversationRepliesConfig(process.env);
   const replies = new SendConversationRepliesBatchService(
-    createConversationReplyQueue(pool, "account").queue,
+    createConversationReplyQueue(pool, {
+      transport: "account",
+      channels: ["telegram"]
+    }).queue,
     {
       telegram: createTdlibReplySender(client, new TdlibSendConfirmations(client), {
         outgoingDirectory: join(sessionPaths(config.sessionDirectory).filesDirectory, "outgoing")
