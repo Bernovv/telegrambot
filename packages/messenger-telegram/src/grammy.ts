@@ -1,13 +1,13 @@
 import type { ChannelIdentity } from "@ticket-platform/application";
 import { Bot, InlineKeyboard, Keyboard } from "grammy";
 import type { Logger } from "@ticket-platform/observability";
-import { InvalidPhoneNumberError } from "@ticket-platform/messenger-core";
-import type {
-  TelegramUpdateController,
-  TelegramInlineButton,
-  TelegramReplyModel
-} from "./controller.js";
-import { decodeScenarioCallback } from "./scenario-callback.js";
+import {
+  InvalidPhoneNumberError,
+  decodeScenarioCallback,
+  type ConversationController,
+  type InlineButton,
+  type ReplyModel
+} from "@ticket-platform/messenger-core";
 
 export type TelegramUpdate = Parameters<Bot["handleUpdate"]>[0];
 
@@ -24,7 +24,7 @@ export interface TelegramBotOptions {
 
 export function createTelegramBot(
   token: string,
-  controller: TelegramUpdateController,
+  controller: ConversationController,
   logger: Logger,
   options: TelegramBotOptions = {}
 ): Bot {
@@ -360,7 +360,7 @@ export function createTelegramBot(
 
 async function sendReplies(
   reply: (text: string, options?: Parameters<Bot["api"]["sendMessage"]>[2]) => Promise<unknown>,
-  replies: readonly TelegramReplyModel[]
+  replies: readonly ReplyModel[]
 ): Promise<void> {
   for (const response of replies) {
     if (response.inlineButtons && response.inlineButtons.length > 0) {
@@ -390,7 +390,7 @@ async function sendReplies(
   }
 }
 
-function inlineKeyboard(buttons: readonly TelegramInlineButton[]): InlineKeyboard {
+function inlineKeyboard(buttons: readonly InlineButton[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const button of buttons) {
     if ("callbackData" in button) {

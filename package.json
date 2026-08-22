@@ -20,6 +20,7 @@
     "db:smoke": "node --import tsx packages/database/scripts/smoke-queries.ts",
     "queue:dead-letter": "pnpm --filter @ticket-platform/worker dead-letter",
     "env:check": "node scripts/check-env.mjs",
+    "max:subscribe": "node --env-file=.env --import tsx scripts/max-subscribe.ts",
     "price:show": "pnpm --filter @ticket-platform/worker price",
     "price:set": "pnpm --filter @ticket-platform/worker price --",
     "participants:import": "pnpm --filter @ticket-platform/worker participants-import --",

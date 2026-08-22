@@ -1,4 +1,4 @@
-import type { TelegramInlineButton, TelegramReplyModel } from "./controller.js";
+import type { InlineButton, ReplyModel } from "./conversation-controller.js";
 
 /**
  * Static conversational content for the Business Picnic sales funnel (docs/bots/BOT_FLOWS.md).
@@ -7,7 +7,7 @@ import type { TelegramInlineButton, TelegramReplyModel } from "./controller.js";
  * (max-bot/src/domain/messages.ts) so both channels show the same program, pricing, FAQ, and
  * partner-program text. Ticket type / quantity / child-ticket / offer screens here are rendered
  * from `TelegramPurchaseFlowService` results (Phase 2, packages/application/src/telegram-purchase-flow.ts)
- * — this module only builds the `TelegramReplyModel`, it holds no state of its own.
+ * — this module only builds the `ReplyModel`, it holds no state of its own.
  */
 
 const STANDARD_PRICES: readonly { readonly label: string; readonly pricePerPerson: number }[] = [
@@ -34,7 +34,7 @@ const FAMILY_VIP_PRICE = 6490;
 // заметят сразу, в отличие от молчаливого отказа по приватности.
 const MANAGER_CHAT_URL = "https://t.me/liubovpashian";
 
-export function mainMenuButtons(): readonly TelegramInlineButton[] {
+export function mainMenuButtons(): readonly InlineButton[] {
   return [
     { text: "Программа", callbackData: "program" },
     { text: "Тарифы", callbackData: "pricing" },
@@ -44,7 +44,7 @@ export function mainMenuButtons(): readonly TelegramInlineButton[] {
   ];
 }
 
-function afterProgramButtons(): readonly TelegramInlineButton[] {
+function afterProgramButtons(): readonly InlineButton[] {
   return [
     { text: "Купить билет", callbackData: "buy_ticket" },
     { text: "Частые вопросы", callbackData: "faq" },
@@ -53,7 +53,7 @@ function afterProgramButtons(): readonly TelegramInlineButton[] {
   ];
 }
 
-export function welcomeReply(): TelegramReplyModel {
+export function welcomeReply(): ReplyModel {
   return {
     text: [
       "Привет! 👋 Это бот Бизнес-Прорыва.",
@@ -68,7 +68,7 @@ export function welcomeReply(): TelegramReplyModel {
 
 // Просьба поделиться номером после приветствия. В отличие от phoneRequiredReply, который
 // показывается вместо закрытого раздела, эта идёт следом за меню и ничего не закрывает.
-export function requestPhoneReply(): TelegramReplyModel {
+export function requestPhoneReply(): ReplyModel {
   return {
     text: [
       "Чтобы забронировать место и не потерять билет, поделитесь номером телефона 📱",
@@ -79,14 +79,14 @@ export function requestPhoneReply(): TelegramReplyModel {
   };
 }
 
-export function menuReply(): TelegramReplyModel {
+export function menuReply(): ReplyModel {
   return {
     text: "Что подсказать?",
     inlineButtons: mainMenuButtons()
   };
 }
 
-export function programAndPricingReply(): TelegramReplyModel {
+export function programAndPricingReply(): ReplyModel {
   const standardLines = STANDARD_PRICES
     .map((tier) => `${tier.label} — ${tier.pricePerPerson} ₽/чел`)
     .join("\n");
@@ -125,7 +125,7 @@ export function programAndPricingReply(): TelegramReplyModel {
   };
 }
 
-export function faqReply(): TelegramReplyModel {
+export function faqReply(): ReplyModel {
   return {
     text: [
       "Частые вопросы ❓",
@@ -160,7 +160,7 @@ export function faqReply(): TelegramReplyModel {
 // Показывается вместо закрытого раздела, пока человек не поделился номером. Формулировка
 // взята из MAX-бота, где она согласована с заказчиком. Обещание 100 ₽ правдиво: кампания
 // начисления заведена миграцией 20260728140000_phone_bonus_campaign.
-export function phoneRequiredReply(): TelegramReplyModel {
+export function phoneRequiredReply(): ReplyModel {
   return {
     text: [
       "Этот раздел откроется после того, как вы поделитесь номером телефона 📱",
@@ -174,7 +174,7 @@ export function phoneRequiredReply(): TelegramReplyModel {
   };
 }
 
-export function contactUsReply(): TelegramReplyModel {
+export function contactUsReply(): ReplyModel {
   return {
     text: "Ответим на все вопросы 💬",
     inlineButtons: [
@@ -184,7 +184,7 @@ export function contactUsReply(): TelegramReplyModel {
   };
 }
 
-export function chooseTicketReply(): TelegramReplyModel {
+export function chooseTicketReply(): ReplyModel {
   return {
     text: "Выберите тип билета 🎟",
     inlineButtons: [
@@ -196,7 +196,7 @@ export function chooseTicketReply(): TelegramReplyModel {
   };
 }
 
-export function chooseFamilyTicketReply(): TelegramReplyModel {
+export function chooseFamilyTicketReply(): ReplyModel {
   return {
     text: "Семейный тариф — 2 взрослых + ребёнок 👨‍👩‍👧. Какой формат?",
     inlineButtons: [
@@ -207,18 +207,18 @@ export function chooseFamilyTicketReply(): TelegramReplyModel {
   };
 }
 
-export function enterQuantityReply(ticketLabel: string): TelegramReplyModel {
+export function enterQuantityReply(ticketLabel: string): ReplyModel {
   return { text: `Тариф «${ticketLabel}» ✅\n\nСколько человек? Введите число.` };
 }
 
-export function invalidQuantityReply(): TelegramReplyModel {
+export function invalidQuantityReply(): ReplyModel {
   return {
     text: "Введите количество человек целым числом от 1 до 50 🔢",
     inlineButtons: [{ text: "Назад", callbackData: "buy_ticket" }]
   };
 }
 
-export function orderInterimSummaryReply(ticketLabel: string, adultQuantity: number): TelegramReplyModel {
+export function orderInterimSummaryReply(ticketLabel: string, adultQuantity: number): ReplyModel {
   return {
     text: [
       `Тариф «${ticketLabel}», взрослых билетов: ${adultQuantity}.`,
@@ -232,25 +232,25 @@ export function orderInterimSummaryReply(ticketLabel: string, adultQuantity: num
   };
 }
 
-export function enterChildQuantityReply(): TelegramReplyModel {
+export function enterChildQuantityReply(): ReplyModel {
   return {
     text: "Сколько детских билетов? Введите число.",
     inlineButtons: [{ text: "Без детского билета", callbackData: "skip_child_ticket" }]
   };
 }
 
-export function invalidChildQuantityReply(): TelegramReplyModel {
+export function invalidChildQuantityReply(): ReplyModel {
   return { text: "Введите количество детских билетов целым числом от 0 до 50 🔢" };
 }
 
-export function catalogUnavailableReply(): TelegramReplyModel {
+export function catalogUnavailableReply(): ReplyModel {
   return {
     text: "Онлайн-оформление сейчас недоступно. Напишите нам — оформим бронь вручную.",
     inlineButtons: [{ text: "Связаться с нами", callbackData: "contact_us" }]
   };
 }
 
-export function noActiveDraftReply(): TelegramReplyModel {
+export function noActiveDraftReply(): ReplyModel {
   return {
     text: "Начнём заново — выберите тип билета.",
     inlineButtons: [{ text: "Купить билет", callbackData: "buy_ticket" }]
@@ -275,7 +275,7 @@ export function orderOfferStepReply(input: {
    * неизменяемы и хранят контрольную сумму.
    */
   readonly offerUrl: string | null;
-}): TelegramReplyModel {
+}): ReplyModel {
   const lines = [
     "Ваш заказ:",
     `Тариф: ${input.ticketLabel}`,
@@ -306,7 +306,7 @@ function formatRubles(kopecksText: string): string {
   return remainder === 0n ? rubles.toString() : `${rubles},${remainder.toString().padStart(2, "0")}`;
 }
 
-export function partnerProgramReply(): TelegramReplyModel {
+export function partnerProgramReply(): ReplyModel {
   return {
     text: [
       "Приглашайте друзей, коллег и свою аудиторию на Бизнес-Пикник 🤝",
@@ -330,7 +330,7 @@ export function myBonusesReply(input: {
   readonly tierNumber: number;
   readonly percentBasisPoints: number;
   readonly referralsToNextTier: number | null;
-}): TelegramReplyModel {
+}): ReplyModel {
   const lines = [
     `Баланс: ${formatRubles(input.availableKopecks)} ₽`,
     `Оплативших приглашённых: ${input.qualifyingReferrals}`,
@@ -346,7 +346,7 @@ export function myBonusesReply(input: {
   };
 }
 
-export function myBonusesUnavailableReply(): TelegramReplyModel {
+export function myBonusesUnavailableReply(): ReplyModel {
   return {
     text: "Сначала откройте меню командой /start.",
     inlineButtons: [{ text: "Назад", callbackData: "start" }]
@@ -361,7 +361,7 @@ export function myBonusesUnavailableReply(): TelegramReplyModel {
  * touchpoint. Resolving the code back to its owner (to credit a referral commission) is Phase 3
  * work — see packages/database messenger_identities lookup by (channel, external_user_id).
  */
-export function partnerLinkReply(externalUserId: string, botUsername: string | null): TelegramReplyModel {
+export function partnerLinkReply(externalUserId: string, botUsername: string | null): ReplyModel {
   if (!botUsername) {
     return {
       text: "Бот пока не сообщил свой username — попробуйте ещё раз через пару минут."

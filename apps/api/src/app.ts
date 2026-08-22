@@ -93,6 +93,11 @@ import {
   type SiteRegistrationHandler
 } from "./site-registration-api.js";
 import {
+  MaxWebhookModule,
+  type MaxWebhookEndpointConfig
+} from "./max-webhook.js";
+import type { MaxUpdateProcessor } from "@ticket-platform/messenger-max";
+import {
   ZvonobotWebhookModule,
   type ZvonobotWebhookEndpointConfig,
   type ZvonobotWebhookHandler
@@ -194,6 +199,12 @@ export interface ApiApplicationOptions {
     readonly handler: TBankWebhookHandler;
     readonly logger: Logger;
   };
+  /** Вебхук MAX. Поднимается только вместе с токеном бота. */
+  readonly maxWebhook?: {
+    readonly config: MaxWebhookEndpointConfig;
+    readonly processor: MaxUpdateProcessor;
+    readonly logger: Logger;
+  };
   readonly webhook?: {
     readonly config: TelegramWebhookEndpointConfig;
     readonly processor: TelegramUpdateProcessor;
@@ -265,6 +276,13 @@ class ApiModule {
           ? [SiteRegistrationApiModule.register(
               options.siteRegistration.handler,
               options.siteRegistration.logger
+            )]
+          : []),
+        ...(options.maxWebhook
+          ? [MaxWebhookModule.register(
+              options.maxWebhook.config,
+              options.maxWebhook.processor,
+              options.maxWebhook.logger
             )]
           : []),
         ...(options.zvonobot

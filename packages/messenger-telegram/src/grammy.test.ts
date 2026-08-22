@@ -12,16 +12,16 @@ import type {
 import type { Logger } from "@ticket-platform/observability";
 import type { Bot } from "grammy";
 import {
-  TelegramUpdateController,
+  ConversationController,
   type TelegramContactUseCase,
   type TelegramOfferAcceptanceUseCase,
   type TelegramScenarioUseCases,
   type TelegramStartUseCase,
   type TelegramTicketListUseCase,
   type TelegramTicketRedeliveryUseCase
-} from "./controller.js";
+} from "@ticket-platform/messenger-core";
 import { createTelegramBot } from "./grammy.js";
-import { encodeScenarioCallback } from "./scenario-callback.js";
+import { encodeScenarioCallback } from "@ticket-platform/messenger-core";
 
 describe("grammY Telegram transport", () => {
   it("maps /start and owned contact fixtures into application commands", async () => {
@@ -71,7 +71,7 @@ describe("grammY Telegram transport", () => {
     };
     const bot = createTelegramBot(
       "123456:test-token",
-      new TelegramUpdateController(start, contact, offer, emptyTickets(), unavailableRedelivery()),
+      new ConversationController(start, contact, offer, emptyTickets(), unavailableRedelivery()),
       silentLogger()
     );
     bot.botInfo = {
@@ -155,7 +155,7 @@ describe("grammY Telegram transport", () => {
     const apiCalls: string[] = [];
     const bot = createTelegramBot(
       "123456:test-token",
-      new TelegramUpdateController(
+      new ConversationController(
         passiveStart(),
         passiveContact(),
         passiveOffer(),
@@ -210,7 +210,7 @@ describe("grammY Telegram transport", () => {
     };
     const bot = createTelegramBot(
       "123456:test-token",
-      new TelegramUpdateController(start, contact, offer, emptyTickets(), unavailableRedelivery()),
+      new ConversationController(start, contact, offer, emptyTickets(), unavailableRedelivery()),
       silentLogger(),
       { rethrowUpdateErrors: true }
     );
@@ -257,7 +257,7 @@ describe("grammY Telegram transport", () => {
     const apiCalls: string[] = [];
     const bot = createTelegramBot(
       "123456:test-token",
-      new TelegramUpdateController(
+      new ConversationController(
         passiveStart(),
         passiveContact(),
         passiveOffer(),

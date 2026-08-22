@@ -1,5 +1,5 @@
 {
-  "name": "@ticket-platform/messenger-core",
+  "name": "@ticket-platform/messenger-max",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,14 +7,14 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/messenger-core",
-    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/messenger-core",
+    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/messenger-max",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/messenger-max",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@ticket-platform/application": "workspace:*",
     "@ticket-platform/contracts": "workspace:*",
-    "libphonenumber-js": "1.13.9"
+    "@ticket-platform/messenger-core": "workspace:*",
+    "@ticket-platform/observability": "workspace:*"
   }
 }

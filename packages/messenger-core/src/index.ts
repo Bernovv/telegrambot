@@ -23,3 +23,6 @@ export interface MessengerAdapter {
 }
 
 export * from "./phone-normalizer.js";
+export * from "./conversation-controller.js";
+export * from "./scenario-content.js";
+export * from "./scenario-callback.js";

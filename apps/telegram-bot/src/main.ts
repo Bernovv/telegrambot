@@ -31,11 +31,11 @@ import {
   createTelegramTicketAccessPersistence,
   createTelegramStartPersistence
 } from "@ticket-platform/database";
-import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
 import {
-  createTelegramBot,
-  TelegramUpdateController
-} from "@ticket-platform/messenger-telegram";
+  ConversationController,
+  LibPhoneNumberNormalizer
+} from "@ticket-platform/messenger-core";
+import { createTelegramBot } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
 
@@ -168,7 +168,7 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
   const phoneAccessService = new CheckTelegramPhoneAccessService(
     createTelegramAccessPersistence(pool).phoneStatusRepository
   );
-  const controller = new TelegramUpdateController(
+  const controller = new ConversationController(
     startService,
     contactService,
     offerService,

@@ -2,7 +2,7 @@ import type { ChannelIdentity } from "@ticket-platform/application";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  TelegramUpdateController,
+  ConversationController,
   formatKopecks,
   type TelegramContactUseCase,
   type TelegramOfferAcceptanceUseCase,
@@ -12,9 +12,9 @@ import {
   type TelegramTicketListUseCase,
   type TelegramTicketRedeliveryUseCase,
   type TelegramPhoneAccessUseCase
-} from "./controller.js";
+} from "./conversation-controller.js";
 
-describe("TelegramUpdateController", () => {
+describe("ConversationController", () => {
   it("shows the contact keyboard only when phone is required", async () => {
     const withPhoneRequest = controller({ phoneRequired: true });
     const withoutPhoneRequest = controller({ phoneRequired: false });
@@ -187,7 +187,7 @@ function controller(options: {
   readonly contactAccepted?: boolean;
   readonly paymentsEnabled?: boolean;
   readonly scenarioEnabled?: boolean;
-}): TelegramUpdateController {
+}): ConversationController {
   const start: TelegramStartUseCase = {
     async execute() {
       return {
@@ -334,7 +334,7 @@ function controller(options: {
     }
   };
 
-  return new TelegramUpdateController(
+  return new ConversationController(
     start,
     contact,
     offer,
@@ -427,13 +427,13 @@ describe("доступ к разделам без телефона", () => {
     assert.notEqual(buy[0]?.keyboard, "request_contact");
   });
 
-  function gated(unlockedAccess: boolean): TelegramUpdateController {
+  function gated(unlockedAccess: boolean): ConversationController {
     const access: TelegramPhoneAccessUseCase = {
       async execute() {
         return { unlocked: unlockedAccess };
       }
     };
-    return new TelegramUpdateController(
+    return new ConversationController(
       { async execute() { throw new Error("не используется"); } } as unknown as TelegramStartUseCase,
       { async execute() { throw new Error("не используется"); } } as unknown as TelegramContactUseCase,
       { async execute() { throw new Error("не используется"); } } as unknown as TelegramOfferAcceptanceUseCase,

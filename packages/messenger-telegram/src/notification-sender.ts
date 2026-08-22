@@ -1,6 +1,6 @@
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import { Api, InlineKeyboard, InputFile } from "grammy";
-import { encodeScenarioCallback } from "./scenario-callback.js";
+import { encodeScenarioCallback } from "@ticket-platform/messenger-core";
 
 export interface TelegramNotificationApi {
   sendMessage(

@@ -20,6 +20,7 @@
     "@ticket-platform/contracts": "workspace:*",
     "@ticket-platform/database": "workspace:*",
     "@ticket-platform/messenger-core": "workspace:*",
+    "@ticket-platform/messenger-max": "workspace:*",
     "@ticket-platform/messenger-telegram": "workspace:*",
     "@ticket-platform/observability": "workspace:*",
     "@ticket-platform/payment-tbank": "workspace:*",

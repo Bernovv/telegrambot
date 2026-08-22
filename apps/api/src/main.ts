@@ -103,10 +103,17 @@ import {
   PostgresAdminPrincipalRepository,
   type ManagedSqlConnectionPool
 } from "@ticket-platform/database";
-import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
+import {
+  ConversationController,
+  LibPhoneNumberNormalizer
+} from "@ticket-platform/messenger-core";
+import {
+  MaxApi,
+  createMaxUpdateProcessor,
+  type MaxUpdateProcessor
+} from "@ticket-platform/messenger-max";
 import {
   createTelegramBot,
-  TelegramUpdateController,
   type TelegramUpdateProcessor
 } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
@@ -127,6 +134,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
 
   try {
     let processor: TelegramUpdateProcessor | undefined;
+    let maxProcessor: MaxUpdateProcessor | undefined;
 
     pool = createNodePostgresPool({
       connectionString: config.databaseUrl,
@@ -474,7 +482,10 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
         })()
       : undefined;
 
-    if (config.telegramWebhook.enabled) {
+    // Разговорный слой один на оба мессенджера, поэтому и собирается один раз — как только
+    // включён хотя бы один канал. Своё у канала только то, что действительно своё:
+    // транспорт и вебхук.
+    if (config.telegramWebhook.enabled || config.max.enabled) {
       const startPersistence = createTelegramStartPersistence(pool, idGenerator);
       const phonePersistence = createPhonePersistence(pool, idGenerator);
       const offerPersistence = createOfferAcceptancePersistence(pool);
@@ -528,7 +539,9 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
         idGenerator
       );
       const contactService = new HandleTelegramContactService(
-        new LibPhoneNumberNormalizer(config.telegramWebhook.defaultCountry),
+        new LibPhoneNumberNormalizer(
+          config.telegramWebhook.enabled ? config.telegramWebhook.defaultCountry : "RU"
+        ),
         phonePersistence.telegramUserResolver,
         phonePersistence.phoneRepository,
         phonePersistence.phoneBonusRepository,
@@ -577,31 +590,49 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           scenarioOrderCreator
         )
       };
-      const bot = createTelegramBot(
-        config.telegramWebhook.botToken,
-        new TelegramUpdateController(
-          startService,
-          contactService,
-          offerService,
-          ticketListService,
-          ticketRedeliveryService,
-          tbank?.initialization,
-          scenario,
-          purchaseFlowService,
-          referralBalanceService,
-          phoneAccessService
-        ),
-        logger,
-        {
-          rethrowUpdateErrors: true,
-          ...(config.telegramWebhook.apiRoot ? { apiRoot: config.telegramWebhook.apiRoot } : {})
-        }
+      const conversation = new ConversationController(
+        startService,
+        contactService,
+        offerService,
+        ticketListService,
+        ticketRedeliveryService,
+        tbank?.initialization,
+        scenario,
+        purchaseFlowService,
+        referralBalanceService,
+        phoneAccessService
       );
 
       await pool.ping();
-      await bot.init();
-      processor = { handleUpdate: (update) => bot.handleUpdate(update) };
-      logger.info("telegram webhook dependencies ready", { botId: String(bot.botInfo.id) });
+
+      if (config.telegramWebhook.enabled) {
+        const bot = createTelegramBot(
+          config.telegramWebhook.botToken,
+          conversation,
+          logger,
+          {
+            rethrowUpdateErrors: true,
+            ...(config.telegramWebhook.apiRoot ? { apiRoot: config.telegramWebhook.apiRoot } : {})
+          }
+        );
+        await bot.init();
+        processor = { handleUpdate: (update) => bot.handleUpdate(update) };
+        logger.info("telegram webhook dependencies ready", { botId: String(bot.botInfo.id) });
+      }
+
+      if (config.max.enabled) {
+        maxProcessor = createMaxUpdateProcessor(
+          new MaxApi({
+            token: config.max.botToken,
+            baseUrl: config.max.apiBaseUrl,
+            timeoutMs: config.max.httpTimeoutMs
+          }),
+          conversation,
+          logger,
+          { botUsername: config.max.botUsername }
+        );
+        logger.info("max webhook dependencies ready");
+      }
     }
 
     app = await createApiApplication({
@@ -654,6 +685,19 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
               },
               verifier: tbank.provider,
               handler: tbank.webhook,
+              logger
+            }
+          }
+        : {}),
+      ...(maxProcessor && config.max.enabled
+        ? {
+            maxWebhook: {
+              config: {
+                pathSecret: config.max.pathSecret,
+                headerSecret: config.max.headerSecret,
+                bodyLimitBytes: config.max.bodyLimitBytes
+              },
+              processor: maxProcessor,
               logger
             }
           }

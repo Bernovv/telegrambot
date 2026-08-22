@@ -93,6 +93,9 @@ importers:
       '@ticket-platform/messenger-core':
         specifier: workspace:*
         version: link:../../packages/messenger-core
+      '@ticket-platform/messenger-max':
+        specifier: workspace:*
+        version: link:../../packages/messenger-max
       '@ticket-platform/messenger-telegram':
         specifier: workspace:*
         version: link:../../packages/messenger-telegram
@@ -226,9 +229,24 @@ importers:
       '@ticket-platform/application':
         specifier: workspace:*
         version: link:../application
+      '@ticket-platform/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       libphonenumber-js:
         specifier: 1.13.9
         version: 1.13.9
+
+  packages/messenger-max:
+    dependencies:
+      '@ticket-platform/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@ticket-platform/messenger-core':
+        specifier: workspace:*
+        version: link:../messenger-core
+      '@ticket-platform/observability':
+        specifier: workspace:*
+        version: link:../observability
 
   packages/messenger-telegram:
     dependencies:

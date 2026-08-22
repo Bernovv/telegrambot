@@ -51,6 +51,27 @@ export type TelegramWebhookConfig =
       readonly defaultCountry: string;
     };
 
+/**
+ * Канал MAX внутри общего api.
+ *
+ * Выключен, пока не задан `MAX_BOT_TOKEN`: до объединения MAX живёт отдельным приложением
+ * на своей базе, и поднимать второй приёмник на те же обновления нельзя — они бы оба
+ * отвечали человеку, и он увидел бы двух собеседников.
+ */
+export type MaxChannelConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly botToken: string;
+      readonly apiBaseUrl: string;
+      readonly pathSecret: string;
+      /** Секрет заголовка. Пусто — подписка на вебхук оформлена без него. */
+      readonly headerSecret: string | null;
+      readonly bodyLimitBytes: number;
+      readonly botUsername: string | null;
+      readonly httpTimeoutMs: number;
+    };
+
 export type AdminAuthConfig =
   | { readonly enabled: false }
   | {
@@ -110,6 +131,7 @@ export interface ApiConfig extends AppConfig {
   /** Single-event MVP: which published event's catalog "Купить билет" sells from in chat. */
   readonly purchaseEventSlug: string;
   readonly siteRegistration: SiteRegistrationConfig;
+  readonly max: MaxChannelConfig;
   readonly zvonobot: ZvonobotConfig;
   readonly tbankPayments: TBankPaymentsConfig;
 }
@@ -303,6 +325,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       ),
       systemAdminId: "00000000-0000-4000-8000-000000000001"
     },
+    max: loadMaxChannelConfig(env),
     zvonobot: loadZvonobotConfig(env),
     tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
   };
@@ -509,6 +532,41 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
     tbankReconciliation,
     telegramNotifications
+  };
+}
+
+/** Канал MAX: без токена бота не поднимается вовсе. */
+function loadMaxChannelConfig(env: NodeJS.ProcessEnv): MaxChannelConfig {
+  const botToken = (env.MAX_BOT_TOKEN ?? "").trim();
+  if (botToken === "") {
+    return { enabled: false };
+  }
+  const pathSecret = (env.MAX_WEBHOOK_PATH_SECRET ?? "").trim();
+  if (pathSecret.length < 16) {
+    throw new Error("MAX_WEBHOOK_PATH_SECRET must be at least 16 characters long");
+  }
+  const headerSecret = (env.MAX_WEBHOOK_SECRET ?? "").trim();
+  const botUsername = (env.MAX_BOT_USERNAME ?? "").trim();
+
+  return {
+    enabled: true,
+    botToken,
+    apiBaseUrl: env.MAX_API_BASE_URL ?? "https://platform-api2.max.ru",
+    pathSecret,
+    headerSecret: headerSecret === "" ? null : headerSecret,
+    bodyLimitBytes: parseBoundedInteger(
+      env.MAX_WEBHOOK_BODY_LIMIT_BYTES ?? "262144",
+      "MAX_WEBHOOK_BODY_LIMIT_BYTES",
+      1_024,
+      1_048_576
+    ),
+    botUsername: botUsername === "" ? null : botUsername,
+    httpTimeoutMs: parseBoundedInteger(
+      env.MAX_HTTP_TIMEOUT_MS ?? "10000",
+      "MAX_HTTP_TIMEOUT_MS",
+      1_000,
+      60_000
+    )
   };
 }
 

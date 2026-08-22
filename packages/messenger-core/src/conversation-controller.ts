@@ -53,13 +53,13 @@ import {
   welcomeReply
 } from "./scenario-content.js";
 
-export interface TelegramReplyModel {
+export interface ReplyModel {
   readonly text: string;
   readonly keyboard?: "request_contact" | "remove";
-  readonly inlineButtons?: readonly TelegramInlineButton[];
+  readonly inlineButtons?: readonly InlineButton[];
 }
 
-export type TelegramInlineButton =
+export type InlineButton =
   | { readonly text: string; readonly callbackData: string }
   | { readonly text: string; readonly url: string };
 
@@ -149,16 +149,16 @@ export interface TelegramReferralBalanceUseCase {
 export interface TelegramOfferAcceptanceView {
   readonly callbackText: string;
   readonly replacementText?: string;
-  readonly inlineButtons?: readonly TelegramInlineButton[];
-  readonly replies?: readonly TelegramReplyModel[];
+  readonly inlineButtons?: readonly InlineButton[];
+  readonly replies?: readonly ReplyModel[];
 }
 
 export interface TelegramScenarioTransitionView {
   readonly callbackText: string;
-  readonly replies: readonly TelegramReplyModel[];
+  readonly replies: readonly ReplyModel[];
 }
 
-export class TelegramUpdateController {
+export class ConversationController {
   constructor(
     private readonly handleStart: TelegramStartUseCase,
     private readonly handleContact: TelegramContactUseCase,
@@ -188,7 +188,7 @@ export class TelegramUpdateController {
     return result.unlocked;
   }
 
-  async onStart(command: HandleTelegramStartCommand): Promise<readonly TelegramReplyModel[]> {
+  async onStart(command: HandleTelegramStartCommand): Promise<readonly ReplyModel[]> {
     const result = await this.handleStart.execute(command);
     if (this.scenario) {
       const scenario = await this.scenario.start.execute({
@@ -221,7 +221,7 @@ export class TelegramUpdateController {
         return scenarioMessages;
       }
     }
-    const replies: TelegramReplyModel[] = [welcomeReply()];
+    const replies: ReplyModel[] = [welcomeReply()];
 
     if (result.phoneRequired) {
       replies.push(requestPhoneReply());
@@ -257,7 +257,7 @@ export class TelegramUpdateController {
 
   async onScenarioInput(
     command: SubmitTelegramScenarioInputCommand
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     if (!this.scenario) {
       return [];
     }
@@ -282,40 +282,40 @@ export class TelegramUpdateController {
   }
 
   /** "Назад" / повторный показ главного меню — без повторного обращения к идентити-сервису. */
-  onMenu(): readonly TelegramReplyModel[] {
+  onMenu(): readonly ReplyModel[] {
     return [menuReply()];
   }
 
-  onProgramAndPricing(): readonly TelegramReplyModel[] {
+  onProgramAndPricing(): readonly ReplyModel[] {
     return [programAndPricingReply()];
   }
 
-  onFaq(): readonly TelegramReplyModel[] {
+  onFaq(): readonly ReplyModel[] {
     return [faqReply()];
   }
 
-  async onContactUs(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onContactUs(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [contactUsReply()];
   }
 
-  async onBuyTicket(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onBuyTicket(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [chooseTicketReply()];
   }
 
-  async onChooseFamilyTicket(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onChooseFamilyTicket(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [chooseFamilyTicketReply()];
   }
 
-  async onPartnerProgram(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onPartnerProgram(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
@@ -325,14 +325,14 @@ export class TelegramUpdateController {
   async onGetPartnerLink(
     sender: ChannelIdentity,
     botUsername: string | null
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [partnerLinkReply(sender.externalUserId, botUsername)];
   }
 
-  async onMyBonuses(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onMyBonuses(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
@@ -358,7 +358,7 @@ export class TelegramUpdateController {
     sender: ChannelIdentity,
     ticketType: PurchaseTicketType,
     now: Date
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
@@ -371,7 +371,7 @@ export class TelegramUpdateController {
    * number — only an explicit purchase-flow button click (onSelectTicketType, onSkipChildTicket,
    * onAddChildTicketPrompt) shows an explicit "draft was lost" message.
    */
-  async onQuantityText(sender: ChannelIdentity, text: string, now: Date): Promise<readonly TelegramReplyModel[]> {
+  async onQuantityText(sender: ChannelIdentity, text: string, now: Date): Promise<readonly ReplyModel[]> {
     if (!this.purchaseFlow) {
       return [];
     }
@@ -379,14 +379,14 @@ export class TelegramUpdateController {
     return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
   }
 
-  async onAddChildTicketPrompt(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+  async onAddChildTicketPrompt(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
     return mapPurchaseFlowResult(await this.purchaseFlow.promptChildQuantity(sender));
   }
 
-  async onSkipChildTicket(sender: ChannelIdentity, now: Date): Promise<readonly TelegramReplyModel[]> {
+  async onSkipChildTicket(sender: ChannelIdentity, now: Date): Promise<readonly ReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
@@ -397,7 +397,7 @@ export class TelegramUpdateController {
     sender: ChannelIdentity,
     text: string,
     now: Date
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     if (!this.purchaseFlow) {
       return [];
     }
@@ -405,7 +405,7 @@ export class TelegramUpdateController {
     return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
   }
 
-  async onContact(command: HandleTelegramContactCommand): Promise<readonly TelegramReplyModel[]> {
+  async onContact(command: HandleTelegramContactCommand): Promise<readonly ReplyModel[]> {
     const result = await this.handleContact.execute(command);
 
     if (!result.accepted) {
@@ -445,7 +445,7 @@ export class TelegramUpdateController {
 
   async onTickets(
     command: ListTelegramTicketsCommand
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     const result = await this.listTickets.execute(command);
     if (!result.identityFound) {
       return [{ text: "Сначала откройте меню командой /start." }];
@@ -532,7 +532,7 @@ export class TelegramUpdateController {
   private async resumeScenarioAfterOffer(
     orderId: string,
     command: AcceptTelegramOfferCommand
-  ): Promise<readonly TelegramReplyModel[]> {
+  ): Promise<readonly ReplyModel[]> {
     if (!this.scenario?.offerAccepted) {
       return [];
     }
@@ -587,7 +587,7 @@ export class TelegramUpdateController {
 function scenarioReplies(
   sessionId: string,
   presentations: readonly ScenarioPresentationModel[]
-): TelegramReplyModel[] {
+): ReplyModel[] {
   return presentations.map((presentation) => ({
     text: presentation.text,
     ...(presentation.buttons.length > 0
@@ -606,7 +606,7 @@ function scenarioReplies(
   }));
 }
 
-function mapPurchaseFlowResult(result: PurchaseFlowResult): readonly TelegramReplyModel[] {
+function mapPurchaseFlowResult(result: PurchaseFlowResult): readonly ReplyModel[] {
   switch (result.kind) {
     case "ask_quantity":
       return [enterQuantityReply(result.ticketLabel)];
