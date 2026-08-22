@@ -99,7 +99,11 @@ export default tseslint.config(
       "apps/worker/src/import-participants.ts",
       "apps/worker/src/import-expenses.ts",
       "apps/worker/src/clear-participants.ts",
-      "apps/worker/src/conversation-files.ts"
+      "apps/worker/src/conversation-files.ts",
+      "apps/telegram-account/src/login.ts",
+      "apps/telegram-account/src/status.ts",
+      "apps/telegram-account/src/bootstrap.ts",
+      "apps/telegram-account/src/prompts.ts"
     ],
     rules: {
       "no-console": "off"

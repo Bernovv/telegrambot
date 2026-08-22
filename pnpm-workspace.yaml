@@ -4,5 +4,9 @@ packages:
 allowBuilds:
   esbuild: true
   sharp: true
+  # Родной модуль tdl: его install собирает (а чаще берёт готовым) адаптер к libtdjson.
+  # Без разрешения pnpm скрипт молча пропустит, и аккаунт компании упадёт при первом
+  # запуске на «не найден адаптер», а выглядеть это будет как поломка кода.
+  tdl: true
 minimumReleaseAgeExclude:
   - pg-boss@12.26.2

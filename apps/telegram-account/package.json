@@ -1,0 +1,18 @@
+{
+  "name": "@ticket-platform/telegram-account",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "login": "node --env-file=../../.env --import tsx src/login.ts",
+    "status": "node --env-file=../../.env --import tsx src/status.ts",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/telegram-account",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@ticket-platform/config": "workspace:*",
+    "@ticket-platform/messenger-telegram-account": "workspace:*"
+  }
+}

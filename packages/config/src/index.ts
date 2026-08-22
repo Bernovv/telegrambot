@@ -170,6 +170,72 @@ export type ZvonobotConfig =
       readonly bodyLimitBytes: number;
     };
 
+/**
+ * Прокси, через который аккаунт компании видит Telegram.
+ *
+ * Два вида не для полноты картины. SOCKS5 проще и обычно достаточен; MTProxy маскирует
+ * трафик под обычный поток и остаётся запасным ходом на случай, если SOCKS5 начнёт резать
+ * DPI. Переключение между ними — правка одной строки в `.env`, а не работа.
+ */
+export type TelegramAccountProxy =
+  | {
+      readonly kind: "socks5";
+      readonly host: string;
+      readonly port: number;
+      readonly username: string | null;
+      readonly password: string | null;
+    }
+  | {
+      readonly kind: "mtproto";
+      readonly host: string;
+      readonly port: number;
+      readonly secret: string;
+    };
+
+/**
+ * Аккаунт компании в Telegram — фаза 2 плана интеграции каналов.
+ *
+ * Это не бот. Обычный аккаунт на корпоративном номере, который живёт на сервере по MTProto
+ * и от имени которого менеджеры отвечают из панели. Приложения с этим аккаунтом у
+ * менеджеров нет, и поэтому «разговаривать только через панель» здесь не договорённость, а
+ * единственный вход: другого просто не существует.
+ *
+ * Выключен, пока не задан `TELEGRAM_ACCOUNT_API_ID`. Включать его где попало нельзя:
+ * **вторая копия, поднявшая ту же сессию, — это второе устройство**, и Telegram начинает
+ * рвать соединение по кругу. Один включённый экземпляр на сессию, и никогда — локально
+ * «просто посмотреть», пока он же работает на сервере.
+ */
+export type TelegramAccountConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly apiId: number;
+      readonly apiHash: string;
+      /**
+       * Номер, на который заведён аккаунт. Держится в конфиге не ради удобства ввода:
+       * скрипт входа сверяет с ним авторизованную сессию и отказывается работать с чужой.
+       * Перепутанный при входе номер — это не опечатка, а разговор клиента с посторонним
+       * аккаунтом.
+       */
+      readonly phone: string;
+      /**
+       * Папка сессии TDLib. В отличие от строки сессии у GramJS, TDLib хранит состояние
+       * каталогом — и этот каталог и есть авторизация. Его потеря означает новый вход по
+       * коду из SMS, поэтому папка живёт вне репозитория и попадает в резервную копию.
+       */
+      readonly sessionDirectory: string;
+      /** Ключ шифрования базы TDLib. Без него папка сессии читается как есть. */
+      readonly databaseEncryptionKey: string;
+      /**
+       * Прокси до Telegram. `null` допустим только вне продакшна: с российского сервера
+       * MTProto напрямую не ходит, а Cloudflare-прокси из `TELEGRAM_API_ROOT` тут не
+       * поможет — он перекладывает HTTP-запросы Bot API и про MTProto не знает ничего.
+       */
+      readonly proxy: TelegramAccountProxy | null;
+      /** Как аккаунт подписан в списке устройств. Видно и владельцу номера, и в панели. */
+      readonly deviceModel: string;
+    };
+
 export interface WorkerConfig extends AppConfig {
   readonly databasePoolMax: number;
   readonly pgBossSchema: string;
@@ -708,6 +774,126 @@ function loadMaxChannelConfig(env: NodeJS.ProcessEnv): MaxChannelConfig {
 }
 
 /** Приёмник Звонобота: без ключа путь не поднимается вовсе. */
+/**
+ * Настройки аккаунта компании. Отдельный загрузчик, а не поле в конфиге бота: аккаунт
+ * поднимается своим процессом, и падение MTProto не должно задевать продажу билетов.
+ */
+export function loadTelegramAccountConfig(env: NodeJS.ProcessEnv): TelegramAccountConfig {
+  const rawApiId = (env.TELEGRAM_ACCOUNT_API_ID ?? "").trim();
+  if (rawApiId === "") {
+    return { enabled: false };
+  }
+
+  const proxy = parseTelegramAccountProxy(env.TELEGRAM_ACCOUNT_PROXY);
+  if (proxy === null && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
+    // Молча пойти напрямую здесь нельзя. Именно так 27 июля затёрся адрес Cloudflare-прокси
+    // и два часа не доставлялись билеты: переменной не было, код выбрал другой путь и никто
+    // не упал. Аккаунт без прокси с этого сервера Telegram не увидит вовсе.
+    throw new Error(
+      "TELEGRAM_ACCOUNT_PROXY is required in production: MTProto does not reach Telegram "
+      + "from this server directly, and TELEGRAM_API_ROOT does not help — it proxies Bot "
+      + "API HTTP requests and knows nothing about MTProto"
+    );
+  }
+
+  const sessionDirectory = required(
+    env.TELEGRAM_ACCOUNT_SESSION_DIR,
+    "TELEGRAM_ACCOUNT_SESSION_DIR"
+  ).trim();
+  if (sessionDirectory === "") {
+    throw new Error("TELEGRAM_ACCOUNT_SESSION_DIR must not be empty");
+  }
+
+  const deviceModel = (env.TELEGRAM_ACCOUNT_DEVICE_MODEL ?? "").trim();
+
+  return {
+    enabled: true,
+    apiId: parsePositiveInteger(rawApiId, "TELEGRAM_ACCOUNT_API_ID"),
+    apiHash: parseSecret(env.TELEGRAM_ACCOUNT_API_HASH, "TELEGRAM_ACCOUNT_API_HASH"),
+    phone: parseTelegramAccountPhone(env.TELEGRAM_ACCOUNT_PHONE),
+    sessionDirectory,
+    databaseEncryptionKey: parseSecret(
+      env.TELEGRAM_ACCOUNT_DB_KEY,
+      "TELEGRAM_ACCOUNT_DB_KEY"
+    ),
+    proxy,
+    deviceModel: deviceModel === "" ? "Business Proriv CRM" : deviceModel
+  };
+}
+
+/**
+ * Номер в строгом виде `+7...`: сверять «тот ли аккаунт» можно только по одинаково
+ * записанному номеру, а телефон в почти-любом виде — это уже не сверка.
+ */
+function parseTelegramAccountPhone(value: string | undefined): string {
+  const phone = required(value, "TELEGRAM_ACCOUNT_PHONE").trim();
+
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
+    throw new Error("TELEGRAM_ACCOUNT_PHONE must be in international form, e.g. +79001234567");
+  }
+
+  return phone;
+}
+
+/**
+ * Адрес прокси одной строкой: `socks5://[логин:пароль@]хост:порт` либо
+ * `mtproxy://секрет@хост:порт`.
+ *
+ * Одна строка, а не пять переменных, — чтобы прокси нельзя было настроить наполовину.
+ * Половина настроек — это ровно та поломка, которую видно не сразу, а через час тишины.
+ */
+function parseTelegramAccountProxy(
+  value: string | undefined
+): TelegramAccountProxy | null {
+  const raw = (value ?? "").trim();
+  if (raw === "") {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(
+      "TELEGRAM_ACCOUNT_PROXY must be socks5://[user:password@]host:port "
+      + "or mtproxy://secret@host:port"
+    );
+  }
+
+  const host = url.hostname;
+  const port = Number(url.port);
+  if (host === "" || !Number.isSafeInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error("TELEGRAM_ACCOUNT_PROXY must contain a host and a port");
+  }
+
+  if (url.protocol === "socks5:") {
+    const username = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    if (username === "" && password !== "") {
+      throw new Error("TELEGRAM_ACCOUNT_PROXY has a password without a user name");
+    }
+
+    return {
+      kind: "socks5",
+      host,
+      port,
+      username: username === "" ? null : username,
+      password: password === "" ? null : password
+    };
+  }
+
+  if (url.protocol === "mtproxy:" || url.protocol === "mtproto:") {
+    const secret = decodeURIComponent(url.username);
+    if (secret === "") {
+      throw new Error("TELEGRAM_ACCOUNT_PROXY needs the MTProxy secret: mtproxy://secret@host:port");
+    }
+
+    return { kind: "mtproto", host, port, secret };
+  }
+
+  throw new Error(`Unsupported TELEGRAM_ACCOUNT_PROXY scheme: ${url.protocol}`);
+}
+
 function loadZvonobotConfig(env: NodeJS.ProcessEnv): ZvonobotConfig {
   const secret = (env.ZVONOBOT_WEBHOOK_SECRET ?? "").trim();
   if (secret === "") {

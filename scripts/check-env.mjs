@@ -77,6 +77,41 @@ const ADMIN_PANEL = [
   }
 ];
 
+// Аккаунт компании в Telegram. Включается наличием TELEGRAM_ACCOUNT_API_ID; всё остальное
+// с этого момента обязательно. Прокси — в первую очередь: без него аккаунт с этого сервера
+// Telegram не увидит вовсе, а выглядеть это будет как молчание, а не как ошибка.
+const TELEGRAM_ACCOUNT = [
+  {
+    name: "TELEGRAM_ACCOUNT_API_HASH",
+    hint: "хэш приложения с my.telegram.org",
+    pattern: /^[A-Za-z0-9_-]{32,}$/
+  },
+  {
+    name: "TELEGRAM_ACCOUNT_PHONE",
+    hint: "номер аккаунта; по нему сверяется, что вошли под тем",
+    pattern: /^\+[1-9]\d{7,14}$/,
+    patternHint: "+7XXXXXXXXXX"
+  },
+  {
+    name: "TELEGRAM_ACCOUNT_SESSION_DIR",
+    hint: "каталог сессии TDLib; его потеря означает новый вход по коду",
+    pattern: /^\/.+/,
+    patternHint: "абсолютный путь"
+  },
+  {
+    name: "TELEGRAM_ACCOUNT_DB_KEY",
+    hint: "ключ шифрования базы TDLib: openssl rand -hex 32",
+    pattern: /^[A-Za-z0-9_-]{32,256}$/
+  },
+  {
+    name: "TELEGRAM_ACCOUNT_PROXY",
+    hint: "прокси до Telegram на зарубежной машине; TELEGRAM_API_ROOT его не заменяет — "
+      + "тот воркер умеет только HTTP-запросы Bot API",
+    pattern: /^(socks5|mtproxy|mtproto):\/\/[^/]+:\d+$/,
+    patternHint: "socks5://логин:пароль@хост:порт или mtproxy://секрет@хост:порт"
+  }
+];
+
 const path = resolve(process.argv[2] ?? ".env");
 const values = parseEnvFile(await readFile(path, "utf8"));
 const problems = [];
@@ -88,6 +123,12 @@ for (const variable of REQUIRED) {
 if (values.get("ADMIN_AUTH_ENABLED") === "true") {
   for (const variable of ADMIN_PANEL) {
     problems.push(...inspect(variable, { required: true, context: "админ-панель включена" }));
+  }
+}
+
+if ((values.get("TELEGRAM_ACCOUNT_API_ID") ?? "") !== "") {
+  for (const variable of TELEGRAM_ACCOUNT) {
+    problems.push(...inspect(variable, { required: true, context: "аккаунт компании включён" }));
   }
 }
 
