@@ -24,6 +24,7 @@ import {
   CreateAdminEventPricingRuleService,
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
+  AdminConversationsService,
   ConversationLog,
   CreateOrderService,
   DeactivateAdminEventOfferService,
@@ -94,6 +95,7 @@ import {
   createSiteRegistrationPersistence,
   createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
+  createAdminConversationsPersistence,
   createConversationPersistence,
   createOrderSalesPersistence,
   createTelegramPurchaseFlowPersistence,
@@ -291,6 +293,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             )
           };
         })()
+      : undefined;
+    // Переписка. Своя служба и своё право: карточка человека и содержание его личных
+    // разговоров — разные вещи, и открывать их одним ключом не обязательно.
+    const adminConversations = adminAuth
+      ? new AdminConversationsService(
+          createAdminConversationsPersistence(pool).repository
+        )
       : undefined;
     const adminOutreach = adminAuth
       ? new AdminOutreachService(
@@ -672,6 +681,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(participantsExport ? { participantsExport } : {}),
       ...(adminBroadcast ? { adminBroadcast } : {}),
       ...(adminOutreach ? { adminOutreach } : {}),
+      ...(adminConversations ? { adminConversations } : {}),
       ...(adminAccommodation ? { adminAccommodation } : {}),
       ...(adminEventParticipants ? { adminEventParticipants } : {}),
       ...(importParticipants ? { importParticipants } : {}),

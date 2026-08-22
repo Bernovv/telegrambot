@@ -6,6 +6,8 @@ export const ADMIN_PERMISSIONS = [
   "outreach.read",
   "outreach.write",
   "outreach.delete",
+  "conversations.read",
+  "conversations.write",
   "events.read",
   "events.write",
   "events.publish",

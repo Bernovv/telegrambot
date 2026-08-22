@@ -24,6 +24,7 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
+import { createAdminConversationsPersistence } from "../src/admin-conversation-persistence.js";
 import { createAttachmentDownloadPersistence } from "../src/conversation-attachment-persistence.js";
 import { createConversationPersistence } from "../src/conversation-persistence.js";
 import {
@@ -596,6 +597,29 @@ async function main(): Promise<void> {
     at: now,
     retryAt: null
   }));
+
+  // Переписка в карточке. Запрос собирает цепочку объединённых карточек рекурсивным CTE,
+  // джойнит реплики с диалогами и добирает вложения по массиву идентификаторов — то есть
+  // ровно то, что не проверяется ни типами, ни тестами на поддельном соединении.
+  const personConversations = createAdminConversationsPersistence(pool).repository;
+  await check("conversations getPersonConversations", async () => {
+    const found = await personConversations.getPersonConversations({
+      contactId,
+      limit: 50,
+      before: null,
+      search: null
+    });
+    console.log(
+      `        диалогов: ${String(found.threads.length)}, реплик: ${String(found.messages.length)}`
+    );
+  });
+  await check("conversations getPersonConversations с поиском и курсором", () =>
+    personConversations.getPersonConversations({
+      contactId,
+      limit: 10,
+      before: now,
+      search: "билет"
+    }));
 
   await pool.close();
 

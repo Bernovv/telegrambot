@@ -58,6 +58,10 @@ import {
   type AdminBroadcastHandlers
 } from "./admin-broadcast-api.js";
 import {
+  AdminConversationsApiModule,
+  type AdminConversationsHandler
+} from "./admin-conversations-api.js";
+import {
   AdminOutreachApiModule,
   type AdminOutreachHandler
 } from "./admin-outreach-api.js";
@@ -172,6 +176,7 @@ export interface ApiApplicationOptions {
   readonly participantsExport?: ExportParticipantsHandler;
   readonly adminBroadcast?: AdminBroadcastHandlers;
   readonly adminOutreach?: AdminOutreachHandler;
+  readonly adminConversations?: AdminConversationsHandler;
   readonly adminAccommodation?: AdminAccommodationHandler;
   readonly adminEventParticipants?: AdminEventParticipantsHandler;
   readonly importParticipants?: ImportParticipantsHandler;
@@ -241,6 +246,9 @@ class ApiModule {
           : []),
         ...(options.adminBroadcast
           ? [AdminBroadcastApiModule.register(options.adminBroadcast)]
+          : []),
+        ...(options.adminConversations
+          ? [AdminConversationsApiModule.register(options.adminConversations)]
           : []),
         ...(options.adminOutreach
           ? [AdminOutreachApiModule.register(options.adminOutreach)]
@@ -326,6 +334,7 @@ export async function createApiApplication(
       || options.participantsExport
       || options.adminBroadcast
       || options.adminOutreach
+      || options.adminConversations
       || options.adminAccommodation
       || options.adminExpenses
       || options.adminInventory
