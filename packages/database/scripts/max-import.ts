@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     console.log(`Тарифы в каталоге: ${[...catalog.keys()].join(", ")}\n`);
 
     await importUsers(source, target, counters);
-    await importContacts(source, target, counters);
+    await importContacts(source, target, counters, warnings);
     await importWallets(source, target, counters, warnings);
     await importReferrals(source, target, counters, warnings);
     // Документы и версии оферты — до заказов: у заказа с принятой офертой обязана быть
@@ -272,7 +272,8 @@ async function importUsers(
 async function importContacts(
   source: pg.Client,
   target: pg.Client,
-  counters: Counters
+  counters: Counters,
+  warnings: string[]
 ): Promise<void> {
   const rows = await source.query<{
     id: string;
@@ -283,9 +284,23 @@ async function importContacts(
   }>(`select id, phone, phone_verified, phone_verified_at, created_at
         from users where phone is not null and btrim(phone) <> ''`);
 
+  // Сколько номеров вообще есть в исходной базе. Без этой строки «телефоны» просто
+  // отсутствовали бы в отчёте, и было бы не понять, чего именно не случилось: номеров нет
+  // или они не разобрались. Молчание — худший из возможных ответов, когда речь о том,
+  // сможем ли мы этим людям позвонить.
+  const total = await source.query<{ readonly n: number }>(
+    "select count(*)::int as n from users"
+  );
+  console.log(
+    `\nТелефоны: заполнены у ${rows.rowCount ?? 0} человек из ${total.rows[0]?.n ?? 0}`
+  );
+
   for (const row of rows.rows) {
     const phone = normalizePhone(row.phone);
     if (phone === null) {
+      warnings.push(
+        `телефон человека ${row.id}: «${row.phone}» не похож на номер — перенесён не будет`
+      );
       continue;
     }
     // «Подтверждён» обязан сказать когда: схема этого требует, и правильно — иначе
