@@ -120,6 +120,17 @@ export class PostgresConversationRepository implements ConversationRepository {
         );
       }
 
+      await recordTouchpoint(connection, {
+        contactId: conversation.contactId,
+        channel: input.channel,
+        // Автор — сам человек: у входящего касания сотрудника нет.
+        actorAdminId: null,
+        result: "answered",
+        note: input.body,
+        occurredAt: input.occurredAt,
+        activityId: input.messageId
+      });
+
       // Входящее открывает диалог заново. Человек, написавший после закрытия, начал
       // разговор, а не воскресил старый, — и ждать ответа он будет так же.
       await connection.query(
@@ -189,6 +200,21 @@ export class PostgresConversationRepository implements ConversationRepository {
         };
       }
 
+      // Ответ бота касанием не считается. Касание — это то, что менеджеры отмечают руками
+      // и половину забывают; автоответ сценария к этому отношения не имеет, и в ленте он
+      // был бы шумом, за которым не видно настоящих разговоров.
+      if (input.authorKind === "manager") {
+        await recordTouchpoint(connection, {
+          contactId: conversation.contactId,
+          channel: input.channel,
+          actorAdminId: input.authorAdminId,
+          result: "sent",
+          note: input.body,
+          occurredAt: input.occurredAt,
+          activityId: input.messageId
+        });
+      }
+
       // Исходящее не открывает закрытый диалог: закрыл его менеджер, и вернуть его в работу
       // должен человек, а не автоответ.
       await connection.query(
@@ -219,6 +245,83 @@ export class PostgresConversationRepository implements ConversationRepository {
       connection.release();
     }
   }
+}
+
+/**
+ * Слипание касаний: разговор в ленте — одна строка, а не десять.
+ *
+ * Человек пишет очередями: «здравствуйте», «а с ребёнком можно», «и сколько стоит» — это
+ * три сообщения и один разговор. Строка на каждое превратила бы ленту касаний в ту же
+ * переписку, только без текста, и настоящие звонки в ней стало бы не найти.
+ */
+const TOUCHPOINT_MERGE_MINUTES = 30;
+
+interface TouchpointInput {
+  readonly contactId: string | null;
+  readonly channel: "telegram" | "max";
+  readonly actorAdminId: string | null;
+  readonly result: "answered" | "sent";
+  readonly note: string | null;
+  readonly occurredAt: Date;
+  readonly activityId: string;
+}
+
+/**
+ * Касание по сообщению.
+ *
+ * То, что менеджеры сегодня отмечают руками и половину забывают, начинает делаться само.
+ * Без карточки касание не пишется: колонка `contact_id` обязательна, и это правильно —
+ * касание без человека не касание. Такой диалог виден в списке неопознанных.
+ */
+async function recordTouchpoint(
+  connection: SqlExecutor,
+  input: TouchpointInput
+): Promise<void> {
+  if (input.contactId === null) {
+    return;
+  }
+
+  // Участие в кампании, если оно есть: с ним касание видно и в карточке воронки. Берём
+  // самое свежее не убранное — человек может состоять в нескольких направлениях сразу.
+  const member = await connection.query<IdRow>(
+    `select id
+       from public.outreach_campaign_contacts
+      where contact_id = $1::uuid and removed_at is null
+      order by created_at desc
+      limit 1`,
+    [input.contactId]
+  );
+
+  const note = (input.note ?? "").trim();
+  await connection.query(
+    `insert into public.outreach_activities (
+       id, campaign_contact_id, contact_id, actor_admin_id,
+       action, channel, result, note, occurred_at
+     )
+     select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+            'message', $5::text, $6::text, $7::text, $8::timestamptz
+      where not exists (
+        select 1
+          from public.outreach_activities recent
+         where recent.contact_id = $3::uuid
+           and recent.action = 'message'
+           and recent.channel = $5::text
+           and recent.result = $6::text
+           and recent.occurred_at > $8::timestamptz - make_interval(mins => $9::int)
+      )`,
+    [
+      input.activityId,
+      member.rows[0]?.id ?? null,
+      input.contactId,
+      input.actorAdminId,
+      input.channel,
+      input.result,
+      // Выдержка из сказанного, чтобы ленту можно было читать не открывая диалог.
+      note === "" ? null : note.slice(0, 200),
+      input.occurredAt,
+      TOUCHPOINT_MERGE_MINUTES
+    ]
+  );
 }
 
 interface EnsureConversationInput {

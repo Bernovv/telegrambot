@@ -89,6 +89,21 @@ cd ~/telegrambot && pm2 restart api worker && pnpm max:subscribe
 cd ~/telegrambot && curl -s -X DELETE -H "Authorization: $(grep -m1 '^MAX_BOT_TOKEN=' .env | cut -d= -f2-)" "https://platform-api2.max.ru/subscriptions?url=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("https://max-bot.biz-day.ru/webhooks/max"))')"
 ```
 
+## Проверка
+
+Всё разом — одной командой. Ничего не меняет, только читает, секреты не печатает:
+
+```bash
+cd ~/telegrambot && bash scripts/max-channel-check.sh
+```
+
+Запускать после включения канала, **после каждой перезагрузки сервера** и после любой правки
+`.env` или nginx. Половина настроек здесь такая, что при пропаже канал молчит, а не падает:
+заметить это можно только специально.
+
+Строки «нет» — то, что сломано. Строки «?» — то, что скрипт не смог проверить сам
+(например, нет доступа к журналу): не ошибка, но и не «всё хорошо».
+
 ## Что проверить в первый же день
 
 **Диалог целиком:** запуск бота, «Программа и тарифы», «Купить билет», выбор тарифа, ввод

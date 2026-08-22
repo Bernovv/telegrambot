@@ -289,5 +289,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823090000_conversations",
     description: "Store customer conversations and messages across messengers, append-only",
     destructive: false
+  },
+  {
+    id: "20260823120000_activity_without_campaign",
+    description: "Let a touchpoint exist outside a campaign and without a manager as its author",
+    destructive: false
   }
 ];

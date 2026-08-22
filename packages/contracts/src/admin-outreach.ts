@@ -223,7 +223,8 @@ export interface OutreachCampaignContactPage {
 
 export interface OutreachActivity {
   readonly id: string;
-  readonly actorAdminId: string;
+  /** Пусто — касание сделал сам человек: он написал нам, а не мы ему. */
+  readonly actorAdminId: string | null;
   readonly actorName: string;
   readonly channel: OutreachChannel;
   readonly result: Exclude<OutreachContactStatus, "new">;
@@ -359,10 +360,15 @@ export interface OutreachPersonCampaign {
   readonly removedAt: string | null;
 }
 
-/** Звонок или сообщение из любой кампании — в общей ленте нужно знать, из какой. */
+/**
+ * Звонок или сообщение в общей ленте человека.
+ *
+ * Кампания необязательна: тот, кто написал боту сам, может не состоять ни в одной воронке,
+ * и касание от этого не перестаёт быть касанием.
+ */
 export interface OutreachPersonActivity extends OutreachActivity {
-  readonly campaignId: string;
-  readonly campaignName: string;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
 }
 
 /** Задача по человеку. Может жить в кампании, а может относиться к человеку целиком. */

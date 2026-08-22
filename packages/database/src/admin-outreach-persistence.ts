@@ -166,7 +166,7 @@ interface TaskBoardRow {
 
 interface ActivityRow {
   readonly id: string;
-  readonly actor_admin_id: string;
+  readonly actor_admin_id: string | null;
   readonly actor_name: string;
   readonly channel: OutreachActivity["channel"];
   readonly result: OutreachActivity["result"];
@@ -547,8 +547,9 @@ interface PersonPipelineColumnRow {
 }
 
 interface PersonActivityRow extends ActivityRow {
-  readonly campaign_id: string;
-  readonly campaign_name: string;
+  // Пусто у касания вне кампании: человек написал сам, ни в какой воронке не состоя.
+  readonly campaign_id: string | null;
+  readonly campaign_name: string | null;
 }
 
 interface ExistingContactRow {
@@ -1596,16 +1597,23 @@ implements AdminOutreachRepository {
       }
 
       const activities = await connection.query<PersonActivityRow>(
+        // Все три связи необязательны, и каждая по своей причине. Сотрудника нет у
+        // входящего сообщения: его написал сам человек. Кампании нет у того, кто написал
+        // боту, не состоя ни в одной воронке. Обычный join выкинул бы такие касания из
+        // ленты целиком — то есть спрятал бы ровно то, ради чего запись и заводилась.
         `select activity.id, activity.actor_admin_id,
-                coalesce(actor.display_name, actor.email_normalized, 'Менеджер') as actor_name,
+                case
+                  when activity.actor_admin_id is null then 'Человек'
+                  else coalesce(actor.display_name, actor.email_normalized, 'Менеджер')
+                end as actor_name,
                 activity.channel, activity.result, activity.note, activity.occurred_at,
                 member.campaign_id,
                 campaign.name as campaign_name
          from public.outreach_activities activity
-         join public.admin_accounts actor on actor.id = activity.actor_admin_id
-         join public.outreach_campaign_contacts member
+         left join public.admin_accounts actor on actor.id = activity.actor_admin_id
+         left join public.outreach_campaign_contacts member
            on member.id = activity.campaign_contact_id
-         join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+         left join public.outreach_campaigns campaign on campaign.id = member.campaign_id
          where activity.contact_id = any($1::uuid[])
          order by activity.occurred_at desc, activity.id desc
          limit 200`,
@@ -2678,10 +2686,13 @@ implements AdminOutreachRepository {
       }
       const activities = await connection.query<ActivityRow>(
         `select activity.id, activity.actor_admin_id,
-                coalesce(actor.display_name, actor.email_normalized, 'Менеджер') as actor_name,
+                case
+                  when activity.actor_admin_id is null then 'Человек'
+                  else coalesce(actor.display_name, actor.email_normalized, 'Менеджер')
+                end as actor_name,
                 activity.channel, activity.result, activity.note, activity.occurred_at
          from public.outreach_activities activity
-         join public.admin_accounts actor on actor.id = activity.actor_admin_id
+         left join public.admin_accounts actor on actor.id = activity.actor_admin_id
          where activity.campaign_contact_id = $1
          order by activity.occurred_at desc, activity.id desc
          limit 100`,
