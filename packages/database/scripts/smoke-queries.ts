@@ -505,7 +505,8 @@ async function main(): Promise<void> {
     conversationId: randomUUID(),
     messageId: randomUUID(),
     contactId: randomUUID(),
-    attachmentIds: []
+    attachmentIds: [],
+    taskId: randomUUID()
   }));
   await check("conversations recordIncoming повтор", async () => {
     const again = await conversations.recordIncoming({
@@ -513,7 +514,8 @@ async function main(): Promise<void> {
       conversationId: randomUUID(),
       messageId: randomUUID(),
       contactId: randomUUID(),
-      attachmentIds: []
+      attachmentIds: [],
+      taskId: randomUUID()
     });
     if (again.stored) {
       throw new Error("повтор вебхука записался второй строкой");
@@ -528,7 +530,8 @@ async function main(): Promise<void> {
       conversationId: randomUUID(),
       messageId: randomUUID(),
       contactId: randomUUID(),
-      attachmentIds: []
+      attachmentIds: [],
+      taskId: randomUUID()
     });
     if (!edited.stored) {
       throw new Error("правка не легла рядом с исходной репликой");
@@ -549,7 +552,8 @@ async function main(): Promise<void> {
     conversationId: randomUUID(),
     messageId: randomUUID(),
     contactId: randomUUID(),
-    attachmentIds: [randomUUID()]
+    attachmentIds: [randomUUID()],
+    taskId: randomUUID()
   }));
   await check("conversations recordOutgoing", () => conversations.recordOutgoing({
     channel: "telegram",

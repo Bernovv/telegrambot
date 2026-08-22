@@ -18,6 +18,7 @@ import type {
   QueuedReplyAttachment,
   ConversationFileReplyRepository
 } from "@ticket-platform/application";
+import { completeReplyTasks } from "./conversation-reply-task.js";
 import { recordTouchpoint } from "./conversation-touchpoint.js";
 import type { SqlConnectionPool, SqlExecutor } from "./postgres.js";
 
@@ -386,6 +387,15 @@ implements ConversationReplyRepository, ConversationFileReplyRepository {
             where id = $1::uuid`,
           [conversation.id, input.occurredAt, input.authorAdminId]
         );
+
+        // Менеджер ответил — задача «ответить» по этому диалогу закрыта. Именно здесь, а
+        // не после успешной отправки: своё он сделал, а доставка это забота очереди, и
+        // не дошедший ответ он увидит в ленте красным.
+        await completeReplyTasks(connection, {
+          conversationId: conversation.id,
+          adminId: input.authorAdminId,
+          at: input.occurredAt
+        });
 
         await recordTouchpoint(connection, {
           contactId: conversation.contact_id,

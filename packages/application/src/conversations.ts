@@ -115,6 +115,11 @@ export interface RecordIncomingMessageInput extends IncomingConversationMessage 
   readonly messageId: string;
   readonly contactId: string;
   readonly attachmentIds: readonly string[];
+  /**
+   * Идентификатор задачи «ответить», если её придётся завести. Выдаётся заранее вместе с
+   * остальными: понадобится она или нет, решает база — там видно, есть ли уже открытая.
+   */
+  readonly taskId: string;
 }
 
 export interface RecordOutgoingMessageInput extends OutgoingConversationMessage {
@@ -158,7 +163,8 @@ export class ConversationLog {
         conversationId: this.ids.newId(),
         messageId: this.ids.newId(),
         contactId: this.ids.newId(),
-        attachmentIds: message.attachments.map(() => this.ids.newId())
+        attachmentIds: message.attachments.map(() => this.ids.newId()),
+        taskId: this.ids.newId()
       });
     } catch (error) {
       this.onFailure(error, {

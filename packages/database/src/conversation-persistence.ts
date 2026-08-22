@@ -8,6 +8,7 @@ import {
   CONVERSATION_CONTACT_SOURCE,
   conversationContactIdentifier
 } from "@ticket-platform/application";
+import { ensureReplyTask } from "./conversation-reply-task.js";
 import { recordTouchpoint } from "./conversation-touchpoint.js";
 import type { SqlConnection, SqlConnectionPool, SqlExecutor } from "./postgres.js";
 
@@ -131,6 +132,19 @@ export class PostgresConversationRepository implements ConversationRepository {
         occurredAt: input.occurredAt,
         activityId: input.messageId
       });
+
+      // Задача менеджеру: человек написал — на это надо ответить. Заводится здесь, а не
+      // проходом воркера, потому что смысл её в скорости: задача, появившаяся через пять
+      // минут, уже опоздала на пять минут. Без карточки задачу ставить не на кого —
+      // такой диалог виден в списке неопознанных и разбирается руками.
+      if (conversation.contactId !== null) {
+        await ensureReplyTask(connection, {
+          taskId: input.taskId,
+          conversationId: conversation.id,
+          contactId: conversation.contactId,
+          occurredAt: input.occurredAt
+        });
+      }
 
       // Входящее открывает диалог заново. Человек, написавший после закрытия, начал
       // разговор, а не воскресил старый, — и ждать ответа он будет так же.

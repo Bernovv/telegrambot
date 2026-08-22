@@ -304,5 +304,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823180000_conversation_reply_queue",
     description: "Queue manager replies as messages instead of sending them straight from the panel",
     destructive: false
+  },
+  {
+    id: "20260823210000_conversation_reply_tasks",
+    description: "Open a task for the responsible manager whenever a customer writes",
+    destructive: false
   }
 ];
