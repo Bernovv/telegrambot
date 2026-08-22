@@ -59,7 +59,8 @@ import {
 } from "./admin-broadcast-api.js";
 import {
   AdminConversationsApiModule,
-  type AdminConversationsHandler
+  type AdminConversationsHandler,
+  type ConversationFilesConfig
 } from "./admin-conversations-api.js";
 import {
   AdminOutreachApiModule,
@@ -177,6 +178,8 @@ export interface ApiApplicationOptions {
   readonly adminBroadcast?: AdminBroadcastHandlers;
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminConversations?: AdminConversationsHandler;
+  /** Папка вложений переписки: та же, куда их кладёт воркер. */
+  readonly conversationFiles?: ConversationFilesConfig;
   readonly adminAccommodation?: AdminAccommodationHandler;
   readonly adminEventParticipants?: AdminEventParticipantsHandler;
   readonly importParticipants?: ImportParticipantsHandler;
@@ -248,7 +251,10 @@ class ApiModule {
           ? [AdminBroadcastApiModule.register(options.adminBroadcast)]
           : []),
         ...(options.adminConversations
-          ? [AdminConversationsApiModule.register(options.adminConversations)]
+          ? [AdminConversationsApiModule.register(
+            options.adminConversations,
+            options.conversationFiles ?? { directory: "" }
+          )]
           : []),
         ...(options.adminOutreach
           ? [AdminOutreachApiModule.register(options.adminOutreach)]

@@ -6,6 +6,8 @@ import type {
 } from "@ticket-platform/contracts";
 import type {
   AdminConversationsRepository,
+  AttachmentFileRepository,
+  StoredAttachmentFile,
   ConversationReplyQueueRepository,
   ConversationReplyRepository,
   PersonConversationsQuery,
@@ -469,4 +471,51 @@ export function createConversationReplyPersistence(pool: SqlConnectionPool) {
     repository: new PostgresConversationReplyRepository(pool),
     queue: new PostgresConversationReplyQueueRepository(pool)
   } as const;
+}
+
+/**
+ * Файл вложения: где он лежит и чем его открывать.
+ *
+ * Отдаём только `stored`. Скачивающееся вложение отдавать нечем, а `failed` — тем более:
+ * пустой ответ панели честнее, чем обрезанный файл, который браузер покажет как сломанную
+ * картинку.
+ */
+export class PostgresAttachmentFileRepository implements AttachmentFileRepository {
+  constructor(private readonly pool: SqlConnectionPool) {}
+
+  async findStored(attachmentId: string): Promise<StoredAttachmentFile | null> {
+    const connection = await this.pool.connect();
+    try {
+      const result = await connection.query<{
+        readonly id: string;
+        readonly storage_path: string;
+        readonly file_name: string | null;
+        readonly mime_type: string | null;
+        readonly size_bytes: string | null;
+      }>(
+        `select id, storage_path, file_name, mime_type, size_bytes::text
+           from public.conversation_attachments
+          where id = $1::uuid and download_status = 'stored' and storage_path is not null
+          limit 1`,
+        [attachmentId]
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return null;
+      }
+      return {
+        attachmentId: row.id,
+        storagePath: row.storage_path,
+        fileName: row.file_name,
+        mimeType: row.mime_type,
+        sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes)
+      };
+    } finally {
+      connection.release();
+    }
+  }
+}
+
+export function createAttachmentFilePersistence(pool: SqlConnectionPool) {
+  return { repository: new PostgresAttachmentFileRepository(pool) } as const;
 }

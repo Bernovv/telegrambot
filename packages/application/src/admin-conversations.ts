@@ -152,3 +152,39 @@ export class SendConversationReplyService {
     });
   }
 }
+
+/**
+ * Открыть вложение.
+ *
+ * Панель просит файл по идентификатору вложения, а не по пути. Разница не косметическая:
+ * ручка, принимающая путь, — это способ прочитать с диска что угодно, подобрав его. Путь
+ * известен только базе, и берётся он оттуда.
+ */
+export interface StoredAttachmentFile {
+  readonly attachmentId: string;
+  /** Путь внутри папки вложений: `2026/08/<id>.ogg`. Полный собирает тот, кто читает диск. */
+  readonly storagePath: string;
+  readonly fileName: string | null;
+  readonly mimeType: string | null;
+  readonly sizeBytes: number | null;
+}
+
+export interface AttachmentFileRepository {
+  /** `null` — вложения нет либо файл ещё не у нас: отдавать нечего. */
+  findStored(attachmentId: string): Promise<StoredAttachmentFile | null>;
+}
+
+export class OpenConversationAttachmentService {
+  constructor(private readonly repository: AttachmentFileRepository) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly attachmentId: string;
+  }): Promise<StoredAttachmentFile | null> {
+    requirePermission(input.actor, "conversations.read");
+    if (!UUID_PATTERN.test(input.attachmentId)) {
+      throw new Error("Administrator conversations attachment id is invalid");
+    }
+    return await this.repository.findStored(input.attachmentId);
+  }
+}

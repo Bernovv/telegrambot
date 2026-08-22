@@ -921,6 +921,16 @@ export function getPersonConversations(
  * ленте со статусом «отправляется». Ждать Telegram здесь нельзя — их сеть иногда думает
  * секундами, а менеджер в это время жмёт кнопку второй раз.
  */
+/**
+ * Адрес файла вложения.
+ *
+ * Обычная ссылка, а не запрос: картинку показывает `<img>`, голосовое — `<audio>`, и оба
+ * ходят за файлом сами, с той же сессией. Тянуть файл в память панели ради этого незачем.
+ */
+export function conversationAttachmentUrl(attachmentId: string): string {
+  return `/admin-api/conversations/attachments/${encodeURIComponent(attachmentId)}/file`;
+}
+
 export function sendConversationReply(
   conversationId: string,
   input: { readonly text: string; readonly takeOver?: boolean }

@@ -11,12 +11,19 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UnauthorizedException
 } from "@nestjs/common";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import type {
   AdminConversationsService,
+  OpenConversationAttachmentService,
   SendConversationReplyService
 } from "@ticket-platform/application";
+import type { ServerResponse } from "node:http";
+import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import {
   RequireAdminPermission,
@@ -24,6 +31,7 @@ import {
 } from "./admin-auth.js";
 
 const ADMIN_CONVERSATIONS = Symbol("ADMIN_CONVERSATIONS");
+const CONVERSATION_FILES = Symbol("CONVERSATION_FILES");
 
 const uuid = z.string().uuid();
 const pageQuery = z.object({
@@ -57,6 +65,15 @@ export interface AdminConversationsHandler {
     readonly takeOver?: boolean | undefined;
     readonly now: Date;
   }): ReturnType<SendConversationReplyService["execute"]>;
+  openAttachment(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly attachmentId: string;
+  }): ReturnType<OpenConversationAttachmentService["execute"]>;
+}
+
+/** Папка вложений на диске. Ту же переменную читает воркер, когда их туда кладёт. */
+export interface ConversationFilesConfig {
+  readonly directory: string;
 }
 
 /**
@@ -139,15 +156,120 @@ export class AdminConversationRepliesController {
   }
 }
 
+/**
+ * Файл вложения.
+ *
+ * Панель просит его по идентификатору вложения, а не по пути, и это главное здесь: ручка,
+ * принимающая путь, — способ прочитать с диска что угодно. Путь известен только базе.
+ *
+ * Собранный путь всё равно проверяется на выход за папку. Это второй рубеж от той же беды:
+ * в базу путь кладём мы сами, но однажды туда попадёт то, чего мы не ждали, и тогда проверка
+ * окажется единственным, что стоит между панелью и `/etc/passwd`.
+ */
+@Controller("api/v1/conversations")
+export class AdminConversationFilesController {
+  constructor(
+    @Inject(ADMIN_CONVERSATIONS)
+    private readonly handler: AdminConversationsHandler,
+    @Inject(CONVERSATION_FILES)
+    private readonly files: ConversationFilesConfig
+  ) {}
+
+  @Get("attachments/:id/file")
+  @RequireAdminPermission("conversations.read")
+  async openAttachment(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest,
+    @Res({ passthrough: false }) response: ServerResponse
+  ): Promise<void> {
+    const attachmentId = parse(uuid, id);
+    const found = await execute(() =>
+      this.handler.openAttachment({ actor: requireActor(request), attachmentId })
+    );
+    if (!found) {
+      throw new NotFoundException({
+        code: "ATTACHMENT_NOT_FOUND",
+        title: "Вложение не найдено или ещё не скачано"
+      });
+    }
+
+    const absolute = resolveAttachmentPath(this.files.directory, found.storagePath);
+    if (absolute === null) {
+      throw new NotFoundException({
+        code: "ATTACHMENT_NOT_FOUND",
+        title: "Вложение не найдено или ещё не скачано"
+      });
+    }
+
+    try {
+      await stat(absolute);
+    } catch {
+      // Строка в базе есть, а файла нет: папку перенесли или почистили руками. Для панели
+      // это то же самое, что «нет файла», но в логе видно, что расхождение существует.
+      throw new NotFoundException({
+        code: "ATTACHMENT_FILE_MISSING",
+        title: "Файл вложения не найден на диске"
+      });
+    }
+
+    response.setHeader("content-type", found.mimeType ?? "application/octet-stream");
+    response.setHeader("cache-control", "private, max-age=300");
+    // `inline`, а не `attachment`: голосовое слушают в ленте, а не скачивают. Имя всё
+    // равно передаём — с ним «Сохранить как» предложит осмысленное.
+    response.setHeader(
+      "content-disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(found.fileName ?? found.attachmentId)}`
+    );
+    await pipeline(createReadStream(absolute), response);
+  }
+}
+
 @Module({})
 export class AdminConversationsApiModule {
-  static register(handler: AdminConversationsHandler): DynamicModule {
+  static register(
+    handler: AdminConversationsHandler,
+    files: ConversationFilesConfig
+  ): DynamicModule {
     return {
       module: AdminConversationsApiModule,
-      controllers: [AdminConversationsController, AdminConversationRepliesController],
-      providers: [{ provide: ADMIN_CONVERSATIONS, useValue: handler }]
+      controllers: [
+        AdminConversationsController,
+        AdminConversationRepliesController,
+        AdminConversationFilesController
+      ],
+      providers: [
+        { provide: ADMIN_CONVERSATIONS, useValue: handler },
+        { provide: CONVERSATION_FILES, useValue: files }
+      ]
     };
   }
+}
+
+/**
+ * Путь к файлу вложения на диске — или `null`, если он ведёт наружу.
+ *
+ * Второй рубеж от чтения чужих файлов. Путь в базу кладём мы сами, и сегодня он безопасен;
+ * проверка нужна на день, когда туда попадёт то, чего мы не ждали, — и тогда она окажется
+ * единственным, что стоит между панелью и `/etc/passwd`.
+ *
+ * Пустая папка означает, что скачивание не настроено: отдавать нечего, и это не ошибка.
+ */
+export function resolveAttachmentPath(
+  directory: string,
+  storagePath: string
+): string | null {
+  const root = resolve(directory.trim());
+  if (directory.trim() === "" || !isAbsolute(root)) {
+    return null;
+  }
+  // Абсолютный путь в базе отвергаем, а не приклеиваем к папке. Приклеенный `/etc/passwd`
+  // остался бы внутри папки и был бы безопасен, но означал бы, что мы молча читаем не то,
+  // что записали: такую строку должен увидеть человек, а не проглотить код.
+  if (storagePath.trim() === "" || isAbsolute(storagePath)) {
+    return null;
+  }
+  const absolute = resolve(join(root, storagePath));
+  return absolute.startsWith(root + sep) ? absolute : null;
 }
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {

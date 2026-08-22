@@ -39,6 +39,9 @@ export function isAllowedAdminApiPath(
       || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
       // Переписка человека: курсор, поиск и размер страницы идут строкой запроса.
       || /^conversations\/people\/[0-9a-f-]{36}(?:\?.*)?$/i.test(path)
+      // Файл вложения. Путь берётся идентификатором вложения, а не именем файла: иначе
+      // прокси стал бы способом попросить у api что угодно с диска.
+      || /^conversations\/attachments\/[0-9a-f-]{36}\/file$/i.test(path)
       || /^outreach\/site-registrations(?:\?.*)?$/i.test(path)
       || path === "outreach/managers"
       || path === "staff"
@@ -148,6 +151,18 @@ export function isValidIdempotencyKey(value: string | null): value is string {
 // survive the proxy or the browser renders the CSV inline instead of downloading it.
 export function isFileDownloadPath(path: string): boolean {
   return /^events\/[0-9a-f-]{36}\/participants\/export$/i.test(path);
+}
+
+/**
+ * Ответ, который нельзя читать как текст.
+ *
+ * Прокси собирает ответ через `text()`, и для JSON с выгрузкой CSV это правильно. Картинка
+ * и голосовое, пропущенные через строку, приезжают в браузер битыми: `text()` разбирает
+ * байты как UTF-8, а всё, что в него не уложилось, заменяет символом-заменителем. Такой
+ * файл выглядит целым по размеру и не открывается.
+ */
+export function isBinaryDownloadPath(path: string): boolean {
+  return /^conversations\/attachments\/[0-9a-f-]{36}\/file$/i.test(path);
 }
 export function isTrustedMutationOrigin(
   origin: string | null,

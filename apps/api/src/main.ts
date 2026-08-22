@@ -25,6 +25,7 @@ import {
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
   AdminConversationsService,
+  OpenConversationAttachmentService,
   SendConversationReplyService,
   ConversationLog,
   CreateOrderService,
@@ -97,6 +98,7 @@ import {
   createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
   createAdminConversationsPersistence,
+  createAttachmentFilePersistence,
   createConversationReplyPersistence,
   createConversationPersistence,
   createOrderSalesPersistence,
@@ -310,13 +312,19 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             createConversationReplyPersistence(pool).repository,
             idGenerator
           );
+          const attachments = new OpenConversationAttachmentService(
+            createAttachmentFilePersistence(pool).repository
+          );
           return {
             getPersonConversations: (
               input: Parameters<AdminConversationsService["getPersonConversations"]>[0]
             ) => reading.getPersonConversations(input),
             sendReply: (
               input: Parameters<SendConversationReplyService["execute"]>[0]
-            ) => reply.execute(input)
+            ) => reply.execute(input),
+            openAttachment: (
+              input: Parameters<OpenConversationAttachmentService["execute"]>[0]
+            ) => attachments.execute(input)
           };
         })()
       : undefined;
@@ -701,6 +709,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminBroadcast ? { adminBroadcast } : {}),
       ...(adminOutreach ? { adminOutreach } : {}),
       ...(adminConversations ? { adminConversations } : {}),
+      conversationFiles: { directory: config.conversationAttachments.directory },
       ...(adminAccommodation ? { adminAccommodation } : {}),
       ...(adminEventParticipants ? { adminEventParticipants } : {}),
       ...(importParticipants ? { importParticipants } : {}),

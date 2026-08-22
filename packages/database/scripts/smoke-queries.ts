@@ -26,6 +26,7 @@ import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
 import {
   createAdminConversationsPersistence,
+  createAttachmentFilePersistence,
   createConversationReplyPersistence
 } from "../src/admin-conversation-persistence.js";
 import { createAttachmentDownloadPersistence } from "../src/conversation-attachment-persistence.js";
@@ -656,6 +657,9 @@ async function main(): Promise<void> {
     at: now,
     retryAt: null
   }));
+
+  await check("conversations findStored вложения", () =>
+    createAttachmentFilePersistence(pool).repository.findStored(randomUUID()));
 
   await pool.close();
 

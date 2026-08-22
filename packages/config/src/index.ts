@@ -134,6 +134,12 @@ export interface ApiConfig extends AppConfig {
   readonly max: MaxChannelConfig;
   readonly zvonobot: ZvonobotConfig;
   readonly tbankPayments: TBankPaymentsConfig;
+  /**
+   * Папка вложений переписки. Api их отдаёт панели, воркер их туда кладёт — переменная у
+   * двух процессов одна, и разъехаться она не должна: api начал бы отвечать «файла нет»
+   * на файлы, которые лежат в другой папке.
+   */
+  readonly conversationAttachments: ConversationAttachmentsConfig;
 }
 
 /**
@@ -452,7 +458,8 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     },
     max: loadMaxChannelConfig(env),
     zvonobot: loadZvonobotConfig(env),
-    tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv)
+    tbankPayments: loadTBankPaymentsConfig(env, appConfig.appEnv),
+    conversationAttachments: loadConversationAttachmentsConfig(env)
   };
 }
 

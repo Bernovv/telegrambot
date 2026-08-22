@@ -6,6 +6,7 @@ import {
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
+  isBinaryDownloadPath,
   isFileDownloadPath,
   isTrustedMutationOrigin,
   isValidIdempotencyKey,
@@ -145,6 +146,23 @@ async function forwardAdminRequest(
       ...(mutationBody === null ? {} : { body: mutationBody }),
       signal: AbortSignal.timeout(12_000)
     });
+    if (isBinaryDownloadPath(upstreamPath)) {
+      // Файл отдаём потоком, не превращая в строку: `text()` разбирает байты как UTF-8 и
+      // портит всё, что в него не уложилось. Картинка при этом остаётся правильного
+      // размера и не открывается — ошибка, которую ищут долго.
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          "cache-control": "private, max-age=300",
+          "content-type":
+            upstream.headers.get("content-type") ?? "application/octet-stream",
+          ...(upstream.headers.get("content-disposition") !== null
+            ? { "content-disposition": upstream.headers.get("content-disposition") as string }
+            : {})
+        }
+      });
+    }
+
     const upstreamBody = await upstream.text();
     const contentDisposition = upstream.headers.get("content-disposition");
     return new Response(upstreamBody, {

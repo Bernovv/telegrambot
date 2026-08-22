@@ -1,6 +1,10 @@
 "use client";
 
-import { getPersonConversations, sendConversationReply } from "@/lib/admin-api";
+import {
+  conversationAttachmentUrl,
+  getPersonConversations,
+  sendConversationReply
+} from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import type {
   AdminConversationAttachment,
@@ -378,17 +382,53 @@ function AttachmentRow({
 }) {
   // «Качается» и «не скачалось» — разные вещи: первое пройдёт само, второе требует руки,
   // и файл у мессенджера живёт не вечно. Поэтому подписи разные, а не общее «нет файла».
-  const note = attachment.isAvailable
-    ? null
-    : attachment.failureReason
-      ? `не удалось забрать: ${attachment.failureReason}`
-      : "ещё качается";
+  if (!attachment.isAvailable) {
+    return (
+      <p className="conversation-attachment">
+        {attachmentName(attachment)}
+        <span className="conversation-attachment-note">
+          {" · "}
+          {attachment.failureReason
+            ? `не удалось забрать: ${attachment.failureReason}`
+            : "ещё качается"}
+        </span>
+      </p>
+    );
+  }
+
+  const url = conversationAttachmentUrl(attachment.id);
+  const size = attachment.sizeBytes ? ` · ${formatSize(attachment.sizeBytes)}` : "";
+
+  if (attachment.kind === "photo") {
+    return (
+      <a className="conversation-attachment-photo" href={url} target="_blank" rel="noreferrer">
+        {/* Обычный img, а не next/image: файл отдаёт наш же прокси по сессии, а
+            оптимизатор Next ходил бы за ним отдельным запросом без неё и получал бы 401. */}
+        <img src={url} alt={attachmentName(attachment)} loading="lazy" />
+      </a>
+    );
+  }
+
+  if (attachment.kind === "voice" || attachment.kind === "audio") {
+    return (
+      <div className="conversation-attachment-audio">
+        {/* Голосовые Telegram приходят в ogg/opus: Chrome и Firefox играют их сами, Safari
+            до сих пор нет. Поэтому рядом с плеером всегда ссылка — иначе на маке
+            голосовое просто не открыть. */}
+        <audio controls preload="none" src={url} />
+        <a href={url} target="_blank" rel="noreferrer">
+          Открыть файл{size}
+        </a>
+      </div>
+    );
+  }
 
   return (
     <p className="conversation-attachment">
-      {attachmentName(attachment)}
-      {attachment.sizeBytes ? ` · ${formatSize(attachment.sizeBytes)}` : ""}
-      {note ? <span className="conversation-attachment-note"> · {note}</span> : null}
+      <a href={url} target="_blank" rel="noreferrer">
+        {attachmentName(attachment)}
+      </a>
+      {size}
     </p>
   );
 }
