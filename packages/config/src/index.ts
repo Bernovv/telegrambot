@@ -866,7 +866,11 @@ function parseTelegramAccountProxy(
     throw new Error("TELEGRAM_ACCOUNT_PROXY must contain a host and a port");
   }
 
-  if (url.protocol === "socks5:") {
+  // `socks5h` — та же схема, буква `h` у curl означает «резолвить имена через прокси».
+  // Для нас разницы нет: TDLib и так ходит через прокси целиком. Но в проверочной команде
+  // curl пишут именно `socks5h`, и строку копируют оттуда — так что отвергать её значит
+  // ловить человека на букве, которая ничего не меняет.
+  if (url.protocol === "socks5:" || url.protocol === "socks5h:") {
     const username = decodeURIComponent(url.username);
     const password = decodeURIComponent(url.password);
     if (username === "" && password !== "") {

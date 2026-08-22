@@ -107,8 +107,9 @@ const TELEGRAM_ACCOUNT = [
     name: "TELEGRAM_ACCOUNT_PROXY",
     hint: "прокси до Telegram на зарубежной машине; TELEGRAM_API_ROOT его не заменяет — "
       + "тот воркер умеет только HTTP-запросы Bot API",
-    pattern: /^(socks5|mtproxy|mtproto):\/\/[^/]+:\d+$/,
-    patternHint: "socks5://логин:пароль@хост:порт или mtproxy://секрет@хост:порт"
+    pattern: /^(socks5h?|mtproxy|mtproto):\/\/[^/]+:\d+$/,
+    patternHint: "socks5://логин:пароль@хост:порт или mtproxy://секрет@хост:порт "
+      + "(socks5h тоже принимается — это то же самое)"
   }
 ];
 
