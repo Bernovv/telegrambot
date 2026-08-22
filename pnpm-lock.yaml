@@ -124,6 +124,15 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  apps/telegram-account:
+    dependencies:
+      '@ticket-platform/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@ticket-platform/messenger-telegram-account':
+        specifier: workspace:*
+        version: link:../../packages/messenger-telegram-account
+
   apps/telegram-bot:
     dependencies:
       '@ticket-platform/application':
@@ -265,6 +274,18 @@ importers:
       grammy:
         specifier: 1.45.1
         version: 1.45.1
+
+  packages/messenger-telegram-account:
+    dependencies:
+      '@prebuilt-tdlib/types':
+        specifier: 0.1008066.0
+        version: 0.1008066.0
+      prebuilt-tdlib:
+        specifier: 0.1008066.0
+        version: 0.1008066.0
+      tdl:
+        specifier: 8.1.0
+        version: 8.1.0
 
   packages/observability: {}
 
@@ -793,6 +814,48 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
+  '@prebuilt-tdlib/darwin-arm64@0.1008066.0':
+    resolution: {integrity: sha512-nB7yRVE29NpXBu+UZWQshJCxUy4S5agnwZ7VbC/xJx/4aExHqrhO6AMbRbiGC2wN4oIt8jFIhD8PQW0uxHBnBg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@prebuilt-tdlib/darwin-x64@0.1008066.0':
+    resolution: {integrity: sha512-IoaMiKicbduFxlchH9bo4rmnYrxCvcUR9Chlv+DwUnlhscbOcLKdZbKd7nbTIUbszAIGkSkoblYT4zr2x/9bkA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@prebuilt-tdlib/linux-arm64-glibc@0.1008066.0':
+    resolution: {integrity: sha512-7oFf7qA39syXuVgHojwzdj+qDYRys1SCgWBifIQLCwTveidTS8gTdTOVCiM2cfH/nvX42AxgBm6Sh2WfNz/XOQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@prebuilt-tdlib/linux-arm64-musl@0.1008066.0':
+    resolution: {integrity: sha512-5yOO8q+/YX9kKsvuLAC9K3YHj203magS5TRwjVF+zaKd+gHGIceCu5abe0wcoq4XP/fegDJtd13BKI2NEcsumQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@prebuilt-tdlib/linux-x64-glibc@0.1008066.0':
+    resolution: {integrity: sha512-PcZzXI9eM2saMGQm3nlpDkd7EPvEhfv2rnIutsm49tEApFVn9HZ1o3YG1uREHc1qh+UnWGNYVztjmdN3N5z2zw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@prebuilt-tdlib/linux-x64-musl@0.1008066.0':
+    resolution: {integrity: sha512-kY7BSLjVHb2KcLBeq14pJZaCDqrAsQIRh128zUELHVud5WUeHyjmbO3VWDzukME8U77Ive0G4SBKBEhh6qPrGw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@prebuilt-tdlib/types@0.1008066.0':
+    resolution: {integrity: sha512-9z3XAzeolhlEVIK3krko66RoAql8D+6kYntHoqz8S5KlMmS3UdV8AoYDv6xdevx9vaVSAMFEMlpIb+LflBx6Qg==}
+
+  '@prebuilt-tdlib/win32-x64@0.1008066.0':
+    resolution: {integrity: sha512-BCnqOO40Fo5Ud1N3a85fDgP9dtjbfybfwVvHxE4fstc0tGzqEnZnxF0g5RyqJ4RnPNa2yrPleIC5Jc7guXEJhQ==}
+    cpu: [x64]
+    os: [win32]
+
   '@supabase/auth-js@2.110.8':
     resolution: {integrity: sha512-TQ5neTUDX2C2WmyYa03yGhLMkhdE/SkHXtK8/qxO/APUy3rsymsJCBP48p4jcN6iO2G0ow6RRexQd2mX+dSyJg==}
     engines: {node: '>=22.0.0'}
@@ -1053,6 +1116,7 @@ packages:
   cron-parser@5.6.2:
     resolution: {integrity: sha512-yJ/G1LVir6CnlkLI40CsampPLKl1SprGGlUagWtGJxewytRVYezv5xVyzzbT+Pvzx+VIRvZVF7/a0eEMTxdnTA==}
     engines: {node: '>=18'}
+    deprecated: 'Published tarball was built from a stale dist/ and is missing the fixes from #414 and #415 — its contents are effectively v5.6.1. Upgrade to v5.7.0.'
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -1119,6 +1183,7 @@ packages:
   eslint@9.39.5:
     resolution: {integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -1394,6 +1459,9 @@ packages:
       sass:
         optional: true
 
+  node-addon-api@7.1.1:
+    resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
+
   node-fetch@2.7.0:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
     engines: {node: 4.x || >=6.0.0}
@@ -1402,6 +1470,10 @@ packages:
     peerDependenciesMeta:
       encoding:
         optional: true
+
+  node-gyp-build@4.8.4:
+    resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
+    hasBin: true
 
   non-error@0.1.0:
     resolution: {integrity: sha512-TMB1uHiGsHRGv1uYclfhivcnf0/PdFp2pNqRxXjncaAsjYMoisaQJI+SSZCqRq+VliwRTC8tsMQfmrWjDMhkPQ==}
@@ -1529,6 +1601,9 @@ packages:
   postgres-interval@1.2.0:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
+
+  prebuilt-tdlib@0.1008066.0:
+    resolution: {integrity: sha512-HtmQVSI7lw185RfeqHj1WyfikCwFDMSoJBVSvKuC8sU0n0/AOZ9JrzEhMrbY8GutuFuuA+/JA4dmstAfooJiDw==}
 
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
@@ -1688,6 +1763,10 @@ packages:
   tagged-tag@1.0.0:
     resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
     engines: {node: '>=20'}
+
+  tdl@8.1.0:
+    resolution: {integrity: sha512-idpw60gjJdiJALQg0+6UbxtJTMxVhzZAgCO6QzL81gqBYCkEFjm9zM9HwTTQGeOaAavw4yRHymR68yUUiCoKrA==}
+    engines: {node: '>=16.14.0'}
 
   thread-stream@4.2.0:
     resolution: {integrity: sha512-e2zZ96wSChazBsbENf/Pcm/4swHt2cEKQ92rhUjkL9GCKiTDJIaTBenjE/m9DXi0QBmTMDkFDdOomUy20A1tDQ==}
@@ -2156,6 +2235,29 @@ snapshots:
     optional: true
 
   '@pinojs/redact@0.4.0': {}
+
+  '@prebuilt-tdlib/darwin-arm64@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/darwin-x64@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/linux-arm64-glibc@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/linux-arm64-musl@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/linux-x64-glibc@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/linux-x64-musl@0.1008066.0':
+    optional: true
+
+  '@prebuilt-tdlib/types@0.1008066.0': {}
+
+  '@prebuilt-tdlib/win32-x64@0.1008066.0':
+    optional: true
 
   '@supabase/auth-js@2.110.8':
     dependencies:
@@ -2797,9 +2899,13 @@ snapshots:
       - '@babel/core'
       - babel-plugin-macros
 
+  node-addon-api@7.1.1: {}
+
   node-fetch@2.7.0:
     dependencies:
       whatwg-url: 5.0.0
+
+  node-gyp-build@4.8.4: {}
 
   non-error@0.1.0: {}
 
@@ -2926,6 +3032,17 @@ snapshots:
   postgres-interval@1.2.0:
     dependencies:
       xtend: 4.0.2
+
+  prebuilt-tdlib@0.1008066.0:
+    optionalDependencies:
+      '@prebuilt-tdlib/darwin-arm64': 0.1008066.0
+      '@prebuilt-tdlib/darwin-x64': 0.1008066.0
+      '@prebuilt-tdlib/linux-arm64-glibc': 0.1008066.0
+      '@prebuilt-tdlib/linux-arm64-musl': 0.1008066.0
+      '@prebuilt-tdlib/linux-x64-glibc': 0.1008066.0
+      '@prebuilt-tdlib/linux-x64-musl': 0.1008066.0
+      '@prebuilt-tdlib/types': 0.1008066.0
+      '@prebuilt-tdlib/win32-x64': 0.1008066.0
 
   prelude-ls@1.2.1: {}
 
@@ -3067,6 +3184,14 @@ snapshots:
       has-flag: 4.0.0
 
   tagged-tag@1.0.0: {}
+
+  tdl@8.1.0:
+    dependencies:
+      debug: 4.4.3
+      node-addon-api: 7.1.1
+      node-gyp-build: 4.8.4
+    transitivePeerDependencies:
+      - supports-color
 
   thread-stream@4.2.0:
     dependencies:
