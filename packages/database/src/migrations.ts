@@ -284,5 +284,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260822200000_order_channel",
     description: "Record which messenger an order was placed in so tickets are delivered there",
     destructive: false
+  },
+  {
+    id: "20260823090000_conversations",
+    description: "Store customer conversations and messages across messengers, append-only",
+    destructive: false
   }
 ];
