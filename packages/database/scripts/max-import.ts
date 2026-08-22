@@ -831,14 +831,42 @@ async function importOfferAcceptances(
     id: string; user_id: string; order_id: string; offer_version_id: string;
     accepted_at: Date; max_update_id: string | null; max_message_id: string | null;
     max_callback_id: string | null; acceptance_text_snapshot: string | null;
-  }>(`select id, user_id, order_id, offer_version_id, accepted_at,
-             max_update_id, max_message_id, max_callback_id, acceptance_text_snapshot
-        from offer_acceptances`);
+    version_text: string | null;
+  }>(`select a.id, a.user_id, a.order_id, a.offer_version_id, a.accepted_at,
+             a.max_update_id, a.max_message_id, a.max_callback_id,
+             a.acceptance_text_snapshot,
+             v.display_text_snapshot as version_text
+        from offer_acceptances a
+        join offer_versions v on v.id = a.offer_version_id`);
 
   for (const acceptance of acceptances.rows) {
-    const text = acceptance.acceptance_text_snapshot;
-    if (text === null || text.trim() === "") {
-      warnings.push(`согласие ${acceptance.id}: нет текста оферты — перенесено не будет`);
+    // Текст, с которым согласились.
+    //
+    // MAX писал его в само согласие не всегда — в боевой базе не заполнен ни у одного.
+    // Но он есть у версии, которую человек принимал, и это тот же документ: версия
+    // неизменяема и подписана контрольной суммой. Отбросить согласие, когда документ
+    // известен, значит потерять основание работать с покупателем на пустом месте.
+    const own = (acceptance.acceptance_text_snapshot ?? "").trim();
+    const fromVersion = (acceptance.version_text ?? "").trim();
+    const text = own !== "" ? own : fromVersion;
+    if (text === "") {
+      warnings.push(
+        `согласие ${acceptance.id}: текста нет ни в согласии, ни в версии оферты`
+        + " — перенесено не будет"
+      );
+      continue;
+    }
+
+    // Согласие по заказу, который не переехал, повисло бы на внешнем ключе. Такие заказы
+    // перечислены выше со своей причиной; согласие едет следом за заказом, не впереди него.
+    const order = await target.query(
+      "select 1 from public.orders where id = $1::uuid",
+      [derive("order", acceptance.order_id)]
+    );
+    if (order.rowCount === 0) {
+      warnings.push(
+        `согласие ${acceptance.id}: заказ не перенесён — согласие тоже пропущено`
+      );
       continue;
     }
     await count(counters, "согласия с офертой", target.query(
