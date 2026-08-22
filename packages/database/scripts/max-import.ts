@@ -75,6 +75,30 @@ interface Options {
   readonly usersJsonPath: string | null;
 }
 
+/**
+ * Что делать с телефоном конкретного человека.
+ *
+ * Считается один раз до всех вставок, потому что от него зависят сразу две вещи: статус
+ * телефона у самого человека и то, как записывается контакт.
+ */
+interface PhonePlan {
+  /** Идентификатор человека в общей базе — выведенный из того хранилища, где он нашёлся. */
+  readonly userId: string;
+  readonly raw: string;
+  readonly normalized: string | null;
+  readonly verified: boolean;
+  readonly verifiedAt: Date | null;
+  readonly createdAt: Date;
+  /**
+   * Кому этот номер уже принадлежит в общей базе.
+   *
+   * Схема держит жёсткое правило: один номер — один человек. Совпадение почти всегда
+   * значит, что это один и тот же человек, пришедший из двух каналов. Решать за владельца,
+   * объединять ли их, скрипт не вправе: за карточками стоят кошельки и заказы.
+   */
+  readonly ownedByOther: string | null;
+}
+
 /** Человек в файловом хранилище MAX. Полей больше, нас интересуют эти. */
 interface JsonUser {
   readonly maxUserId?: string;
@@ -113,8 +137,9 @@ async function main(): Promise<void> {
     console.log(`Тарифы в каталоге: ${[...catalog.keys()].join(", ")}\n`);
 
     const jsonUsers = await readJsonUsers(options.usersJsonPath, warnings);
-    await importUsers(source, target, jsonUsers, counters, warnings);
-    await importContacts(source, target, jsonUsers, counters, warnings);
+    const phones = await resolvePhonePlans(source, target, jsonUsers, warnings);
+    await importUsers(source, target, jsonUsers, phones, counters);
+    await importContacts(target, phones, counters);
     await importWallets(source, target, counters, warnings);
     await importReferrals(source, target, counters, warnings);
     // Документы и версии оферты — до заказов: у заказа с принятой офертой обязана быть
@@ -213,13 +238,94 @@ async function resolveCatalog(
   return catalog;
 }
 
+/**
+ * Что известно про телефоны до того, как что-то записано.
+ *
+ * Считается заранее и одним проходом: номер определяет и статус телефона у человека, и вид
+ * контакта, и предупреждение о совпадении. Разнести это по двум местам значит однажды
+ * записать человеку «телефон подтверждён», не записав самого телефона.
+ */
+async function resolvePhonePlans(
+  source: pg.Client,
+  target: pg.Client,
+  jsonUsers: ReadonlyMap<string, JsonUser>,
+  warnings: string[]
+): Promise<ReadonlyMap<string, PhonePlan>> {
+  const rows = await source.query<{
+    id: string;
+    max_user_id: string;
+    phone: string | null;
+    phone_verified: boolean;
+    phone_verified_at: Date | null;
+    created_at: Date;
+  }>(`select id, max_user_id, phone, phone_verified, phone_verified_at, created_at
+        from users`);
+
+  const inPostgres = new Map(rows.rows.map((row) => [row.max_user_id, row]));
+  const plans = new Map<string, PhonePlan>();
+  const everyone = new Set([...inPostgres.keys(), ...jsonUsers.keys()]);
+
+  for (const maxUserId of everyone) {
+    const row = inPostgres.get(maxUserId);
+    const fromFile = jsonUsers.get(maxUserId);
+    const userId = row
+      ? derive("user", row.id)
+      : derive("user", `max-json:${maxUserId}`);
+
+    const raw = ((row?.phone ?? "").trim() !== ""
+      ? (row?.phone ?? "")
+      : (fromFile?.phone ?? "")).trim();
+    if (raw === "") {
+      continue;
+    }
+
+    const normalized = normalizePhone(raw);
+    if (normalized === null) {
+      warnings.push(`телефон ${maxUserId}: «${raw}» не похож на номер — перенесён не будет`);
+      continue;
+    }
+
+    const owner = await target.query<{ readonly user_id: string }>(
+      `select user_id from public.user_contacts
+        where contact_type = 'phone'
+          and value_normalized = $1::text
+          and verification_status in ('imported', 'verified')
+        limit 1`,
+      [normalized]
+    );
+    const ownerId = owner.rows[0]?.user_id ?? null;
+    const ownedByOther = ownerId !== null && ownerId !== userId ? ownerId : null;
+    if (ownedByOther !== null) {
+      warnings.push(
+        `телефон ${maxUserId} (${normalized}) уже принадлежит человеку ${ownedByOther}`
+        + " — это один человек в двух каналах; номер записан как неподтверждённый,"
+        + " карточки объединить руками"
+      );
+    }
+
+    const verified = (row?.phone_verified ?? false) || (fromFile?.phoneVerified ?? false);
+    const createdAt = row?.created_at ?? parseDate(fromFile?.createdAt) ?? new Date();
+    plans.set(maxUserId, {
+      userId,
+      raw,
+      normalized,
+      verified,
+      verifiedAt: verified ? (row?.phone_verified_at ?? createdAt) : null,
+      createdAt,
+      ownedByOther
+    });
+  }
+
+  return plans;
+}
+
 /** Человек и его опознаватель в MAX. */
 async function importUsers(
   source: pg.Client,
   target: pg.Client,
   jsonUsers: ReadonlyMap<string, JsonUser>,
-  counters: Counters,
-  warnings: string[]
+  phones: ReadonlyMap<string, PhonePlan>,
+  counters: Counters
 ): Promise<void> {
   const users = await source.query<{
     id: string;
@@ -244,13 +350,10 @@ async function importUsers(
     seen.add(user.max_user_id);
     const fromFile = jsonUsers.get(user.max_user_id);
 
-    // Телефон живёт в файловом хранилище: в Postgres колонка есть, но пустая. Берём то, что
-    // нашлось хоть где-то, — иначе человек приедет карточкой, которой нельзя позвонить.
-    const phone = user.phone ?? fromFile?.phone ?? null;
-    const phoneVerified = user.phone_verified || (fromFile?.phoneVerified ?? false);
-    const phoneStatus = phone === null
-      ? "unknown"
-      : phoneVerified ? "verified" : "imported";
+    // Статус телефона говорит ровно о том, что мы про него записали. Номер, который уже
+    // принадлежит другому человеку, записывается неподтверждённым — значит и здесь
+    // «неизвестен», иначе карточка обещала бы телефон, которого у неё нет.
+    const phoneStatus = phoneStatusOf(phones.get(user.max_user_id));
     const username = user.username ?? fromFile?.username ?? null;
     const firstName = user.first_name ?? fromFile?.firstName ?? null;
     const lastName = user.last_name ?? fromFile?.lastName ?? null;
@@ -306,7 +409,6 @@ async function importUsers(
       continue;
     }
     const userId = derive("user", `max-json:${maxUserId}`);
-    const phone = fromFile.phone ?? null;
     const createdAt = parseDate(fromFile.createdAt) ?? new Date();
     const updatedAt = parseDate(fromFile.updatedAt) ?? createdAt;
     const username = fromFile.username ?? null;
@@ -323,7 +425,7 @@ async function importUsers(
         displayName(fromFile.firstName ?? null, fromFile.lastName ?? null, username),
         fromFile.firstName ?? null,
         fromFile.lastName ?? null,
-        phone === null ? "unknown" : (fromFile.phoneVerified ?? false) ? "verified" : "imported",
+        phoneStatusOf(phones.get(maxUserId)),
         createdAt,
         updatedAt,
         JSON.stringify({ importedFrom: "max-json", maxUserId })
@@ -347,11 +449,15 @@ async function importUsers(
         updatedAt
       ]
     ));
-
-    if (phone !== null && normalizePhone(phone) === null) {
-      warnings.push(`телефон ${maxUserId} из файла: «${phone}» не похож на номер`);
-    }
   }
+}
+
+/** Статус телефона у человека: он обязан совпадать с тем, что записано в контактах. */
+function phoneStatusOf(plan: PhonePlan | undefined): string {
+  if (!plan || plan.normalized === null || plan.ownedByOther !== null) {
+    return "unknown";
+  }
+  return plan.verified ? "verified" : "imported";
 }
 
 /**
@@ -359,106 +465,47 @@ async function importUsers(
  *
  * Источник — `max_contact`, а не `import`: человек нажал кнопку в мессенджере, а не приехал
  * таблицей. На источнике телефона держится ответ, есть ли у нас основание звонить.
+ *
+ * Номер, который уже принадлежит другому человеку, записывается неподтверждённым. Схема
+ * держит правило «один номер — один человек», и обходить его нельзя; но и выбросить номер
+ * тоже нельзя — тогда менеджер не узнает, что телефон у нас есть. Неподтверждённый статус
+ * говорит правду: номер знаем, подтверждённое владение записано на другой карточке.
  */
 async function importContacts(
-  source: pg.Client,
   target: pg.Client,
-  jsonUsers: ReadonlyMap<string, JsonUser>,
-  counters: Counters,
-  warnings: string[]
+  phones: ReadonlyMap<string, PhonePlan>,
+  counters: Counters
 ): Promise<void> {
-  const rows = await source.query<{
-    id: string;
-    max_user_id: string;
-    phone: string | null;
-    phone_verified: boolean;
-    phone_verified_at: Date | null;
-    created_at: Date;
-  }>(`select id, max_user_id, phone, phone_verified, phone_verified_at, created_at
-        from users`);
-
-  // Сколько номеров вообще есть в исходной базе. Без этой строки «телефоны» просто
-  // отсутствовали бы в отчёте, и было бы не понять, чего именно не случилось: номеров нет
-  // или они не разобрались. Молчание — худший из возможных ответов, когда речь о том,
-  // сможем ли мы этим людям позвонить.
-  const inPostgres = rows.rows.filter((row) => (row.phone ?? "").trim() !== "").length;
-  const inFile = [...jsonUsers.values()].filter(
-    (user) => (user.phone ?? "").trim() !== ""
-  ).length;
+  const owned = [...phones.values()].filter((plan) => plan.ownedByOther === null).length;
   console.log(
-    `\nТелефоны: в Postgres ${inPostgres}, в файловом хранилище ${inFile}`
+    `\nТелефоны: разобрано ${phones.size}, из них ${phones.size - owned}`
+    + " уже принадлежат другим карточкам"
   );
 
-  for (const row of rows.rows) {
-    const fromFile = jsonUsers.get(row.max_user_id);
-    const raw = (row.phone ?? "").trim() !== ""
-      ? (row.phone as string)
-      : (fromFile?.phone ?? "");
-    if (raw.trim() === "") {
+  for (const [maxUserId, plan] of phones) {
+    if (plan.normalized === null) {
       continue;
     }
-    const phone = normalizePhone(raw);
-    if (phone === null) {
-      warnings.push(
-        `телефон человека ${row.id}: «${raw}» не похож на номер — перенесён не будет`
-      );
-      continue;
-    }
-    // «Подтверждён» обязан сказать когда: схема этого требует, и правильно — иначе
-    // подтверждение нечем датировать. В MAX время подтверждения проставлялось не всегда,
-    // и там, где его нет, берём время появления человека: раньше он подтвердить не мог.
-    const verified = row.phone_verified || (fromFile?.phoneVerified ?? false);
-    const verifiedAt = verified ? (row.phone_verified_at ?? row.created_at) : null;
-
+    const conflicting = plan.ownedByOther !== null;
     await count(counters, "телефоны", target.query(
       `insert into public.user_contacts (
          id, user_id, contact_type, value_normalized, source,
-         verification_status, is_primary, verified_at, created_at, updated_at
+         verification_status, is_primary, verified_at, metadata, created_at, updated_at
        ) values ($1::uuid, $2::uuid, 'phone', $3::text, 'max_contact',
-                 $4::text, true, $5::timestamptz, $6::timestamptz, $6)
+                 $4::text, true, $5::timestamptz, $6::jsonb, $7::timestamptz, $7)
        on conflict (id) do nothing`,
       [
-        derive("contact", row.id),
-        derive("user", row.id),
-        phone,
-        verified ? "verified" : "imported",
-        verifiedAt,
-        row.created_at
-      ]
-    ));
-  }
-
-  // Те, кого в Postgres нет вовсе: их телефон живёт только в файле, и без этого прохода
-  // человек приехал бы карточкой без номера — ровно то, ради чего всё и затевалось.
-  const known = new Set(rows.rows.map((row) => row.max_user_id));
-  for (const [maxUserId, fromFile] of jsonUsers) {
-    if (known.has(maxUserId)) {
-      continue;
-    }
-    const raw = (fromFile.phone ?? "").trim();
-    if (raw === "") {
-      continue;
-    }
-    const phone = normalizePhone(raw);
-    if (phone === null) {
-      continue;
-    }
-    const createdAt = parseDate(fromFile.createdAt) ?? new Date();
-    const verified = fromFile.phoneVerified ?? false;
-    await count(counters, "телефоны", target.query(
-      `insert into public.user_contacts (
-         id, user_id, contact_type, value_normalized, source,
-         verification_status, is_primary, verified_at, created_at, updated_at
-       ) values ($1::uuid, $2::uuid, 'phone', $3::text, 'max_contact',
-                 $4::text, true, $5::timestamptz, $6::timestamptz, $6)
-       on conflict (id) do nothing`,
-      [
-        derive("contact", `max-json:${maxUserId}`),
-        derive("user", `max-json:${maxUserId}`),
-        phone,
-        verified ? "verified" : "imported",
-        verified ? createdAt : null,
-        createdAt
+        derive("contact", `max:${maxUserId}`),
+        plan.userId,
+        plan.normalized,
+        conflicting ? "unverified" : plan.verified ? "verified" : "imported",
+        conflicting ? null : plan.verifiedAt,
+        JSON.stringify(
+          conflicting
+            ? { importedFrom: "max", conflictsWithUserId: plan.ownedByOther }
+            : { importedFrom: "max" }
+        ),
+        plan.createdAt
       ]
     ));
   }
