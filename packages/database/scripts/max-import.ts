@@ -17,7 +17,9 @@
  *   node --env-file=.env --import tsx scripts/max-import.ts --apply    # запись
  *
  * Нужны две строки подключения: `MAX_DATABASE_URL` — база MAX-бота (читается),
- * `DATABASE_DIRECT_URL` — общая база (пишется).
+ * `DATABASE_DIRECT_URL` — общая база (пишется). Управляемая база Timeweb требует TLS,
+ * поэтому подключение к ней идёт по тем же правилам, что у самого MAX-бота
+ * (`MAX_DATABASE_SSL`: `require` по умолчанию, `disable` — для локальной копии).
  *
  * Чего скрипт не делает намеренно:
  *
@@ -70,7 +72,10 @@ interface Counters {
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
-  const source = new pg.Client({ connectionString: required("MAX_DATABASE_URL") });
+  const source = new pg.Client({
+    connectionString: required("MAX_DATABASE_URL"),
+    ...sslOption(process.env.MAX_DATABASE_SSL)
+  });
   const target = new pg.Client({ connectionString: required("DATABASE_DIRECT_URL") });
   await source.connect();
   await target.connect();
@@ -283,6 +288,12 @@ async function importContacts(
     if (phone === null) {
       continue;
     }
+    // «Подтверждён» обязан сказать когда: схема этого требует, и правильно — иначе
+    // подтверждение нечем датировать. В MAX время подтверждения проставлялось не всегда,
+    // и там, где его нет, берём время появления человека: раньше он подтвердить не мог.
+    const verified = row.phone_verified;
+    const verifiedAt = verified ? (row.phone_verified_at ?? row.created_at) : null;
+
     await count(counters, "телефоны", target.query(
       `insert into public.user_contacts (
          id, user_id, contact_type, value_normalized, source,
@@ -294,8 +305,8 @@ async function importContacts(
         derive("contact", row.id),
         derive("user", row.id),
         phone,
-        row.phone_verified ? "verified" : "imported",
-        row.phone_verified_at,
+        verified ? "verified" : "imported",
+        verifiedAt,
         row.created_at
       ]
     ));
@@ -994,6 +1005,21 @@ function parseOptions(argv: readonly string[]): Options {
     apply: argv.includes("--apply"),
     eventSlug: slugIndex >= 0 ? (argv[slugIndex + 1] ?? "") : "business-picnic-2026"
   };
+}
+
+/**
+ * TLS для базы MAX.
+ *
+ * Управляемая база Timeweb принимает только защищённое подключение, и правило здесь то же,
+ * что у самого MAX-бота (см. `max-bot/src/db/pgDatabase.ts`): по умолчанию TLS без проверки
+ * издателя, `verify-full` — с проверкой, `disable` — для локальной копии, поднятой рядом.
+ * Своё правило завело бы нас в положение, когда бот к базе подключается, а перенос — нет.
+ */
+function sslOption(mode: string | undefined): { readonly ssl?: pg.ConnectionConfig["ssl"] } {
+  if (mode === "disable") {
+    return {};
+  }
+  return { ssl: { rejectUnauthorized: mode === "verify-full" } };
 }
 
 function required(name: string): string {
