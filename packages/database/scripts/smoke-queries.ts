@@ -24,6 +24,7 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
+import { createConversationPersistence } from "../src/conversation-persistence.js";
 import {
   createZvonobotIntakePersistence,
   createZvonobotProcessingPersistence
@@ -468,6 +469,97 @@ async function main(): Promise<void> {
     callId: randomUUID(),
     status: "ignored",
     processedAt: now
+  }));
+
+  // Переписка. Запись входящего трогает четыре таблицы сразу — диалог, реплику, вложение и
+  // карточку человека, — и ошибка в любой из них означает, что бот молчит: ответ уходит
+  // после записи. Повтор и правка проверяются здесь же: оба ловятся частичными уникальными
+  // индексами, а частичный индекс — ровно то, чего не видно ни в типах, ни в тестах.
+  const conversations = createConversationPersistence(pool).repository;
+  const smokeChat = `smoke-${randomUUID()}`;
+  const smokeSender = {
+    externalUserId: smokeChat,
+    username: `smoke_${Math.floor(Math.random() * 1_000_000)}`,
+    displayName: "Проверка"
+  };
+  const incoming = {
+    channel: "telegram",
+    transport: "bot",
+    externalChatId: smokeChat,
+    sender: smokeSender,
+    externalMessageId: "1",
+    editsExternalMessageId: null,
+    body: "а с ребёнком можно?",
+    attachments: [],
+    occurredAt: now,
+    payload: { update_id: 1 }
+  } as const;
+  await check("conversations recordIncoming", () => conversations.recordIncoming({
+    ...incoming,
+    conversationId: randomUUID(),
+    messageId: randomUUID(),
+    contactId: randomUUID(),
+    attachmentIds: []
+  }));
+  await check("conversations recordIncoming повтор", async () => {
+    const again = await conversations.recordIncoming({
+      ...incoming,
+      conversationId: randomUUID(),
+      messageId: randomUUID(),
+      contactId: randomUUID(),
+      attachmentIds: []
+    });
+    if (again.stored) {
+      throw new Error("повтор вебхука записался второй строкой");
+    }
+  });
+  await check("conversations recordIncoming правка", async () => {
+    const edited = await conversations.recordIncoming({
+      ...incoming,
+      editsExternalMessageId: "1",
+      body: "а с двумя детьми можно?",
+      occurredAt: new Date(now.getTime() + 60_000),
+      conversationId: randomUUID(),
+      messageId: randomUUID(),
+      contactId: randomUUID(),
+      attachmentIds: []
+    });
+    if (!edited.stored) {
+      throw new Error("правка не легла рядом с исходной репликой");
+    }
+  });
+  await check("conversations recordIncoming с вложением", () => conversations.recordIncoming({
+    ...incoming,
+    externalMessageId: "2",
+    body: null,
+    attachments: [{
+      kind: "voice",
+      fileName: null,
+      mimeType: "audio/ogg",
+      sizeBytes: 41_234,
+      externalFileId: `smoke-${randomUUID()}`
+    }],
+    occurredAt: new Date(now.getTime() + 120_000),
+    conversationId: randomUUID(),
+    messageId: randomUUID(),
+    contactId: randomUUID(),
+    attachmentIds: [randomUUID()]
+  }));
+  await check("conversations recordOutgoing", () => conversations.recordOutgoing({
+    channel: "telegram",
+    transport: "bot",
+    externalChatId: smokeChat,
+    recipient: smokeSender,
+    conversationId: randomUUID(),
+    messageId: randomUUID(),
+    contactId: randomUUID(),
+    authorKind: "bot",
+    authorAdminId: null,
+    body: "Детский билет — 1500 ₽",
+    externalMessageId: "3",
+    deliveryStatus: "sent",
+    failureReason: null,
+    occurredAt: new Date(now.getTime() + 130_000)
   }));
 
   await pool.close();

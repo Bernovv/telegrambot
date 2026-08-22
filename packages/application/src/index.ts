@@ -56,4 +56,5 @@ export * from "./site-registration.js";
 export * from "./event-campaign-sync.js";
 export * from "./call-window.js";
 export * from "./auto-tasks.js";
+export * from "./conversations.js";
 export * from "./zvonobot.js";
