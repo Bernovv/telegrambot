@@ -6,16 +6,19 @@
  * копия приложения перенаправит боевые обновления на себя.
  *
  *   node --env-file=.env --import tsx scripts/max-subscribe.ts
+ *   node --env-file=.env --import tsx scripts/max-subscribe.ts --base-url https://…
  *
- * Адрес собирается из PUBLIC_BASE_URL и MAX_WEBHOOK_PATH_SECRET — то есть путь целиком
- * является секретом и в переписку попадать не должен.
+ * Адрес собирается из `MAX_WEBHOOK_BASE_URL` и `MAX_WEBHOOK_PATH_SECRET` — то есть путь
+ * целиком является секретом и в переписку попадать не должен. Хост тот, на который nginx
+ * пускает `/webhooks/max/…`, и он не обязан совпадать с адресом телеграмного вебхука:
+ * у каналов свои домены, и угадывать один по другому нельзя.
  */
 import { MaxApi } from "@ticket-platform/messenger-max";
 
 async function main(): Promise<void> {
   const token = required("MAX_BOT_TOKEN");
   const pathSecret = required("MAX_WEBHOOK_PATH_SECRET");
-  const baseUrl = required("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const baseUrl = baseUrlFromArgvOrEnv().replace(/\/$/, "");
   const headerSecret = (process.env.MAX_WEBHOOK_SECRET ?? "").trim();
 
   const api = new MaxApi({
@@ -36,6 +39,27 @@ async function main(): Promise<void> {
       "MAX_WEBHOOK_SECRET не задан: обновления будут приходить без секрета в заголовке."
     );
   }
+}
+
+/**
+ * Адрес, на который MAX будет слать обновления.
+ *
+ * Аргументом или переменной — но обязательно явно. Вывести его из чего-нибудь ещё
+ * (например, из адреса телеграмного вебхука) было бы удобно ровно до того дня, когда домены
+ * разъедутся и подписка молча уедет не туда.
+ */
+function baseUrlFromArgvOrEnv(): string {
+  const index = process.argv.indexOf("--base-url");
+  const fromArgv = index >= 0 ? (process.argv[index + 1] ?? "").trim() : "";
+  const fromEnv = (process.env.MAX_WEBHOOK_BASE_URL ?? "").trim();
+  const value = fromArgv !== "" ? fromArgv : fromEnv;
+  if (!/^https:\/\/[^/]+/.test(value)) {
+    throw new Error(
+      "Не задан адрес вебхука: MAX_WEBHOOK_BASE_URL в .env или --base-url https://…"
+      + " (тот хост, на котором nginx пускает /webhooks/max/…)"
+    );
+  }
+  return value;
 }
 
 function required(name: string): string {
