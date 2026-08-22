@@ -1,3 +1,4 @@
+import type { AdminPersonConversations } from "@ticket-platform/contracts/admin-conversations";
 import type {
   AdminOrderDetail,
   AdminOrderStatus,
@@ -873,6 +874,39 @@ export function listOutreachPeople(
   const suffix = query.toString();
   return requestAdminApi(
     suffix ? `outreach/base?${suffix}` : "outreach/base",
+    signal
+  );
+}
+
+/**
+ * Переписка человека.
+ *
+ * Отдельным запросом, а не частью карточки: у разговорчивого человека реплик сотни, а
+ * карточку открывают ради стадии и телефона. Курсор — время реплики: пока менеджер читает,
+ * человек пишет ещё, и страница по номеру вернула бы уже прочитанное.
+ */
+export function getPersonConversations(
+  contactId: string,
+  options: {
+    readonly limit?: number;
+    readonly before?: string;
+    readonly search?: string;
+  } = {},
+  signal?: AbortSignal
+): Promise<AdminPersonConversations> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) {
+    query.set("limit", String(options.limit));
+  }
+  if (options.before !== undefined) {
+    query.set("before", options.before);
+  }
+  if (options.search !== undefined && options.search !== "") {
+    query.set("search", options.search);
+  }
+  const suffix = query.toString();
+  return requestAdminApi(
+    `conversations/people/${encodeURIComponent(contactId)}${suffix ? `?${suffix}` : ""}`,
     signal
   );
 }

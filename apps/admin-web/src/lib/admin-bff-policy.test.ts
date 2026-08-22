@@ -636,3 +636,31 @@ test("пропускает команду и правила автозадач, 
     true
   );
 });
+
+test("forwards the person conversation feed with its cursor and search", () => {
+  // Забытый здесь маршрут отвечает «не найдено» при живом эндпоинте: переписка просто не
+  // открывается, а в логах api при этом пусто — запрос до него не доходит.
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "conversations/people/00000000-0000-4000-8000-000000000101"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "conversations/people/00000000-0000-4000-8000-000000000101?limit=50&search=%D0%B1%D0%B8%D0%BB%D0%B5%D1%82"
+    ),
+    true
+  );
+  // Писать в переписку через этот же путь нельзя: ответ менеджера — отдельный маршрут,
+  // и открывать POST заранее значит открыть его без обработчика.
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "conversations/people/00000000-0000-4000-8000-000000000101"
+    ),
+    false
+  );
+});

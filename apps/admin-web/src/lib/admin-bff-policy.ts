@@ -37,6 +37,8 @@ export function isAllowedAdminApiPath(
       || /^outreach\/imports(?:\?.*)?$/i.test(path)
       || /^outreach\/import-rows(?:\?.*)?$/i.test(path)
       || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
+      // Переписка человека: курсор, поиск и размер страницы идут строкой запроса.
+      || /^conversations\/people\/[0-9a-f-]{36}(?:\?.*)?$/i.test(path)
       || /^outreach\/site-registrations(?:\?.*)?$/i.test(path)
       || path === "outreach/managers"
       || path === "staff"

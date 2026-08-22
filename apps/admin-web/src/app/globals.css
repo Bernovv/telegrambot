@@ -6391,3 +6391,185 @@ a.person-channel:hover {
   border-color: var(--line-strong);
   border-style: dashed;
 }
+
+/* Переписка в карточке.
+
+   Порядок как в мессенджере: старое сверху, свежее внизу, лента открывается на свежем.
+   Обратный порядок пробовать не стоит — разговор, прочитанный снизу вверх, перестаёт быть
+   разговором. Наши реплики прижаты вправо, чужие влево: это единственный способ читать
+   ленту, не вглядываясь в подписи. */
+.person-chat {
+  padding: 0;
+}
+
+.conversation-feed {
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 720px);
+  padding: 14px 16px;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.conversation-threads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.conversation-thread {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  gap: 6px;
+  color: var(--ink);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.conversation-thread-closed {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.conversation-thread-count,
+.conversation-thread-assignee {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.conversation-search {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 8px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.conversation-search input {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  outline: none;
+}
+
+.conversation-earlier {
+  align-self: center;
+  padding: 5px 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.conversation-messages {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  gap: 8px;
+  list-style: none;
+}
+
+.conversation-message {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.conversation-message-ours {
+  justify-content: flex-end;
+}
+
+.conversation-bubble {
+  max-width: min(78%, 560px);
+  padding: 8px 11px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.conversation-message-ours .conversation-bubble {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+
+.conversation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.conversation-author {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.conversation-edited {
+  font-style: italic;
+}
+
+.conversation-text {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-attachment {
+  margin: 5px 0 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.conversation-attachment-note {
+  color: var(--muted);
+}
+
+.conversation-failed {
+  display: flex;
+  align-items: center;
+  margin: 5px 0 0;
+  gap: 5px;
+  color: var(--danger, #b3261e);
+  font-size: 12px;
+}
+
+.conversation-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.conversation-error {
+  color: var(--danger, #b3261e);
+}
+
+/* На телефоне менеджер отвечает чаще, чем кажется: пузырь занимает почти всю ширину,
+   иначе половина экрана уходит на пустое поле. */
+@media (max-width: 720px) {
+  .conversation-feed {
+    max-height: none;
+    padding: 12px;
+  }
+
+  .conversation-bubble {
+    max-width: 92%;
+  }
+}

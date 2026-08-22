@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ConversationFeed } from "@/components/conversation-feed";
 import { PersonComposer } from "@/components/person-composer";
 import { PersonFieldsCard } from "@/components/person-fields";
 import { PersonQuestionnaireDialog } from "@/components/person-questionnaire-dialog";
@@ -450,7 +451,7 @@ export function PersonBody({
   /** Перечитать карточку: анкета правится не через её собственные ручки. */
   readonly onReload: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"work" | "events" | "money">("work");
+  const [tab, setTab] = useState<"work" | "chat" | "events" | "money">("work");
   const events = buildPersonEvents(person);
   const hasMoney = person.orders.length > 0
     || person.consents.length > 0
@@ -467,6 +468,18 @@ export function PersonBody({
           onClick={() => setTab("work")}
         >
           Работа
+        </button>
+        {/* Вкладка стоит всегда, даже когда переписки нет. Условная она была бы честнее
+            по месту, но менеджеру важнее знать, что здесь вообще можно посмотреть
+            разговор: пустая вкладка объясняет это одной строкой, отсутствующая — ничем. */}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "chat"}
+          className={tab === "chat" ? "person-tab person-tab-active" : "person-tab"}
+          onClick={() => setTab("chat")}
+        >
+          Переписка
         </button>
         {events.length > 0 ? (
           <button
@@ -544,6 +557,11 @@ export function PersonBody({
         </div>
       ) : null}
 
+      {tab === "chat" ? (
+        <section className="data-section person-chat">
+          <ConversationFeed contactId={person.contactId} />
+        </section>
+      ) : null}
       {tab === "events" ? (
         <PersonEventsCard person={person} onReload={onReload} />
       ) : null}
