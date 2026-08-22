@@ -81,6 +81,14 @@ cd ~/telegrambot && pm2 restart api worker && pnpm max:subscribe
 
 Адрес вебхука целиком является секретом — в переписку и в задачи он попадать не должен.
 
+**6. Снять старую подписку.** MAX держит несколько подписок сразу, и та, что осталась от
+старого бота, продолжает биться в мёртвый порт — в `access.log` это видно как поток `502`
+на `/webhooks/max` без секрета:
+
+```bash
+cd ~/telegrambot && curl -s -X DELETE -H "Authorization: $(grep -m1 '^MAX_BOT_TOKEN=' .env | cut -d= -f2-)" "https://platform-api2.max.ru/subscriptions?url=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("https://max-bot.biz-day.ru/webhooks/max"))')"
+```
+
 ## Что проверить в первый же день
 
 **Диалог целиком:** запуск бота, «Программа и тарифы», «Купить билет», выбор тарифа, ввод

@@ -172,13 +172,31 @@ describe("приём обновлений MAX", () => {
     assert.equal(scenario?.arg.text, "3");
   });
 
-  it("команды текстом не проводит: запуск бота приходит своим типом", async () => {
+  it("«/start» в уже открытом диалоге начинает разговор", async () => {
+    // Тип bot_started MAX присылает только при первом запуске бота. Тот, кто открывал его
+    // раньше, набирает /start руками — и это приезжает обычным сообщением.
     const { api, controller, calls } = harness();
     const processor = createMaxUpdateProcessor(api, controller, silentLogger());
 
     await processor.handleUpdate({
       update_type: "message_created",
       message: { sender: { user_id: USER_ID }, body: { mid: "mid-4", text: "/start" } }
+    });
+
+    const start = calls.find((entry) => entry.name === "onStart");
+    assert.equal(start?.arg.channel, "max");
+    assert.equal(field(start, "user")?.["externalUserId"], String(USER_ID));
+    // Диплинка у набранной команды нет — это старт без метки источника.
+    assert.equal(start?.arg.startPayload, null);
+  });
+
+  it("незнакомые команды не трогает: ответ на них создавал бы впечатление действия", async () => {
+    const { api, controller, calls } = harness();
+    const processor = createMaxUpdateProcessor(api, controller, silentLogger());
+
+    await processor.handleUpdate({
+      update_type: "message_created",
+      message: { sender: { user_id: USER_ID }, body: { mid: "mid-9", text: "/help" } }
     });
 
     assert.deepEqual(calls, []);
