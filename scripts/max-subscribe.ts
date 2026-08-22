@@ -72,5 +72,10 @@ function required(name: string): string {
 
 void main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
+  // Настоящая причина сетевого отказа лежит глубже: `fetch` бросает безымянное
+  // «fetch failed», а внутри — например, недоверенный сертификат.
+  if (error instanceof Error && error.cause instanceof Error) {
+    console.error(`  причина: ${error.cause.message}`);
+  }
   process.exitCode = 1;
 });

@@ -180,7 +180,7 @@ export class MaxApi {
 
     const form = new FormData();
     form.append("data", new Blob([bytes], { type: "image/png" }), fileName);
-    const response = await fetch(uploadUrl, {
+    const response = await request(uploadUrl, {
       method: "POST",
       body: form,
       signal: AbortSignal.timeout(this.timeoutMs)
@@ -216,7 +216,7 @@ export class MaxApi {
     // Свой таймаут: без него зависший запрос держит место в очереди доставки до упора, а
     // очередь у нас общая с Telegram.
     const abort = AbortSignal.timeout(this.timeoutMs);
-    const response = await fetch(url.href, {
+    const response = await request(url.href, {
       method: "POST",
       headers: {
         Authorization: this.options.token,
@@ -236,6 +236,31 @@ export class MaxApi {
       );
     }
     return payload as T;
+  }
+}
+
+/**
+ * Запрос с разборчивой ошибкой.
+ *
+ * `fetch` при любой сетевой беде бросает `TypeError: fetch failed`, а настоящая причина
+ * лежит в `cause` — и именно она нужна: у `platform-api2.max.ru` сертификат Минцифры,
+ * которому Node по умолчанию не доверяет, и без `NODE_EXTRA_CA_CERTS` всё выглядит как
+ * безымянный сетевой сбой. Разбираться с таким по логам — потерянный вечер.
+ */
+async function request(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    const cause = error instanceof Error && error.cause instanceof Error
+      ? error.cause.message
+      : error instanceof Error ? error.message : String(error);
+    throw new MaxApiError(
+      0,
+      "network",
+      `MAX недоступен: ${cause}.`
+      + " Если речь о сертификате — процессу нужен NODE_EXTRA_CA_CERTS"
+      + " с сертификатом Минцифры, выставленный до старта Node."
+    );
   }
 }
 

@@ -39,7 +39,22 @@ openssl rand -hex 24   # MAX_WEBHOOK_SECRET
 В `.env`: `MAX_BOT_TOKEN`, `MAX_BOT_USERNAME`, `MAX_WEBHOOK_PATH_SECRET`,
 `MAX_WEBHOOK_SECRET`.
 
-**2. nginx** — открыть наружу ровно этот путь на хосте вебхуков:
+**2. Сертификат Минцифры.** `platform-api2.max.ru` отдаёт сертификат, которому Node по
+умолчанию не доверяет, — тот же случай, что у Т-Банка. Переменная читается Node **до старта
+процесса**, поэтому в `.env` её класть бесполезно: она нужна в окружении `pm2`.
+
+```bash
+sudo ls -l /home/maxbot/max-bot/certs/russian_trusted_ca.pem
+```
+
+```bash
+cd ~/telegrambot && NODE_EXTRA_CA_CERTS=/home/maxbot/max-bot/certs/russian_trusted_ca.pem pm2 restart api worker --update-env
+```
+
+Без неё всё выглядит как безымянный сетевой сбой; чтобы этого не повторялось, ошибка
+транспорта MAX теперь называет причину и прямо упоминает `NODE_EXTRA_CA_CERTS`.
+
+**3. nginx** — открыть наружу ровно этот путь на хосте вебхуков:
 
 ```nginx
 location ~ ^/webhooks/max/[A-Za-z0-9_-]+$ {
@@ -51,13 +66,13 @@ location ~ ^/webhooks/max/[A-Za-z0-9_-]+$ {
 }
 ```
 
-**3. Остановить старый бот** — иначе он продолжит отвечать тем же людям:
+**4. Остановить старый бот** — иначе он продолжит отвечать тем же людям:
 
 ```bash
 systemctl stop max-bot && systemctl disable max-bot
 ```
 
-**4. Перезапустить процессы и подписаться на вебхук.** Подписка перенаправляет обновления
+**5. Перезапустить процессы и подписаться на вебхук.** Подписка перенаправляет обновления
 MAX на нас, поэтому идёт последней:
 
 ```bash
