@@ -145,21 +145,12 @@ else
 fi
 
 # --- Что реально приходит --------------------------------------------------
-head_ "Последние обращения MAX (из журнала nginx)"
+head_ "Обращения MAX за последний час (журнал nginx)"
 if [ -r "$ACCESS_LOG" ]; then
-  # Свой же пробный запрос чужим ключом иначе читался бы как посторонний 404.
-  recent=$(grep "webhooks/max" "$ACCESS_LOG" 2>/dev/null \
-    | grep -v "deadbeefdeadbeefdeadbeef" | tail -50 \
-    | sed 's|/webhooks/max/[A-Za-z0-9_-]*|/webhooks/max/<секрет>|' \
-    | awk '{print $7, $9}' | sort | uniq -c | sort -rn)
-  if [ -n "$recent" ]; then
-    printf '%s\n' "$recent" | sed 's/^/    /'
-    if printf '%s' "$recent" | grep -q "webhooks/max 502"; then
-      bad "есть 502 на адрес без секрета — старая подписка ещё жива"
-    fi
-  else
-    warn "обращений не было — напишите боту /start и повторите проверку"
-  fi
+  # Возраст записей важнее их количества: журнал помнит всё, и старые обращения поднимали
+  # бы тревогу до следующей ротации, даже когда причина давно устранена.
+  tail -2000 "$ACCESS_LOG" | python3 "$(dirname "$0")/max-channel-check-log.py"
+  counted "$?"
 else
   warn "журнал nginx недоступен"
 fi
