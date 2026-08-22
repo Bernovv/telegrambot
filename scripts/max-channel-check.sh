@@ -20,6 +20,8 @@ problems=0
 
 ok()   { printf '  \033[32mесть\033[0m   %s\n' "$1"; }
 bad()  { printf '  \033[31mнет\033[0m    %s\n' "$1"; problems=$((problems + 1)); }
+# Проблема, о которой уже сказал кто-то другой: считаем, но не повторяем.
+counted() { problems=$((problems + ${1:-1})); }
 warn() { printf '  \033[33m?\033[0m      %s\n' "$1"; }
 head_() { printf '\n%s\n' "$1"; }
 
@@ -51,30 +53,10 @@ if [ -r "$cert" ]; then ok "файл на месте: $cert"; else bad "файл
 # не подхватится. Без неё вызовы MAX падают безымянным «fetch failed».
 head_ "Процессы"
 if command -v pm2 >/dev/null 2>&1; then
-  pm2 jlist 2>/dev/null | python3 -c '
-import json, sys
-try:
-    procs = json.load(sys.stdin)
-except Exception:
-    print("  ?      pm2 не отдал список процессов"); sys.exit(0)
-wanted = {"api", "worker"}
-seen = {}
-for p in procs:
-    name = p.get("name")
-    if name in wanted:
-        env = p.get("pm2_env", {}) or {}
-        seen[name] = (env.get("status"), bool(env.get("NODE_EXTRA_CA_CERTS")))
-for name in sorted(wanted):
-    if name not in seen:
-        print(f"  нет    процесса {name} нет в pm2")
-        continue
-    status, has_cert = seen[name]
-    print(f"  {'есть' if status == 'online' else 'нет '}   {name}: {status}")
-    if has_cert:
-        print(f"  есть   {name}: NODE_EXTRA_CA_CERTS в окружении")
-    else:
-        print(f"  нет    {name}: NODE_EXTRA_CA_CERTS НЕ в окружении — вызовы MAX будут падать")
-'
+  # Скрипт передаётся через stdin, а не аргументом: одинарные кавычки внутри питона
+  # оборвали бы bash-строку, и вместо проверки получилась бы синтаксическая ошибка.
+  pm2 jlist 2>/dev/null | python3 "$(dirname "$0")/max-channel-check-pm2.py"
+  counted "$?"
 else
   warn "pm2 не найден — проверьте процессы вручную"
 fi
@@ -165,7 +147,9 @@ fi
 # --- Что реально приходит --------------------------------------------------
 head_ "Последние обращения MAX (из журнала nginx)"
 if [ -r "$ACCESS_LOG" ]; then
-  recent=$(grep "webhooks/max" "$ACCESS_LOG" 2>/dev/null | tail -50 \
+  # Свой же пробный запрос чужим ключом иначе читался бы как посторонний 404.
+  recent=$(grep "webhooks/max" "$ACCESS_LOG" 2>/dev/null \
+    | grep -v "deadbeefdeadbeefdeadbeef" | tail -50 \
     | sed 's|/webhooks/max/[A-Za-z0-9_-]*|/webhooks/max/<секрет>|' \
     | awk '{print $7, $9}' | sort | uniq -c | sort -rn)
   if [ -n "$recent" ]; then
