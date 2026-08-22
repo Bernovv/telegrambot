@@ -30,6 +30,7 @@ describe("PostgreSQL T-Bank payment persistence", () => {
     );
 
     const prepared = await persistence.initializationRepository.prepare({
+      channel: "telegram" as const,
       publicOrderTokenHash: "a".repeat(64),
       senderExternalUserId: "777",
       requestedAt
@@ -69,6 +70,7 @@ describe("PostgreSQL T-Bank payment persistence", () => {
     );
 
     const prepared = await persistence.initializationRepository.prepare({
+      channel: "telegram" as const,
       publicOrderTokenHash: "a".repeat(64),
       senderExternalUserId: "777",
       requestedAt

@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import type {
   AdvanceTelegramScenarioCommand,
   AdvanceTelegramScenarioResult,
@@ -97,6 +98,7 @@ export interface SaveScenarioExecutionInput {
 export interface ScenarioRuntimeRepository {
   findProcessedSession(commandIdempotencyKey: string): Promise<string | null>;
   lockOrCreateForTelegramStart(input: {
+    readonly channel: MessengerChannel;
     readonly userId: string;
     readonly messengerIdentityId: string;
     readonly eventSlug: string | null;
@@ -105,15 +107,18 @@ export interface ScenarioRuntimeRepository {
     readonly expiresAt: Date;
   }): Promise<OpenTelegramScenarioResult>;
   lockForTelegramTransition(input: {
+    readonly channel: MessengerChannel;
     readonly sessionId: string;
     readonly senderExternalUserId: string;
     readonly occurredAt: Date;
   }): Promise<LockTelegramScenarioResult>;
   lockForTelegramInput(input: {
+    readonly channel: MessengerChannel;
     readonly senderExternalUserId: string;
     readonly occurredAt: Date;
   }): Promise<LockTelegramScenarioInputResult>;
   lockForTelegramOrderAction(input: {
+    readonly channel: MessengerChannel;
     readonly orderId: string;
     readonly senderExternalUserId: string;
     readonly nodeType: "offer_acceptance";
@@ -154,6 +159,7 @@ export class StartTelegramScenarioService {
       }
 
       const opened = await this.repository.lockOrCreateForTelegramStart({
+        channel: command.channel,
         userId: command.userId,
         messengerIdentityId: command.messengerIdentityId,
         eventSlug: command.eventSlug,
@@ -221,6 +227,7 @@ export class AdvanceTelegramScenarioService {
 
       const locked = await this.repository.lockForTelegramTransition({
         sessionId: command.sessionId,
+        channel: command.channel,
         senderExternalUserId: command.senderExternalUserId,
         occurredAt: command.occurredAt
       });
@@ -291,6 +298,7 @@ export class SubmitTelegramScenarioInputService {
         return duplicateInputResult(processedSessionId);
       }
       const locked = await this.repository.lockForTelegramInput({
+        channel: command.channel,
         senderExternalUserId: command.senderExternalUserId,
         occurredAt: command.occurredAt
       });
@@ -377,6 +385,7 @@ export class ResumeTelegramScenarioAfterOfferService {
       }
       const locked = await this.repository.lockForTelegramOrderAction({
         orderId: command.orderId,
+        channel: command.channel,
         senderExternalUserId: command.senderExternalUserId,
         nodeType: "offer_acceptance",
         occurredAt: command.occurredAt

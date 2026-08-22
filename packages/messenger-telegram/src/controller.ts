@@ -24,6 +24,7 @@ import type {
 } from "@ticket-platform/contracts";
 import { encodeScenarioCallback } from "./scenario-callback.js";
 import type {
+  ChannelIdentity,
   PurchaseFlowResult,
   PurchaseTicketType,
   ReferralBalanceResult
@@ -123,22 +124,26 @@ export interface TelegramScenarioUseCases {
 
 export interface TelegramPurchaseFlowUseCase {
   selectTicketType(
-    externalUserId: string,
+    sender: ChannelIdentity,
     ticketType: PurchaseTicketType,
     now: Date
   ): Promise<PurchaseFlowResult>;
-  handleQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult>;
-  promptChildQuantity(externalUserId: string): Promise<PurchaseFlowResult>;
-  skipChildTicket(externalUserId: string, now: Date): Promise<PurchaseFlowResult>;
-  handleChildQuantityText(externalUserId: string, text: string, now: Date): Promise<PurchaseFlowResult>;
+  handleQuantityText(sender: ChannelIdentity, text: string, now: Date): Promise<PurchaseFlowResult>;
+  promptChildQuantity(sender: ChannelIdentity): Promise<PurchaseFlowResult>;
+  skipChildTicket(sender: ChannelIdentity, now: Date): Promise<PurchaseFlowResult>;
+  handleChildQuantityText(
+    sender: ChannelIdentity,
+    text: string,
+    now: Date
+  ): Promise<PurchaseFlowResult>;
 }
 
 export interface TelegramPhoneAccessUseCase {
-  execute(query: { readonly externalUserId: string }): Promise<{ readonly unlocked: boolean }>;
+  execute(query: ChannelIdentity): Promise<{ readonly unlocked: boolean }>;
 }
 
 export interface TelegramReferralBalanceUseCase {
-  execute(query: { readonly externalUserId: string }): Promise<ReferralBalanceResult>;
+  execute(query: ChannelIdentity): Promise<ReferralBalanceResult>;
 }
 
 export interface TelegramOfferAcceptanceView {
@@ -175,11 +180,11 @@ export class TelegramUpdateController {
    * Если проверка не подключена (например, в тестах транспорта), раздел считается открытым:
    * молча закрывать боту продажи из-за незаполненной зависимости — хуже, чем пустить.
    */
-  private async isUnlocked(externalUserId: string): Promise<boolean> {
+  private async isUnlocked(sender: ChannelIdentity): Promise<boolean> {
     if (!this.phoneAccess) {
       return true;
     }
-    const result = await this.phoneAccess.execute({ externalUserId });
+    const result = await this.phoneAccess.execute(sender);
     return result.unlocked;
   }
 
@@ -187,6 +192,7 @@ export class TelegramUpdateController {
     const result = await this.handleStart.execute(command);
     if (this.scenario) {
       const scenario = await this.scenario.start.execute({
+        channel: command.channel,
         userId: result.userId,
         messengerIdentityId: result.messengerIdentityId,
         eventSlug: result.selectedEventSlug,
@@ -288,53 +294,53 @@ export class TelegramUpdateController {
     return [faqReply()];
   }
 
-  async onContactUs(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+  async onContactUs(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [contactUsReply()];
   }
 
-  async onBuyTicket(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+  async onBuyTicket(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [chooseTicketReply()];
   }
 
-  async onChooseFamilyTicket(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+  async onChooseFamilyTicket(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [chooseFamilyTicketReply()];
   }
 
-  async onPartnerProgram(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+  async onPartnerProgram(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     return [partnerProgramReply()];
   }
 
   async onGetPartnerLink(
-    externalUserId: string,
+    sender: ChannelIdentity,
     botUsername: string | null
   ): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
-    return [partnerLinkReply(externalUserId, botUsername)];
+    return [partnerLinkReply(sender.externalUserId, botUsername)];
   }
 
-  async onMyBonuses(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
-    if (!await this.isUnlocked(externalUserId)) {
+  async onMyBonuses(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
+    if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
     if (!this.referralBalance) {
       return [myBonusesUnavailableReply()];
     }
 
-    const result = await this.referralBalance.execute({ externalUserId });
+    const result = await this.referralBalance.execute(sender);
     if (!result.identityFound) {
       return [myBonusesUnavailableReply()];
     }
@@ -349,14 +355,14 @@ export class TelegramUpdateController {
   }
 
   async onSelectTicketType(
-    externalUserId: string,
+    sender: ChannelIdentity,
     ticketType: PurchaseTicketType,
     now: Date
   ): Promise<readonly TelegramReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
-    return mapPurchaseFlowResult(await this.purchaseFlow.selectTicketType(externalUserId, ticketType, now));
+    return mapPurchaseFlowResult(await this.purchaseFlow.selectTicketType(sender, ticketType, now));
   }
 
   /**
@@ -365,37 +371,37 @@ export class TelegramUpdateController {
    * number — only an explicit purchase-flow button click (onSelectTicketType, onSkipChildTicket,
    * onAddChildTicketPrompt) shows an explicit "draft was lost" message.
    */
-  async onQuantityText(externalUserId: string, text: string, now: Date): Promise<readonly TelegramReplyModel[]> {
+  async onQuantityText(sender: ChannelIdentity, text: string, now: Date): Promise<readonly TelegramReplyModel[]> {
     if (!this.purchaseFlow) {
       return [];
     }
-    const result = await this.purchaseFlow.handleQuantityText(externalUserId, text, now);
+    const result = await this.purchaseFlow.handleQuantityText(sender, text, now);
     return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
   }
 
-  async onAddChildTicketPrompt(externalUserId: string): Promise<readonly TelegramReplyModel[]> {
+  async onAddChildTicketPrompt(sender: ChannelIdentity): Promise<readonly TelegramReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
-    return mapPurchaseFlowResult(await this.purchaseFlow.promptChildQuantity(externalUserId));
+    return mapPurchaseFlowResult(await this.purchaseFlow.promptChildQuantity(sender));
   }
 
-  async onSkipChildTicket(externalUserId: string, now: Date): Promise<readonly TelegramReplyModel[]> {
+  async onSkipChildTicket(sender: ChannelIdentity, now: Date): Promise<readonly TelegramReplyModel[]> {
     if (!this.purchaseFlow) {
       return [catalogUnavailableReply()];
     }
-    return mapPurchaseFlowResult(await this.purchaseFlow.skipChildTicket(externalUserId, now));
+    return mapPurchaseFlowResult(await this.purchaseFlow.skipChildTicket(sender, now));
   }
 
   async onChildQuantityText(
-    externalUserId: string,
+    sender: ChannelIdentity,
     text: string,
     now: Date
   ): Promise<readonly TelegramReplyModel[]> {
     if (!this.purchaseFlow) {
       return [];
     }
-    const result = await this.purchaseFlow.handleChildQuantityText(externalUserId, text, now);
+    const result = await this.purchaseFlow.handleChildQuantityText(sender, text, now);
     return result.kind === "no_active_draft" ? [] : mapPurchaseFlowResult(result);
   }
 
@@ -531,6 +537,7 @@ export class TelegramUpdateController {
       return [];
     }
     const resumed = await this.scenario.offerAccepted.execute({
+      channel: command.channel,
       orderId,
       senderExternalUserId: command.senderExternalUserId,
       updateId: command.updateId,

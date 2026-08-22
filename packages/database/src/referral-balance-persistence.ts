@@ -1,4 +1,5 @@
 import type {
+  ChannelIdentity,
   ReferralBalanceRepository,
   ReferralBalanceSnapshot
 } from "@ticket-platform/application";
@@ -29,7 +30,7 @@ interface TierRow {
 export class PostgresReferralBalanceRepository implements ReferralBalanceRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
 
-  async getBalance(externalUserId: string): Promise<ReferralBalanceSnapshot | null> {
+  async getBalance(identity: ChannelIdentity): Promise<ReferralBalanceSnapshot | null> {
     const connection = await this.pool.connect();
 
     try {
@@ -37,10 +38,10 @@ export class PostgresReferralBalanceRepository implements ReferralBalanceReposit
         `select identity.user_id
          from public.messenger_identities identity
          join public.users users on users.id = identity.user_id
-         where identity.channel = 'telegram'
+         where identity.channel = $2::text
            and identity.external_user_id = $1
            and users.is_deleted = false`,
-        [externalUserId]
+        [identity.externalUserId, identity.channel]
       );
       const userId = identityResult.rows[0]?.user_id;
       if (!userId) {

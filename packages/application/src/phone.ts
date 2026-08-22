@@ -4,6 +4,7 @@ import type {
 } from "@ticket-platform/contracts";
 import type { DomainEvent, MoneyKopecks } from "@ticket-platform/domain";
 import type {
+  ChannelIdentity,
   IdGenerator,
   IdempotencyRepository,
   OutboxWriter,
@@ -22,7 +23,7 @@ export interface PhoneVerificationRepository {
 }
 
 export interface TelegramUserResolver {
-  resolveUserId(externalUserId: string): Promise<string>;
+  resolveUserId(identity: ChannelIdentity): Promise<string>;
 }
 
 export interface CreditPhoneBonusInput {
@@ -72,7 +73,10 @@ export class HandleTelegramContactService {
         scope: "telegram_update",
         occurredAt: command.receivedAt
       });
-      const userId = await this.telegramUserResolver.resolveUserId(command.senderExternalUserId);
+      const userId = await this.telegramUserResolver.resolveUserId({
+        channel: command.channel,
+        externalUserId: command.senderExternalUserId
+      });
       const verification = await this.phoneRepository.verifyPhone({
         userId,
         phoneE164,

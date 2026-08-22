@@ -1,3 +1,4 @@
+import type { ChannelIdentity } from "./identity.js";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DomainEvent } from "@ticket-platform/domain";
@@ -19,18 +20,20 @@ describe("Telegram ticket access", () => {
     const repository = new MemoryTicketRepository();
     const service = new ListTelegramTicketsService(repository);
 
-    const result = await service.execute({ senderExternalUserId: "123456789" });
+    const result = await service.execute({ channel: "telegram" as const, senderExternalUserId: "123456789" });
 
     assert.equal(result.identityFound, true);
     assert.deepEqual(result.tickets, repository.tickets);
-    assert.deepEqual(repository.listRequests, ["123456789"]);
+    assert.deepEqual(repository.listRequests, [
+      { channel: "telegram", externalUserId: "123456789" }
+    ]);
   });
 
   it("does not query persistence for an invalid Telegram user ID", async () => {
     const repository = new MemoryTicketRepository();
     const service = new ListTelegramTicketsService(repository);
 
-    const result = await service.execute({ senderExternalUserId: "not-a-user" });
+    const result = await service.execute({ channel: "telegram" as const, senderExternalUserId: "not-a-user" });
 
     assert.deepEqual(result, { identityFound: false, tickets: [] });
     assert.deepEqual(repository.listRequests, []);
@@ -48,6 +51,7 @@ describe("Telegram ticket access", () => {
       { newId() { return eventId; } }
     );
     const command = {
+      channel: "telegram" as const,
       ticketId,
       senderExternalUserId: "123456789",
       updateId: "987654321",
@@ -101,6 +105,7 @@ describe("Telegram ticket access", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       ticketId,
       senderExternalUserId: "123456789",
       updateId: "987654322",
@@ -113,7 +118,7 @@ describe("Telegram ticket access", () => {
 });
 
 class MemoryTicketRepository implements TelegramTicketAccessRepository {
-  readonly listRequests: string[] = [];
+  readonly listRequests: ChannelIdentity[] = [];
   readonly tickets = [{
     ticketId,
     ticketNumber: "BP-ORDER-T001",
@@ -131,8 +136,8 @@ class MemoryTicketRepository implements TelegramTicketAccessRepository {
     status: "issued"
   }) {}
 
-  async listForTelegramUser(senderExternalUserId: string) {
-    this.listRequests.push(senderExternalUserId);
+  async listForTelegramUser(sender: ChannelIdentity) {
+    this.listRequests.push(sender);
     return this.tickets;
   }
 

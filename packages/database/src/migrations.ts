@@ -274,5 +274,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260822160000_zvonobot_calls",
     description: "Store Zvonobot call webhooks verbatim and turn answered calls into funnel leads",
     destructive: false
+  },
+  {
+    id: "20260822180000_max_channel_constraints",
+    description: "Allow the MAX channel in scenario sessions, offer acceptances, contacts, and deliveries",
+    destructive: false
   }
 ];

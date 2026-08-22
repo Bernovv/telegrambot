@@ -20,7 +20,7 @@ describe("HandleTelegramContactService", () => {
     const fixture = createFixture();
 
     const result = await fixture.service.execute({
-      updateId: "2001",
+      channel: "telegram" as const, updateId: "2001",
       senderExternalUserId: "777",
       contact: { externalUserId: "888", phoneNumber: "+79990000000" },
       receivedAt: new Date("2026-07-22T08:00:00.000Z")
@@ -35,7 +35,7 @@ describe("HandleTelegramContactService", () => {
     const fixture = createFixture();
 
     const result = await fixture.service.execute({
-      updateId: "2001",
+      channel: "telegram" as const, updateId: "2001",
       senderExternalUserId: "777",
       contact: { externalUserId: "777", phoneNumber: "8 999 000-00-00" },
       receivedAt: new Date("2026-07-22T08:00:00.000Z")
@@ -67,7 +67,7 @@ describe("HandleTelegramContactService", () => {
     });
 
     const result = await fixture.service.execute({
-      updateId: "2001",
+      channel: "telegram" as const, updateId: "2001",
       senderExternalUserId: "777",
       contact: { externalUserId: "777", phoneNumber: "+79990000000" },
       receivedAt: new Date("2026-07-22T08:00:00.000Z")

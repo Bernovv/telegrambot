@@ -1,3 +1,4 @@
+import type { ChannelIdentity } from "@ticket-platform/application";
 import { Bot, InlineKeyboard, Keyboard } from "grammy";
 import type { Logger } from "@ticket-platform/observability";
 import { InvalidPhoneNumberError } from "@ticket-platform/messenger-core";
@@ -41,6 +42,7 @@ export function createTelegramBot(
     }
 
     const replies = await controller.onStart({
+      channel: "telegram",
       updateId: String(ctx.update.update_id),
       receivedAt: new Date(message.date * 1_000),
       startPayload: ctx.match || null,
@@ -64,6 +66,7 @@ export function createTelegramBot(
 
     try {
       const replies = await controller.onContact({
+        channel: "telegram",
         updateId: String(ctx.update.update_id),
         senderExternalUserId: String(ctx.from.id),
         contact: {
@@ -99,10 +102,11 @@ export function createTelegramBot(
       return;
     }
 
-    const externalUserId = String(ctx.from.id);
+    const sender = telegramSender(ctx.from.id);
 
     const scenarioReplies = await controller.onScenarioInput({
-      senderExternalUserId: externalUserId,
+      channel: "telegram",
+      senderExternalUserId: sender.externalUserId,
       updateId: String(ctx.update.update_id),
       text: ctx.message.text,
       occurredAt: new Date(ctx.message.date * 1_000)
@@ -112,14 +116,14 @@ export function createTelegramBot(
       return;
     }
 
-    const quantityReplies = await controller.onQuantityText(externalUserId, ctx.message.text, new Date());
+    const quantityReplies = await controller.onQuantityText(sender, ctx.message.text, new Date());
     if (quantityReplies.length > 0) {
       await sendReplies(ctx.reply.bind(ctx), quantityReplies);
       return;
     }
 
     const childQuantityReplies = await controller.onChildQuantityText(
-      externalUserId,
+      sender,
       ctx.message.text,
       new Date()
     );
@@ -136,6 +140,7 @@ export function createTelegramBot(
     }
 
     const view = await controller.onOfferAcceptance({
+      channel: "telegram",
       publicOrderToken,
       senderExternalUserId: String(ctx.from.id),
       updateId: String(ctx.update.update_id),
@@ -178,6 +183,7 @@ export function createTelegramBot(
     }
 
     const view = await controller.onPaymentInitialization({
+      channel: "telegram",
       publicOrderToken,
       senderExternalUserId: String(ctx.from.id),
       updateId: String(ctx.update.update_id),
@@ -206,6 +212,7 @@ export function createTelegramBot(
         return;
       }
       const view = await controller.onScenarioTransition({
+        channel: "telegram",
         sessionId: reference.sessionId,
         edgeId: reference.edgeId,
         senderExternalUserId: String(ctx.from.id),
@@ -233,7 +240,7 @@ export function createTelegramBot(
     if (!ctx.from) {
       return;
     }
-    await sendReplies(ctx.reply.bind(ctx), await controller.onContactUs(String(ctx.from.id)));
+    await sendReplies(ctx.reply.bind(ctx), await controller.onContactUs(telegramSender(ctx.from.id)));
   });
 
   bot.callbackQuery("buy_ticket", async (ctx) => {
@@ -241,7 +248,7 @@ export function createTelegramBot(
     if (!ctx.from) {
       return;
     }
-    await sendReplies(ctx.reply.bind(ctx), await controller.onBuyTicket(String(ctx.from.id)));
+    await sendReplies(ctx.reply.bind(ctx), await controller.onBuyTicket(telegramSender(ctx.from.id)));
   });
 
   bot.callbackQuery("ticket_family", async (ctx) => {
@@ -251,33 +258,33 @@ export function createTelegramBot(
     }
     await sendReplies(
       ctx.reply.bind(ctx),
-      await controller.onChooseFamilyTicket(String(ctx.from.id))
+      await controller.onChooseFamilyTicket(telegramSender(ctx.from.id))
     );
   });
 
   bot.callbackQuery(["ticket_vip", "ticket_standard"], async (ctx) => {
     await ctx.answerCallbackQuery();
     const ticketType = ctx.callbackQuery.data === "ticket_vip" ? "adult_vip" : "adult_standard";
-    const replies = await controller.onSelectTicketType(String(ctx.from.id), ticketType, new Date());
+    const replies = await controller.onSelectTicketType(telegramSender(ctx.from.id), ticketType, new Date());
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
   bot.callbackQuery(["ticket_family_vip", "ticket_family_standard"], async (ctx) => {
     await ctx.answerCallbackQuery();
     const ticketType = ctx.callbackQuery.data === "ticket_family_vip" ? "family_vip" : "family_standard";
-    const replies = await controller.onSelectTicketType(String(ctx.from.id), ticketType, new Date());
+    const replies = await controller.onSelectTicketType(telegramSender(ctx.from.id), ticketType, new Date());
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
   bot.callbackQuery("add_child_ticket", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const replies = await controller.onAddChildTicketPrompt(String(ctx.from.id));
+    const replies = await controller.onAddChildTicketPrompt(telegramSender(ctx.from.id));
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
   bot.callbackQuery("skip_child_ticket", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const replies = await controller.onSkipChildTicket(String(ctx.from.id), new Date());
+    const replies = await controller.onSkipChildTicket(telegramSender(ctx.from.id), new Date());
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
@@ -288,14 +295,14 @@ export function createTelegramBot(
     }
     await sendReplies(
       ctx.reply.bind(ctx),
-      await controller.onPartnerProgram(String(ctx.from.id))
+      await controller.onPartnerProgram(telegramSender(ctx.from.id))
     );
   });
 
   bot.callbackQuery("get_partner_link", async (ctx) => {
     await ctx.answerCallbackQuery();
     const replies = await controller.onGetPartnerLink(
-      String(ctx.from.id),
+      telegramSender(ctx.from.id),
       bot.botInfo?.username ?? null
     );
     await sendReplies(ctx.reply.bind(ctx), replies);
@@ -303,7 +310,7 @@ export function createTelegramBot(
 
   bot.callbackQuery("my_bonuses", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const replies = await controller.onMyBonuses(String(ctx.from.id));
+    const replies = await controller.onMyBonuses(telegramSender(ctx.from.id));
     await sendReplies(ctx.reply.bind(ctx), replies);
   });
 
@@ -326,6 +333,7 @@ export function createTelegramBot(
       }
 
       const view = await controller.onTicketRedelivery({
+        channel: "telegram",
         ticketId,
         senderExternalUserId: String(ctx.from.id),
         updateId: String(ctx.update.update_id),
@@ -399,4 +407,14 @@ function contactKeyboard(): Keyboard {
     .requestContact("Поделиться номером")
     .resized()
     .oneTime();
+}
+
+/**
+ * Отправитель для служб приложения.
+ *
+ * Пара, а не один идентификатор: номер `777` в Telegram и `777` в MAX — разные люди, и
+ * поиск по одному лишь внешнему номеру однажды соединил бы их в одного.
+ */
+function telegramSender(id: number): ChannelIdentity {
+  return { channel: "telegram", externalUserId: String(id) };
 }

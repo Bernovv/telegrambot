@@ -1,13 +1,12 @@
 import { DEFAULT_REFERRAL_TIERS, resolveTier, type ReferralTierConfig } from "@ticket-platform/domain";
+import type { ChannelIdentity } from "./identity.js";
 
 /**
  * Read-only "Мои бонусы" query: wallet balance plus the referrer's current commission tier,
  * matching the MAX bot's bonus summary screen (max-bot/src/domain/flow.ts bonusSummary-equivalent
  * reply). No writes here — commission crediting itself happens in payment-confirmation.ts.
  */
-export interface ReferralBalanceQuery {
-  readonly externalUserId: string;
-}
+export type ReferralBalanceQuery = ChannelIdentity;
 
 export interface ReferralBalanceSnapshot {
   readonly userId: string;
@@ -17,7 +16,7 @@ export interface ReferralBalanceSnapshot {
 }
 
 export interface ReferralBalanceRepository {
-  getBalance(externalUserId: string): Promise<ReferralBalanceSnapshot | null>;
+  getBalance(identity: ChannelIdentity): Promise<ReferralBalanceSnapshot | null>;
   getActiveTiers(): Promise<readonly ReferralTierConfig[]>;
 }
 
@@ -41,7 +40,7 @@ export class GetTelegramReferralBalanceService {
       return { identityFound: false };
     }
 
-    const balance = await this.repository.getBalance(query.externalUserId);
+    const balance = await this.repository.getBalance(query);
     if (!balance) {
       return { identityFound: false };
     }

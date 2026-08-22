@@ -57,6 +57,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       userId,
       messengerIdentityId,
       eventSlug: "business-breakthrough",
@@ -116,6 +117,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       sessionId,
       edgeId,
       senderExternalUserId: "777",
@@ -127,7 +129,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     assert.equal(result.accepted, true);
     const lock = findQuery(connection, "for update of sessions");
     assert.match(lock.text, /identity\.external_user_id = \$2/);
-    assert.deepEqual(lock.values, [sessionId, "777"]);
+    assert.deepEqual(lock.values, [sessionId, "777", "telegram"]);
     assert.deepEqual(
       findQuery(connection, "lock_version = $2").values.slice(0, 4),
       [sessionId, 3, endNodeId, "completed"]
@@ -200,6 +202,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       senderExternalUserId: "777",
       updateId: "5003",
       text: "3",
@@ -211,7 +214,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     const lock = findQuery(connection, "node.node_type in");
     assert.match(lock.text, /identity\.external_user_id = \$1/);
     assert.match(lock.text, /limit 2/);
-    assert.deepEqual(lock.values, ["777", occurredAt]);
+    assert.deepEqual(lock.values, ["777", occurredAt, "telegram"]);
     const update = findQuery(connection, "context = context || $9::jsonb");
     assert.deepEqual(update.values.slice(0, 4), [
       sessionId,
@@ -322,6 +325,7 @@ describe("PostgreSQL scenario runtime persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       orderId,
       senderExternalUserId: "777",
       updateId: "5004",
@@ -334,7 +338,8 @@ describe("PostgreSQL scenario runtime persistence", () => {
       orderId,
       "777",
       "offer_acceptance",
-      occurredAt
+      occurredAt,
+      "telegram"
     ]);
     assert.match(lock.text, /identity\.external_user_id = \$2/);
     assert.match(lock.text, /limit 2/);

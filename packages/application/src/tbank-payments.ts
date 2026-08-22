@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import { createHash } from "node:crypto";
 import type {
   InitializeTelegramPaymentCommand,
@@ -27,6 +28,7 @@ export type PrepareTBankPaymentResult =
 
 export interface TBankPaymentInitializationRepository {
   prepare(input: {
+    readonly channel: MessengerChannel;
     readonly publicOrderTokenHash: string;
     readonly senderExternalUserId: string;
     readonly requestedAt: Date;
@@ -94,6 +96,7 @@ export class InitializeTelegramTBankPaymentService {
       return { initialized: false, reason: "order_not_found" };
     }
     const prepared = await this.repository.prepare({
+      channel: command.channel,
       publicOrderTokenHash: createHash("sha256")
         .update(command.publicOrderToken)
         .digest("hex"),

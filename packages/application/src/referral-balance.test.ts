@@ -19,7 +19,7 @@ describe("GetTelegramReferralBalanceService", () => {
       }
     });
 
-    const result = await service.execute({ externalUserId: "not-a-number" });
+    const result = await service.execute({ channel: "telegram" as const, externalUserId: "not-a-number" });
 
     assert.deepEqual(result, { identityFound: false });
     assert.equal(queried, false);
@@ -35,7 +35,7 @@ describe("GetTelegramReferralBalanceService", () => {
       }
     });
 
-    const result = await service.execute({ externalUserId: "123456789" });
+    const result = await service.execute({ channel: "telegram" as const, externalUserId: "123456789" });
     assert.deepEqual(result, { identityFound: false });
   });
 
@@ -56,7 +56,7 @@ describe("GetTelegramReferralBalanceService", () => {
     };
     const service = new GetTelegramReferralBalanceService(repository);
 
-    const result = await service.execute({ externalUserId: "123456789" });
+    const result = await service.execute({ channel: "telegram" as const, externalUserId: "123456789" });
 
     assert.deepEqual(result, {
       identityFound: true,
@@ -85,7 +85,7 @@ describe("GetTelegramReferralBalanceService", () => {
     };
     const service = new GetTelegramReferralBalanceService(repository);
 
-    const result = await service.execute({ externalUserId: "123456789" });
+    const result = await service.execute({ channel: "telegram" as const, externalUserId: "123456789" });
 
     assert.deepEqual(result, {
       identityFound: true,

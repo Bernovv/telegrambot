@@ -22,6 +22,7 @@ describe("HandleTelegramStartService", () => {
     });
 
     const result = await fixture.service.execute({
+      channel: "telegram" as const,
       updateId: "1001",
       receivedAt: new Date("2026-07-21T12:00:00.000Z"),
       startPayload: "event_business_picnic__partner_partner42",
@@ -54,6 +55,7 @@ describe("HandleTelegramStartService", () => {
     });
 
     const result = await fixture.service.execute({
+      channel: "telegram" as const,
       updateId: "1001",
       receivedAt: new Date("2026-07-21T12:00:00.000Z"),
       startPayload: "partner_partner42",

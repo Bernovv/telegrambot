@@ -38,6 +38,7 @@ describe("PostgreSQL offer acceptance persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       publicOrderToken: "a".repeat(43),
       senderExternalUserId: "777",
       updateId: "1003",

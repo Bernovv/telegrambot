@@ -1,4 +1,5 @@
 import type {
+  ChannelIdentity,
   RedeliverableTicket,
   TelegramTicketAccessRepository
 } from "@ticket-platform/application";
@@ -42,7 +43,7 @@ implements TelegramTicketAccessRepository {
   ) {}
 
   async listForTelegramUser(
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<readonly TelegramTicketSummary[] | null> {
     const connection = await this.pool.connect();
 
@@ -51,10 +52,10 @@ implements TelegramTicketAccessRepository {
         `select identity.user_id
          from public.messenger_identities identity
          join public.users users on users.id = identity.user_id
-         where identity.channel = 'telegram'
+         where identity.channel = $2::text
            and identity.external_user_id = $1
            and users.is_deleted = false`,
-        [senderExternalUserId]
+        [sender.externalUserId, sender.channel]
       );
       const identity = identityResult.rows[0];
       if (!identity) {
@@ -85,7 +86,7 @@ implements TelegramTicketAccessRepository {
 
   async lockOwnedTicketForRedelivery(
     ticketId: string,
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<RedeliverableTicket | null> {
     const result = await this.session.query<RedeliverableTicketRow>(
       `select
@@ -97,13 +98,13 @@ implements TelegramTicketAccessRepository {
        from public.tickets tickets
        join public.messenger_identities identity
          on identity.user_id = tickets.owner_user_id
-        and identity.channel = 'telegram'
+        and identity.channel = $3::text
        join public.users users on users.id = tickets.owner_user_id
        where tickets.id = $1
          and identity.external_user_id = $2
          and users.is_deleted = false
        for update of tickets`,
-      [ticketId, senderExternalUserId]
+      [ticketId, sender.externalUserId, sender.channel]
     );
     const row = result.rows[0];
 

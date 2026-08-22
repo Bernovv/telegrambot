@@ -1,3 +1,4 @@
+import type { ChannelIdentity } from "@ticket-platform/application";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -64,7 +65,7 @@ describe("TelegramUpdateController", () => {
 
     const accepted = await instance.onOfferAcceptance(offerCommand());
     const payment = await instance.onPaymentInitialization({
-      publicOrderToken: "a".repeat(43),
+      channel: "telegram", publicOrderToken: "a".repeat(43),
       senderExternalUserId: "777",
       updateId: "1004",
       requestedAt: new Date("2026-07-24T12:06:00.000Z")
@@ -88,7 +89,7 @@ describe("TelegramUpdateController", () => {
   it("renders owner tickets with redelivery only for an issued ticket", async () => {
     const instance = controller({ phoneRequired: false });
 
-    const replies = await instance.onTickets({ senderExternalUserId: "777" });
+    const replies = await instance.onTickets({ channel: "telegram", senderExternalUserId: "777" });
 
     assert.equal(replies.length, 2);
     assert.match(replies[0]?.text ?? "", /Статус: действует/);
@@ -102,7 +103,7 @@ describe("TelegramUpdateController", () => {
     assert.match(replies[1]?.text ?? "", /Статус: возвращён/);
     assert.equal(replies[1]?.inlineButtons, undefined);
     assert.deepEqual(await instance.onTicketRedelivery({
-      ticketId: "019c0123-4567-789a-bcde-f0123456789a",
+      channel: "telegram", ticketId: "019c0123-4567-789a-bcde-f0123456789a",
       senderExternalUserId: "777",
       updateId: "1004",
       requestedAt: new Date("2026-07-24T14:00:00.000Z")
@@ -121,6 +122,7 @@ describe("TelegramUpdateController", () => {
       ? button.callbackData
       : "";
     const transition = await instance.onScenarioTransition({
+      channel: "telegram",
       sessionId,
       edgeId,
       senderExternalUserId: "777",
@@ -144,7 +146,7 @@ describe("TelegramUpdateController", () => {
     const disabled = controller({ phoneRequired: false });
 
     const replies = await enabled.onScenarioInput({
-      senderExternalUserId: "777",
+      channel: "telegram", senderExternalUserId: "777",
       updateId: "1006",
       text: "3",
       occurredAt: new Date("2026-07-26T12:02:00.000Z")
@@ -152,7 +154,7 @@ describe("TelegramUpdateController", () => {
 
     assert.deepEqual(replies, [{ text: "Количество сохранено" }]);
     assert.deepEqual(await disabled.onScenarioInput({
-      senderExternalUserId: "777",
+      channel: "telegram", senderExternalUserId: "777",
       updateId: "1007",
       text: "hello",
       occurredAt: new Date("2026-07-26T12:03:00.000Z")
@@ -345,6 +347,7 @@ function controller(options: {
 
 function startCommand() {
   return {
+    channel: "telegram" as const,
     updateId: "1001",
     receivedAt: new Date("2026-07-22T08:00:00.000Z"),
     startPayload: null,
@@ -354,6 +357,7 @@ function startCommand() {
 
 function contactCommand() {
   return {
+    channel: "telegram" as const,
     updateId: "1002",
     senderExternalUserId: "777",
     contact: { externalUserId: "777", phoneNumber: "+78005553535" },
@@ -363,6 +367,7 @@ function contactCommand() {
 
 function offerCommand() {
   return {
+    channel: "telegram" as const,
     publicOrderToken: "a".repeat(43),
     senderExternalUserId: "777",
     updateId: "1003",
@@ -390,12 +395,12 @@ describe("доступ к разделам без телефона", () => {
     const bot = locked();
 
     for (const replies of [
-      await bot.onBuyTicket("42"),
-      await bot.onChooseFamilyTicket("42"),
-      await bot.onPartnerProgram("42"),
-      await bot.onGetPartnerLink("42", "businessProriv_bot"),
-      await bot.onContactUs("42"),
-      await bot.onMyBonuses("42")
+      await bot.onBuyTicket(sender("42")),
+      await bot.onChooseFamilyTicket(sender("42")),
+      await bot.onPartnerProgram(sender("42")),
+      await bot.onGetPartnerLink(sender("42"), "businessProriv_bot"),
+      await bot.onContactUs(sender("42")),
+      await bot.onMyBonuses(sender("42"))
     ]) {
       assert.equal(replies.length, 1);
       assert.equal(replies[0]?.keyboard, "request_contact");
@@ -406,8 +411,8 @@ describe("доступ к разделам без телефона", () => {
   it("пропускает всё, когда номер известен", async () => {
     const bot = unlocked();
 
-    const buy = await bot.onBuyTicket("42");
-    const partner = await bot.onPartnerProgram("42");
+    const buy = await bot.onBuyTicket(sender("42"));
+    const partner = await bot.onPartnerProgram(sender("42"));
 
     assert.notEqual(buy[0]?.keyboard, "request_contact");
     assert.notEqual(partner[0]?.keyboard, "request_contact");
@@ -417,7 +422,7 @@ describe("доступ к разделам без телефона", () => {
     // Незаполненная зависимость не должна молча останавливать продажи.
     const bot = controller({ phoneRequired: false });
 
-    const buy = await bot.onBuyTicket("42");
+    const buy = await bot.onBuyTicket(sender("42"));
 
     assert.notEqual(buy[0]?.keyboard, "request_contact");
   });
@@ -445,3 +450,8 @@ describe("доступ к разделам без телефона", () => {
 
 const sessionId = "019c0123-4567-789a-bcde-f0123456789a";
 const edgeId = "019c0123-4567-789a-bcde-f0123456789b";
+
+/** Отправитель в тестах: канал плюс идентификатор, как их строит транспорт. */
+function sender(externalUserId: string): ChannelIdentity {
+  return { channel: "telegram", externalUserId };
+}

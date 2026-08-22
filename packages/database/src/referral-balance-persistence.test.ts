@@ -8,7 +8,7 @@ describe("PostgreSQL referral balance persistence", () => {
     const connection = new FakeConnection(() => empty());
     const persistence = createReferralBalancePersistence(new FakePool(connection));
 
-    const result = await persistence.referralBalanceRepository.getBalance("999");
+    const result = await persistence.referralBalanceRepository.getBalance({ channel: "telegram", externalUserId: "999" });
 
     assert.equal(result, null);
     assert.equal(connection.released, true);
@@ -29,7 +29,7 @@ describe("PostgreSQL referral balance persistence", () => {
     });
     const persistence = createReferralBalancePersistence(new FakePool(connection));
 
-    const result = await persistence.referralBalanceRepository.getBalance("123456789");
+    const result = await persistence.referralBalanceRepository.getBalance({ channel: "telegram", externalUserId: "123456789" });
 
     assert.deepEqual(result, {
       userId: "user-1",
@@ -54,7 +54,7 @@ describe("PostgreSQL referral balance persistence", () => {
     });
     const persistence = createReferralBalancePersistence(new FakePool(connection));
 
-    const result = await persistence.referralBalanceRepository.getBalance("123456789");
+    const result = await persistence.referralBalanceRepository.getBalance({ channel: "telegram", externalUserId: "123456789" });
 
     assert.deepEqual(result, {
       userId: "user-1",

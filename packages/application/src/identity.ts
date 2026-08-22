@@ -1,6 +1,26 @@
-import type { HandleTelegramStartCommand, HandleTelegramStartResult } from "@ticket-platform/contracts";
-import type { DomainEvent, ParsedStartPayload } from "@ticket-platform/domain";
+import type {
+  HandleTelegramStartCommand,
+  HandleTelegramStartResult
+} from "@ticket-platform/contracts";
+import type {
+  DomainEvent,
+  MessengerChannel,
+  ParsedStartPayload
+} from "@ticket-platform/domain";
 import { normalizeTelegramUsername, parseStartPayload } from "@ticket-platform/domain";
+
+/**
+ * Кто говорит: канал плюс идентификатор человека в нём.
+ *
+ * Пара, а не один идентификатор. Номер `777` в Telegram и `777` в MAX — это два разных
+ * человека, и любой поиск по одному лишь внешнему идентификатору однажды соединит их в
+ * одного. Пока канал был один, разницы не было; с появлением MAX она становится ценой
+ * ошибки в чужом кошельке.
+ */
+export interface ChannelIdentity {
+  readonly channel: MessengerChannel;
+  readonly externalUserId: string;
+}
 
 export interface UserRecord {
   readonly id: string;
@@ -13,6 +33,7 @@ export interface MessengerIdentityRecord {
 }
 
 export interface UpsertTelegramIdentityInput {
+  readonly channel: MessengerChannel;
   readonly externalUserId: string;
   readonly username: string | null;
   readonly usernameNormalized: string | null;
@@ -30,7 +51,7 @@ export interface UpsertTelegramIdentityResult {
 
 export interface RecordTouchpointInput {
   readonly userId: string;
-  readonly channel: "telegram";
+  readonly channel: MessengerChannel;
   readonly payload: ParsedStartPayload;
   readonly occurredAt: Date;
 }
@@ -47,8 +68,21 @@ export interface IdempotencyRepository {
 
 export interface BeginIdempotentOperationInput {
   readonly key: string;
-  readonly scope: "telegram_update";
+  readonly scope: IdempotencyScope;
   readonly occurredAt: Date;
+}
+
+/**
+ * Область ключа идемпотентности — своя у каждого канала.
+ *
+ * Не для порядка: номера апдейтов Telegram и MAX живут в разных пространствах, и при общей
+ * области апдейт MAX однажды совпал бы с уже обработанным телеграмным. Совпадение это не
+ * ошибка на экране, а молча потерянный диалог — «уже обработано».
+ */
+export type IdempotencyScope = "telegram_update" | "max_update";
+
+export function updateScope(channel: MessengerChannel): IdempotencyScope {
+  return channel === "max" ? "max_update" : "telegram_update";
 }
 
 export class HandleTelegramStartService {
@@ -61,15 +95,17 @@ export class HandleTelegramStartService {
   ) {}
 
   async execute(command: HandleTelegramStartCommand): Promise<HandleTelegramStartResult> {
-    const idempotencyKey = `telegram_update:${command.updateId}`;
+    const scope = updateScope(command.channel);
+    const idempotencyKey = `${scope}:${command.updateId}`;
 
     return this.unitOfWork.transact(async () => {
       const shouldProcess = await this.idempotencyRepository.tryBegin({
         key: idempotencyKey,
-        scope: "telegram_update",
+        scope,
         occurredAt: command.receivedAt
       });
       const identity = await this.identityRepository.upsertTelegramIdentity({
+        channel: command.channel,
         externalUserId: command.user.externalUserId,
         username: command.user.username ?? null,
         usernameNormalized: normalizeTelegramUsername(command.user.username),
@@ -84,7 +120,7 @@ export class HandleTelegramStartService {
       if (shouldProcess && parsedPayload.rawPayload) {
         await this.identityRepository.recordTouchpoint({
           userId: identity.user.id,
-          channel: "telegram",
+          channel: command.channel,
           payload: parsedPayload,
           occurredAt: command.receivedAt
         });

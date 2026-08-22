@@ -20,7 +20,7 @@ describe("scenario runtime services", () => {
     const fixture = createFixture();
 
     const result = await fixture.start.execute({
-      userId: "user-1",
+      channel: "telegram" as const, userId: "user-1",
       messengerIdentityId: "identity-1",
       eventSlug: "business-breakthrough",
       updateId: "100",
@@ -42,7 +42,7 @@ describe("scenario runtime services", () => {
     const fixture = createFixture();
 
     const result = await fixture.advance.execute({
-      sessionId: "session-1",
+      channel: "telegram" as const, sessionId: "session-1",
       edgeId,
       senderExternalUserId: "777",
       updateId: "101",
@@ -66,7 +66,7 @@ describe("scenario runtime services", () => {
     const foreign = createFixture({ transitionStatus: "session_not_found" });
 
     const staleResult = await stale.advance.execute({
-      sessionId: "session-1",
+      channel: "telegram" as const, sessionId: "session-1",
       edgeId: "00000000-0000-4000-8000-000000000099",
       senderExternalUserId: "777",
       updateId: "102",
@@ -74,7 +74,7 @@ describe("scenario runtime services", () => {
       occurredAt: now
     });
     const foreignResult = await foreign.advance.execute({
-      sessionId: "session-1",
+      channel: "telegram" as const, sessionId: "session-1",
       edgeId,
       senderExternalUserId: "888",
       updateId: "103",
@@ -98,7 +98,7 @@ describe("scenario runtime services", () => {
     const fixture = createFixture({ processedSessionId: "session-previous" });
 
     const result = await fixture.start.execute({
-      userId: "user-1",
+      channel: "telegram" as const, userId: "user-1",
       messengerIdentityId: "identity-1",
       eventSlug: null,
       updateId: "104",
@@ -117,13 +117,13 @@ describe("scenario runtime services", () => {
     const fixture = createFixture({ inputGraph: true });
 
     const invalid = await fixture.submitInput.execute({
-      senderExternalUserId: "777",
+      channel: "telegram" as const, senderExternalUserId: "777",
       updateId: "105",
       text: "9",
       occurredAt: now
     });
     const valid = await fixture.submitInput.execute({
-      senderExternalUserId: "777",
+      channel: "telegram" as const, senderExternalUserId: "777",
       updateId: "106",
       text: "3",
       occurredAt: now
@@ -150,7 +150,7 @@ describe("scenario runtime services", () => {
     const fixture = createFixture({ inputStatus: "input_ambiguous" });
 
     const result = await fixture.submitInput.execute({
-      senderExternalUserId: "777",
+      channel: "telegram" as const, senderExternalUserId: "777",
       updateId: "107",
       text: "3",
       occurredAt: now
@@ -172,7 +172,7 @@ describe("scenario runtime services", () => {
     });
 
     const result = await fixture.submitInput.execute({
-      senderExternalUserId: "777",
+      channel: "telegram" as const, senderExternalUserId: "777",
       updateId: "108",
       text: "3",
       occurredAt: now
@@ -219,6 +219,7 @@ describe("scenario runtime services", () => {
     });
 
     const result = await fixture.resumeOffer.execute({
+      channel: "telegram" as const,
       orderId,
       senderExternalUserId: "777",
       updateId: "109",

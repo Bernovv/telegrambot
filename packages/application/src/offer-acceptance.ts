@@ -1,3 +1,4 @@
+import type { ChannelIdentity } from "./identity.js";
 import { createHash } from "node:crypto";
 import type {
   AcceptTelegramOfferCommand,
@@ -5,6 +6,7 @@ import type {
 } from "@ticket-platform/contracts";
 import type {
   DomainEvent,
+  MessengerChannel,
   MoneyKopecks,
   OrderStatus
 } from "@ticket-platform/domain";
@@ -32,6 +34,7 @@ export interface OfferAcceptanceOrder {
 }
 
 export interface RecordTelegramOfferAcceptanceInput {
+  readonly channel: MessengerChannel;
   readonly acceptanceId: string;
   readonly historyId: string;
   readonly order: OfferAcceptanceOrder;
@@ -44,7 +47,7 @@ export interface RecordTelegramOfferAcceptanceInput {
 export interface OfferAcceptanceRepository {
   lockForTelegramAcceptance(
     publicTokenHash: string,
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<OfferAcceptanceOrder | null>;
   recordTelegramAcceptance(input: RecordTelegramOfferAcceptanceInput): Promise<void>;
 }
@@ -65,7 +68,7 @@ export class AcceptTelegramOfferService {
     return this.unitOfWork.transact(async () => {
       const order = await this.repository.lockForTelegramAcceptance(
         hashPublicToken(command.publicOrderToken),
-        command.senderExternalUserId
+        { channel: command.channel, externalUserId: command.senderExternalUserId }
       );
       if (!order) {
         return { accepted: false, reason: "order_not_found" };
@@ -84,6 +87,7 @@ export class AcceptTelegramOfferService {
       }
 
       await this.repository.recordTelegramAcceptance({
+        channel: command.channel,
         acceptanceId: this.idGenerator.newId(),
         historyId: this.idGenerator.newId(),
         order,

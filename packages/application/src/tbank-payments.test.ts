@@ -283,6 +283,7 @@ const attempt: PreparedTBankPaymentAttempt = {
 };
 
 const command = {
+  channel: "telegram" as const,
   publicOrderToken: "a".repeat(43),
   senderExternalUserId: "777",
   updateId: "1004",

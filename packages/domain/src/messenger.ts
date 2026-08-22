@@ -1,3 +1,4 @@
+/** Канал мессенджера. Тот же перечень объявлен в `@ticket-platform/contracts` — см. там же почему. */
 export type MessengerChannel = "telegram" | "max";
 
 export interface ParsedStartPayload {

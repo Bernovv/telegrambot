@@ -35,7 +35,9 @@ export class PostgresIdentityRepository implements IdentityRepository {
   ) {}
 
   async upsertTelegramIdentity(input: UpsertTelegramIdentityInput): Promise<UpsertTelegramIdentityResult> {
-    await this.lock(`telegram-identity:${input.externalUserId}`);
+    // Замок берётся с каналом в имени: один и тот же номер апдейта в Telegram и в MAX — это
+    // два разных человека, и общий замок сериализовал бы их без всякой на то причины.
+    await this.lock(`${input.channel}-identity:${input.externalUserId}`);
 
     const existing = await this.session.query<IdentityRow>(
       `select
@@ -46,8 +48,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
          mi.username_normalized
        from public.messenger_identities mi
        join public.users u on u.id = mi.user_id
-       where mi.channel = 'telegram' and mi.external_user_id = $1`,
-      [input.externalUserId]
+       where mi.channel = $2::text and mi.external_user_id = $1`,
+      [input.externalUserId, input.channel]
     );
 
     const current = existing.rows[0];
@@ -102,14 +104,15 @@ export class PostgresIdentityRepository implements IdentityRepository {
     await this.session.query(
       `insert into public.messenger_identities (
          id, user_id, channel, external_user_id, username, username_normalized, first_seen_at, last_seen_at
-       ) values ($1, $2, 'telegram', $3, $4, $5, $6, $6)`,
+       ) values ($1, $2, $7::text, $3, $4, $5, $6, $6)`,
       [
         messengerIdentityId,
         userId,
         input.externalUserId,
         input.username,
         input.usernameNormalized,
-        input.seenAt
+        input.seenAt,
+        input.channel
       ]
     );
     await this.session.query(

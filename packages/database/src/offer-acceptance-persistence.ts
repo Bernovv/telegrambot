@@ -1,4 +1,5 @@
 import type {
+  ChannelIdentity,
   OfferAcceptanceOrder,
   OfferAcceptanceRepository,
   RecordTelegramOfferAcceptanceInput
@@ -34,7 +35,7 @@ export class PostgresOfferAcceptanceRepository implements OfferAcceptanceReposit
 
   async lockForTelegramAcceptance(
     publicTokenHash: string,
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<OfferAcceptanceOrder | null> {
     const result = await this.session.query<OfferAcceptanceRow>(
       `select
@@ -55,12 +56,12 @@ export class PostgresOfferAcceptanceRepository implements OfferAcceptanceReposit
        from public.orders o
        join public.messenger_identities mi
          on mi.user_id = o.user_id
-        and mi.channel = 'telegram'
+        and mi.channel = $3::text
         and mi.external_user_id = $2
        left join public.offer_versions ov on ov.id = o.offer_version_id
        where o.public_token_hash = $1
        for update of o`,
-      [publicTokenHash, senderExternalUserId]
+      [publicTokenHash, sender.externalUserId, sender.channel]
     );
     const row = result.rows[0];
 
@@ -96,7 +97,7 @@ export class PostgresOfferAcceptanceRepository implements OfferAcceptanceReposit
          callback_query_id, acceptance_text_snapshot,
          evidence_schema_version, evidence
        ) values (
-         $1, $2, $3, $4, $5, 'telegram',
+         $1, $2, $3, $4, $5, $12::text,
          $6, $7, $8,
          $9, $10,
          1, $11::jsonb
@@ -117,7 +118,8 @@ export class PostgresOfferAcceptanceRepository implements OfferAcceptanceReposit
           updateId: input.updateId,
           callbackQueryId: input.callbackQueryId,
           messageId: input.messageId
-        })
+        }),
+        input.channel
       ]
     );
     await this.session.query(
@@ -139,7 +141,7 @@ export class PostgresOfferAcceptanceRepository implements OfferAcceptanceReposit
         JSON.stringify({
           schemaVersion: 1,
           offerVersionId,
-          channel: "telegram"
+          channel: input.channel
         })
       ]
     );

@@ -1,3 +1,4 @@
+import type { ChannelIdentity } from "./identity.js";
 import type {
   ListTelegramTicketsCommand,
   ListTelegramTicketsResult,
@@ -23,11 +24,11 @@ export interface RedeliverableTicket {
 
 export interface TelegramTicketAccessRepository {
   listForTelegramUser(
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<readonly TelegramTicketSummary[] | null>;
   lockOwnedTicketForRedelivery(
     ticketId: string,
-    senderExternalUserId: string
+    sender: ChannelIdentity
   ): Promise<RedeliverableTicket | null>;
 }
 
@@ -39,7 +40,10 @@ export class ListTelegramTicketsService {
       return { identityFound: false, tickets: [] };
     }
 
-    const tickets = await this.repository.listForTelegramUser(command.senderExternalUserId);
+    const tickets = await this.repository.listForTelegramUser({
+      channel: command.channel,
+      externalUserId: command.senderExternalUserId
+    });
     return tickets === null
       ? { identityFound: false, tickets: [] }
       : { identityFound: true, tickets };
@@ -70,7 +74,7 @@ export class RequestTelegramTicketRedeliveryService {
     return this.unitOfWork.transact(async () => {
       const ticket = await this.repository.lockOwnedTicketForRedelivery(
         command.ticketId,
-        command.senderExternalUserId
+        { channel: command.channel, externalUserId: command.senderExternalUserId }
       );
       if (!ticket || ticket.status !== "issued") {
         return { accepted: false, reason: "ticket_unavailable" };

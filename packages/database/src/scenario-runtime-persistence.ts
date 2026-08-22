@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import type {
   IdGenerator,
   LockTelegramScenarioResult,
@@ -79,6 +80,7 @@ implements ScenarioRuntimeRepository {
   }
 
   async lockOrCreateForTelegramStart(input: {
+    readonly channel: MessengerChannel;
     readonly userId: string;
     readonly messengerIdentityId: string;
     readonly eventSlug: string | null;
@@ -108,17 +110,17 @@ implements ScenarioRuntimeRepository {
 
     await this.session.query(
       "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-      [`scenario-session:${input.userId}:${event.id}:telegram`]
+      [`scenario-session:${input.userId}:${event.id}:${input.channel}`]
     );
     await this.session.query(
       `update public.scenario_sessions
        set status = 'expired', updated_at = $3, lock_version = lock_version + 1
        where user_id = $1
          and event_id = $2
-         and channel = 'telegram'
+         and channel = $4::text
          and status in ('active', 'waiting_input')
          and expires_at <= $3`,
-      [input.userId, event.id, input.occurredAt]
+      [input.userId, event.id, input.occurredAt, input.channel]
     );
 
     const current = await this.session.query<SessionRow>(
@@ -127,10 +129,10 @@ implements ScenarioRuntimeRepository {
        from public.scenario_sessions
        where user_id = $1
          and event_id = $2
-         and channel = 'telegram'
+         and channel = $3::text
          and status in ('active', 'waiting_input')
        for update`,
-      [input.userId, event.id]
+      [input.userId, event.id, input.channel]
     );
     const existing = current.rows[0];
     if (existing) {
@@ -160,7 +162,7 @@ implements ScenarioRuntimeRepository {
          expires_at, lock_version, started_at, updated_at
        ) values (
          $1, $2, $3, $4, $5,
-         $6, 'telegram', 'active', 1, '{}'::jsonb,
+         $6, $9::text, 'active', 1, '{}'::jsonb,
          $7, 1, $8, $8
        )`,
       [
@@ -171,7 +173,8 @@ implements ScenarioRuntimeRepository {
         event.published_scenario_version_id,
         startNode.id,
         input.expiresAt,
-        input.occurredAt
+        input.occurredAt,
+        input.channel
       ]
     );
     return {
@@ -191,6 +194,7 @@ implements ScenarioRuntimeRepository {
   }
 
   async lockForTelegramTransition(input: {
+    readonly channel: MessengerChannel;
     readonly sessionId: string;
     readonly senderExternalUserId: string;
     readonly occurredAt: Date;
@@ -205,11 +209,11 @@ implements ScenarioRuntimeRepository {
        from public.scenario_sessions sessions
        join public.messenger_identities identity
          on identity.id = sessions.messenger_identity_id
-        and identity.channel = 'telegram'
+        and identity.channel = $3::text
        where sessions.id = $1
          and identity.external_user_id = $2
        for update of sessions`,
-      [input.sessionId, input.senderExternalUserId]
+      [input.sessionId, input.senderExternalUserId, input.channel]
     );
     const current = result.rows[0];
     if (!current) {
@@ -237,6 +241,7 @@ implements ScenarioRuntimeRepository {
   }
 
   async lockForTelegramInput(input: {
+    readonly channel: MessengerChannel;
     readonly senderExternalUserId: string;
     readonly occurredAt: Date;
   }) {
@@ -248,19 +253,19 @@ implements ScenarioRuntimeRepository {
        from public.scenario_sessions sessions
        join public.messenger_identities identity
          on identity.id = sessions.messenger_identity_id
-        and identity.channel = 'telegram'
+        and identity.channel = $3::text
        join public.scenario_nodes node
          on node.scenario_version_id = sessions.scenario_version_id
         and node.id = sessions.current_node_id
        where identity.external_user_id = $1
-         and sessions.channel = 'telegram'
+         and sessions.channel = $3::text
          and sessions.status = 'waiting_input'
          and sessions.expires_at > $2
          and node.node_type in ('text_input', 'number_input')
        order by sessions.updated_at desc, sessions.id
        limit 2
        for update of sessions`,
-      [input.senderExternalUserId, input.occurredAt]
+      [input.senderExternalUserId, input.occurredAt, input.channel]
     );
     if (result.rowCount === 0) {
       return { status: "input_not_expected" as const };
@@ -279,6 +284,7 @@ implements ScenarioRuntimeRepository {
   }
 
   async lockForTelegramOrderAction(input: {
+    readonly channel: MessengerChannel;
     readonly orderId: string;
     readonly senderExternalUserId: string;
     readonly nodeType: "offer_acceptance";
@@ -291,13 +297,13 @@ implements ScenarioRuntimeRepository {
        from public.scenario_sessions sessions
        join public.messenger_identities identity
          on identity.id = sessions.messenger_identity_id
-        and identity.channel = 'telegram'
+        and identity.channel = $5::text
        join public.scenario_nodes node
          on node.scenario_version_id = sessions.scenario_version_id
         and node.id = sessions.current_node_id
        where sessions.context #>> '{order,orderId}' = $1
          and identity.external_user_id = $2
-         and sessions.channel = 'telegram'
+         and sessions.channel = $5::text
          and sessions.status = 'waiting_input'
          and node.node_type = $3
          and sessions.expires_at > $4
@@ -308,7 +314,8 @@ implements ScenarioRuntimeRepository {
         input.orderId,
         input.senderExternalUserId,
         input.nodeType,
-        input.occurredAt
+        input.occurredAt,
+        input.channel
       ]
     );
     if (result.rowCount === 0) {
@@ -349,7 +356,6 @@ implements ScenarioRuntimeRepository {
          on node.scenario_version_id = sessions.scenario_version_id
         and node.id = sessions.current_node_id
        where sessions.context #>> '{order,orderId}' = $2
-         and sessions.channel = 'telegram'
          and sessions.status = 'waiting_input'
          and node.node_type = 'payment_start'
          and sessions.expires_at > $3

@@ -12,11 +12,13 @@ import {
 
 const now = new Date("2026-07-27T10:00:00.000Z");
 
+const SENDER = { channel: "telegram" as const, externalUserId: "111" } as const;
+
 describe("TelegramPurchaseFlowService", () => {
   it("asks for quantity when a Standard/VIP ticket type is chosen", async () => {
     const fixture = createFixture();
 
-    const result = await fixture.service.selectTicketType("111", "adult_standard", now);
+    const result = await fixture.service.selectTicketType(SENDER, "adult_standard", now);
 
     assert.deepEqual(result, { kind: "ask_quantity", ticketLabel: "Стандарт" });
     assert.equal(fixture.drafts.get("user-111")?.step, "awaiting_quantity");
@@ -25,7 +27,7 @@ describe("TelegramPurchaseFlowService", () => {
   it("creates a family order immediately, with no quantity question", async () => {
     const fixture = createFixture();
 
-    const result = await fixture.service.selectTicketType("111", "family_vip", now);
+    const result = await fixture.service.selectTicketType(SENDER, "family_vip", now);
 
     assert.equal(result.kind, "order_created");
     if (result.kind === "order_created") {
@@ -38,10 +40,10 @@ describe("TelegramPurchaseFlowService", () => {
 
   it("rejects non-numeric or out-of-range quantity text without touching the draft step", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_vip", now);
+    await fixture.service.selectTicketType(SENDER, "adult_vip", now);
 
-    const invalid = await fixture.service.handleQuantityText("111", "не число", now);
-    const tooBig = await fixture.service.handleQuantityText("111", "999", now);
+    const invalid = await fixture.service.handleQuantityText(SENDER, "не число", now);
+    const tooBig = await fixture.service.handleQuantityText(SENDER, "999", now);
 
     assert.deepEqual(invalid, { kind: "invalid_quantity" });
     assert.deepEqual(tooBig, { kind: "invalid_quantity" });
@@ -50,9 +52,9 @@ describe("TelegramPurchaseFlowService", () => {
 
   it("moves to awaiting_child_quantity and shows an interim summary after a valid quantity", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_vip", now);
+    await fixture.service.selectTicketType(SENDER, "adult_vip", now);
 
-    const result = await fixture.service.handleQuantityText("111", "3", now);
+    const result = await fixture.service.handleQuantityText(SENDER, "3", now);
 
     assert.deepEqual(result, { kind: "interim_summary", ticketLabel: "Все включено", adultQuantity: 3 });
     assert.equal(fixture.drafts.get("user-111")?.step, "awaiting_child_quantity");
@@ -60,10 +62,10 @@ describe("TelegramPurchaseFlowService", () => {
 
   it("creates the order with both adult and child items when child tickets are added", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_standard", now);
-    await fixture.service.handleQuantityText("111", "3", now);
+    await fixture.service.selectTicketType(SENDER, "adult_standard", now);
+    await fixture.service.handleQuantityText(SENDER, "3", now);
 
-    const result = await fixture.service.handleChildQuantityText("111", "2", now);
+    const result = await fixture.service.handleChildQuantityText(SENDER, "2", now);
 
     assert.equal(result.kind, "order_created");
     assert.deepEqual(fixture.executedCommands[0]?.items, [
@@ -75,10 +77,10 @@ describe("TelegramPurchaseFlowService", () => {
 
   it("skips the child ticket line entirely when the user declines it", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_standard", now);
-    await fixture.service.handleQuantityText("111", "2", now);
+    await fixture.service.selectTicketType(SENDER, "adult_standard", now);
+    await fixture.service.handleQuantityText(SENDER, "2", now);
 
-    const result = await fixture.service.skipChildTicket("111", now);
+    const result = await fixture.service.skipChildTicket(SENDER, now);
 
     assert.equal(result.kind, "order_created");
     assert.deepEqual(fixture.executedCommands[0]?.items, [{ productId: "adult_standard-id", quantity: 2 }]);
@@ -87,7 +89,7 @@ describe("TelegramPurchaseFlowService", () => {
   it("reports no_active_draft instead of guessing when there is nothing to confirm", async () => {
     const fixture = createFixture();
 
-    const result = await fixture.service.handleQuantityText("111", "2", now);
+    const result = await fixture.service.handleQuantityText(SENDER, "2", now);
 
     assert.deepEqual(result, { kind: "no_active_draft" });
   });
@@ -95,20 +97,20 @@ describe("TelegramPurchaseFlowService", () => {
   it("reports catalog_unavailable rather than creating a broken order when the event catalog is missing", async () => {
     const fixture = createFixture({ catalog: null });
 
-    const result = await fixture.service.selectTicketType("111", "family_standard", now);
+    const result = await fixture.service.selectTicketType(SENDER, "family_standard", now);
 
     assert.deepEqual(result, { kind: "catalog_unavailable" });
   });
 
   it("gives two separate purchase attempts by the same user two different idempotency keys", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_standard", now);
-    await fixture.service.handleQuantityText("111", "1", now);
-    await fixture.service.skipChildTicket("111", now);
+    await fixture.service.selectTicketType(SENDER, "adult_standard", now);
+    await fixture.service.handleQuantityText(SENDER, "1", now);
+    await fixture.service.skipChildTicket(SENDER, now);
 
-    await fixture.service.selectTicketType("111", "adult_vip", now);
-    await fixture.service.handleQuantityText("111", "1", now);
-    await fixture.service.skipChildTicket("111", now);
+    await fixture.service.selectTicketType(SENDER, "adult_vip", now);
+    await fixture.service.handleQuantityText(SENDER, "1", now);
+    await fixture.service.skipChildTicket(SENDER, now);
 
     assert.equal(fixture.executedCommands.length, 2);
     assert.notEqual(fixture.executedCommands[0]?.idempotencyKey, fixture.executedCommands[1]?.idempotencyKey);
@@ -116,11 +118,11 @@ describe("TelegramPurchaseFlowService", () => {
 
   it("clears the draft after a successful order so a repeat tap reports no_active_draft instead of a second order", async () => {
     const fixture = createFixture();
-    await fixture.service.selectTicketType("111", "adult_standard", now);
-    await fixture.service.handleQuantityText("111", "1", now);
-    await fixture.service.skipChildTicket("111", now);
+    await fixture.service.selectTicketType(SENDER, "adult_standard", now);
+    await fixture.service.handleQuantityText(SENDER, "1", now);
+    await fixture.service.skipChildTicket(SENDER, now);
 
-    const repeat = await fixture.service.skipChildTicket("111", now);
+    const repeat = await fixture.service.skipChildTicket(SENDER, now);
 
     assert.deepEqual(repeat, { kind: "no_active_draft" });
     assert.equal(fixture.executedCommands.length, 1);
@@ -195,7 +197,7 @@ function createFixture(overrides: { readonly catalog?: PublishedEventCatalog | n
     draftRepository,
     catalogRepository,
     orderCreation,
-    { async resolveUserId(externalUserId) { return `user-${externalUserId}`; } },
+    { async resolveUserId(identity) { return `user-${identity.externalUserId}`; } },
     { newId: () => `nonce-${nextId++}` },
     "business-picnic-2026",
     { async transact(work) { return work(); } }

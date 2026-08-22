@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import type {
   IdGenerator,
   PreparedTBankPaymentAttempt,
@@ -61,6 +62,7 @@ implements TBankPaymentInitializationRepository {
 
   prepare(input: {
     readonly publicOrderTokenHash: string;
+    readonly channel: MessengerChannel;
     readonly senderExternalUserId: string;
     readonly requestedAt: Date;
   }): Promise<PrepareTBankPaymentResult> {
@@ -95,14 +97,15 @@ implements TBankPaymentInitializationRepository {
          from public.orders orders
          join public.messenger_identities identity
            on identity.user_id = orders.user_id
-          and identity.channel = 'telegram'
+          and identity.channel = $4::text
           and identity.external_user_id = $2
          where orders.public_token_hash = $1
          for update of orders`,
         [
           input.publicOrderTokenHash,
           input.senderExternalUserId,
-          input.requestedAt
+          input.requestedAt,
+          input.channel
         ]
       );
       const order = orderResult.rows[0];
@@ -197,7 +200,7 @@ implements TBankPaymentInitializationRepository {
           attempt.currency,
           attempt.idempotencyKey,
           attempt.merchantOrderId,
-          JSON.stringify({ schemaVersion: 1, channel: "telegram" }),
+          JSON.stringify({ schemaVersion: 1, channel: input.channel }),
           input.requestedAt
         ]
       );

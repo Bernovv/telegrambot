@@ -95,6 +95,7 @@ describe("phone verification PostgreSQL persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       updateId: "2001",
       senderExternalUserId: "777",
       contact: { externalUserId: "777", phoneNumber: "8 999 000-00-00" },

@@ -1,4 +1,5 @@
 import type {
+  ChannelIdentity,
   CreditPhoneBonusInput,
   CreditPhoneBonusResult,
   IdGenerator,
@@ -45,17 +46,19 @@ interface ExistingBonusRow {
 export class PostgresTelegramUserResolver implements TelegramUserResolver {
   constructor(private readonly session: TransactionSession) {}
 
-  async resolveUserId(externalUserId: string): Promise<string> {
+  async resolveUserId(identity: ChannelIdentity): Promise<string> {
     const result = await this.session.query<{ readonly user_id: string }>(
       `select user_id
        from public.messenger_identities
-       where channel = 'telegram' and external_user_id = $1`,
-      [externalUserId]
+       where channel = $2::text and external_user_id = $1`,
+      [identity.externalUserId, identity.channel]
     );
     const userId = result.rows[0]?.user_id;
 
     if (!userId) {
-      throw new Error(`Telegram identity not found: ${externalUserId}`);
+      throw new Error(
+        `Messenger identity not found: ${identity.channel}:${identity.externalUserId}`
+      );
     }
 
     return userId;

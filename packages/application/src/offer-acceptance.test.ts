@@ -104,7 +104,7 @@ function createFixture(options: { readonly order?: OfferAcceptanceOrder | null }
 
 function command() {
   return {
-    publicOrderToken: token,
+    channel: "telegram" as const, publicOrderToken: token,
     senderExternalUserId: "777",
     updateId: "1003",
     callbackQueryId: "callback-1",

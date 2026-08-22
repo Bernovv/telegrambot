@@ -1,3 +1,12 @@
+/**
+ * Канал мессенджера.
+ *
+ * Тот же перечень объявлен в `@ticket-platform/domain` — и это не небрежность: контракты и
+ * домен по правилу репозитория не зависят ни от каких пакетов, поэтому общий тип им взять
+ * неоткуда. Перечень один на двоих; появится третий канал — править надо оба места.
+ */
+export type MessengerChannel = "telegram" | "max";
+
 export interface TelegramStartUser {
   readonly externalUserId: string;
   readonly username?: string | null;
@@ -7,6 +16,15 @@ export interface TelegramStartUser {
 }
 
 export interface HandleTelegramStartCommand {
+  /**
+   * Канал, из которого пришёл апдейт.
+   *
+   * Значение вызова, а не настройка процесса: api один на оба мессенджера, и вебхуки
+   * Telegram и MAX приходят в него вперемешку. Канал, зашитый в объект при сборке,
+   * означал бы два набора служб на одни и те же сценарии — и две правды о том, кто такой
+   * покупатель.
+   */
+  readonly channel: MessengerChannel;
   readonly updateId: string;
   readonly user: TelegramStartUser;
   readonly startPayload?: string | null;
@@ -27,6 +45,7 @@ export interface TelegramContactPayload {
 }
 
 export interface HandleTelegramContactCommand {
+  readonly channel: MessengerChannel;
   readonly updateId: string;
   readonly senderExternalUserId: string;
   readonly contact: TelegramContactPayload;
@@ -48,6 +67,7 @@ export type HandleTelegramContactResult =
     };
 
 export interface AcceptTelegramOfferCommand {
+  readonly channel: MessengerChannel;
   readonly publicOrderToken: string;
   readonly senderExternalUserId: string;
   readonly updateId: string;
@@ -77,6 +97,7 @@ export type AcceptTelegramOfferResult =
     };
 
 export interface InitializeTelegramPaymentCommand {
+  readonly channel: MessengerChannel;
   readonly publicOrderToken: string;
   readonly senderExternalUserId: string;
   readonly updateId: string;
@@ -100,6 +121,7 @@ export type InitializeTelegramPaymentResult =
     };
 
 export interface ListTelegramTicketsCommand {
+  readonly channel: MessengerChannel;
   readonly senderExternalUserId: string;
 }
 
@@ -118,6 +140,7 @@ export interface ListTelegramTicketsResult {
 }
 
 export interface RequestTelegramTicketRedeliveryCommand {
+  readonly channel: MessengerChannel;
   readonly ticketId: string;
   readonly senderExternalUserId: string;
   readonly updateId: string;
@@ -155,6 +178,7 @@ export interface ScenarioPresentationModel {
 }
 
 export interface StartTelegramScenarioCommand {
+  readonly channel: MessengerChannel;
   readonly userId: string;
   readonly messengerIdentityId: string;
   readonly eventSlug: string | null;
@@ -180,6 +204,7 @@ export type StartTelegramScenarioResult =
     };
 
 export interface AdvanceTelegramScenarioCommand {
+  readonly channel: MessengerChannel;
   readonly sessionId: string;
   readonly edgeId: string;
   readonly senderExternalUserId: string;
@@ -205,6 +230,7 @@ export type AdvanceTelegramScenarioResult =
     };
 
 export interface SubmitTelegramScenarioInputCommand {
+  readonly channel: MessengerChannel;
   readonly senderExternalUserId: string;
   readonly updateId: string;
   readonly text: string;
@@ -226,6 +252,7 @@ export type SubmitTelegramScenarioInputResult =
     };
 
 export interface ResumeTelegramScenarioAfterOfferCommand {
+  readonly channel: MessengerChannel;
   readonly orderId: string;
   readonly senderExternalUserId: string;
   readonly updateId: string;

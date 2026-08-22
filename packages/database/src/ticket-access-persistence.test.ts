@@ -36,7 +36,7 @@ describe("PostgreSQL Telegram ticket access persistence", () => {
       new TransactionSession()
     );
 
-    const result = await repository.listForTelegramUser("123456789");
+    const result = await repository.listForTelegramUser({ channel: "telegram", externalUserId: "123456789" });
 
     assert.deepEqual(result, [{
       ticketId,
@@ -48,7 +48,7 @@ describe("PostgreSQL Telegram ticket access persistence", () => {
     }]);
     assert.deepEqual(
       findQuery(connection, "select identity.user_id").values,
-      ["123456789"]
+      ["123456789", "telegram"]
     );
     assert.deepEqual(
       findQuery(connection, "order by tickets.issued_at").values,
@@ -77,6 +77,7 @@ describe("PostgreSQL Telegram ticket access persistence", () => {
     );
 
     const result = await service.execute({
+      channel: "telegram" as const,
       ticketId,
       senderExternalUserId: "123456789",
       updateId: "9001",
@@ -87,7 +88,7 @@ describe("PostgreSQL Telegram ticket access persistence", () => {
     assert.match(findQuery(connection, "for update of tickets").text, /identity\.external_user_id = \$2/);
     assert.deepEqual(
       findQuery(connection, "for update of tickets").values,
-      [ticketId, "123456789"]
+      [ticketId, "123456789", "telegram"]
     );
     const outbox = findQuery(connection, "insert into public.outbox_events");
     assert.equal(outbox.values[0], eventId);
