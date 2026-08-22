@@ -5,9 +5,14 @@ import {
   InvalidPhoneNumberError,
   decodeScenarioCallback,
   type ConversationController,
+  type ConversationRecorder,
   type InlineButton,
   type ReplyModel
 } from "@ticket-platform/messenger-core";
+import {
+  recordIncomingUpdate,
+  recordOutgoingMessages
+} from "./conversation-recording.js";
 
 export type TelegramUpdate = Parameters<Bot["handleUpdate"]>[0];
 
@@ -20,6 +25,11 @@ export interface TelegramBotOptions {
   /** Optional reverse-proxy base URL in front of api.telegram.org (e.g. a
    * Cloudflare Worker), used where Telegram's API is blocked by the network. */
   readonly apiRoot?: string;
+  /**
+   * Куда писать переписку. Не задан — бот работает как раньше и ничего не сохраняет:
+   * канал, поднятый без записи (тесты, локальный запуск), обязан оставаться рабочим.
+   */
+  readonly conversationRecorder?: ConversationRecorder;
 }
 
 export function createTelegramBot(
@@ -32,6 +42,18 @@ export function createTelegramBot(
     token,
     options.apiRoot ? { client: { apiRoot: options.apiRoot } } : undefined
   );
+
+  const recorder = options.conversationRecorder;
+  if (recorder) {
+    // Первым в цепочке: разбор сообщения начинается после того, как оно записано.
+    // Сегодня бот понимает команду, контакт и текст, а голосовое, фотография и всё
+    // остальное проходят мимо и исчезают. Здесь они перестают исчезать.
+    bot.on(["message", "edited_message"], async (ctx, next) => {
+      await recordIncomingUpdate(recorder, ctx.update);
+      await next();
+    });
+    recordOutgoingMessages(bot, recorder);
+  }
 
   bot.command("start", async (ctx) => {
     const message = ctx.message;

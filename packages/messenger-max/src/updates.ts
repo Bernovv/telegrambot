@@ -3,9 +3,14 @@ import {
   InvalidPhoneNumberError,
   decodeScenarioCallback,
   type ConversationController,
+  type ConversationRecorder,
   type InlineButton,
   type ReplyModel
 } from "@ticket-platform/messenger-core";
+import {
+  recordIncomingMaxUpdate,
+  recordOutgoingMaxMessage
+} from "./conversation-recording.js";
 import type { Logger } from "@ticket-platform/observability";
 import type { MaxApi, MaxButton } from "./max-api.js";
 
@@ -67,6 +72,10 @@ export interface MaxBotOptions {
   readonly botUsername?: string | null;
   /** Пробрасывать ошибку обработки наружу. Нужно тестам и локальному запуску. */
   readonly rethrowUpdateErrors?: boolean;
+  /**
+   * Куда писать переписку. Не задан — канал работает как раньше и ничего не сохраняет.
+   */
+  readonly conversationRecorder?: ConversationRecorder;
 }
 
 export function createMaxUpdateProcessor(
@@ -109,8 +118,15 @@ async function route(
 ): Promise<void> {
   const updateType = update.update_type ?? "";
 
+  // Запись идёт до разбора и не зависит от того, знаком ли нам тип обновления. Разбор
+  // ниже понимает три типа из растущего списка, и всё, что он пропускает, — это чей-то
+  // вопрос, оставшийся без ответа и без следа.
+  if (options.conversationRecorder) {
+    await recordIncomingMaxUpdate(options.conversationRecorder, update);
+  }
+
   if (updateType === "bot_started") {
-    await handleStart(api, controller, update);
+    await handleStart(api, controller, update, options);
     return;
   }
   if (updateType === "message_callback") {
@@ -118,7 +134,7 @@ async function route(
     return;
   }
   if (updateType === "message_created") {
-    await handleMessage(api, controller, update);
+    await handleMessage(api, controller, update, options);
   }
 }
 
@@ -132,7 +148,8 @@ async function route(
 async function handleStart(
   api: MaxApi,
   controller: ConversationController,
-  update: MaxUpdate
+  update: MaxUpdate,
+  options: MaxBotOptions
 ): Promise<void> {
   const user = update.user ?? update.message?.sender;
   const externalUserId = identifier(user?.user_id);
@@ -153,7 +170,7 @@ async function handleStart(
       languageCode: null
     }
   });
-  await sendReplies(api, externalUserId, replies);
+  await sendReplies(api, externalUserId, replies, options.conversationRecorder);
 }
 
 /** Нажатие кнопки. Отвечаем на него всегда — иначе кнопка «крутится» до таймаута. */
@@ -187,13 +204,13 @@ async function handleCallback(
         occurredAt: now
       });
       await api.answerCallback({ callbackId, notification: view.callbackText });
-      await sendReplies(api, externalUserId, view.replies);
+      await sendReplies(api, externalUserId, view.replies, options.conversationRecorder);
       return;
     }
 
     const replies = await menuAction(controller, sender, payload, now, options);
     await api.answerCallback({ callbackId });
-    await sendReplies(api, externalUserId, replies);
+    await sendReplies(api, externalUserId, replies, options.conversationRecorder);
   } catch (error) {
     // Ответ на кнопку — не часть сценария, а обязанность перед человеком: без него
     // интерфейс висит. Поэтому он уходит и тогда, когда обработка сорвалась.
@@ -258,7 +275,8 @@ async function menuAction(
 async function handleMessage(
   api: MaxApi,
   controller: ConversationController,
-  update: MaxUpdate
+  update: MaxUpdate,
+  options: MaxBotOptions
 ): Promise<void> {
   const externalUserId = identifier(update.message?.sender?.user_id ?? update.user?.user_id);
   if (externalUserId === null) {
@@ -277,7 +295,7 @@ async function handleMessage(
         contact: { externalUserId, phoneNumber: phone },
         receivedAt: now
       });
-      await sendReplies(api, externalUserId, replies);
+      await sendReplies(api, externalUserId, replies, options.conversationRecorder);
     } catch (error) {
       if (error instanceof InvalidPhoneNumberError) {
         await api.sendMessage({
@@ -300,7 +318,7 @@ async function handleMessage(
   // его значит оставить без ответа всех, кто у нас уже был: именно так и вышло на первом
   // включении канала.
   if (/^\/start(?:\s|$)/.test(text)) {
-    await handleStart(api, controller, update);
+    await handleStart(api, controller, update, options);
     return;
   }
 
@@ -318,34 +336,44 @@ async function handleMessage(
     occurredAt: now
   });
   if (scenarioReplies.length > 0) {
-    await sendReplies(api, externalUserId, scenarioReplies);
+    await sendReplies(api, externalUserId, scenarioReplies, options.conversationRecorder);
     return;
   }
 
   const quantityReplies = await controller.onQuantityText(sender, text, now);
   if (quantityReplies.length > 0) {
-    await sendReplies(api, externalUserId, quantityReplies);
+    await sendReplies(api, externalUserId, quantityReplies, options.conversationRecorder);
     return;
   }
 
   const childQuantityReplies = await controller.onChildQuantityText(sender, text, now);
   if (childQuantityReplies.length > 0) {
-    await sendReplies(api, externalUserId, childQuantityReplies);
+    await sendReplies(api, externalUserId, childQuantityReplies, options.conversationRecorder);
   }
 }
 
 async function sendReplies(
   api: MaxApi,
   userId: string,
-  replies: readonly ReplyModel[]
+  replies: readonly ReplyModel[],
+  recorder?: ConversationRecorder
 ): Promise<void> {
   for (const reply of replies) {
     const buttons = toButtons(reply);
-    await api.sendMessage({
+    const sent = await api.sendMessage({
       userId,
       text: reply.text,
       ...(buttons ? { buttons } : {})
     });
+    // Запись после отправки: в ленте оказывается только то, что человек получил. Запись
+    // до отправки показала бы менеджеру сказанное, которого не было.
+    if (recorder) {
+      await recordOutgoingMaxMessage(recorder, {
+        externalUserId: userId,
+        text: reply.text,
+        providerMessageId: sent.providerMessageId
+      });
+    }
   }
 }
 

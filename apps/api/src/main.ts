@@ -24,6 +24,7 @@ import {
   CreateAdminEventPricingRuleService,
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
+  ConversationLog,
   CreateOrderService,
   DeactivateAdminEventOfferService,
   ExportParticipantsCsvService,
@@ -93,6 +94,7 @@ import {
   createSiteRegistrationPersistence,
   createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
+  createConversationPersistence,
   createOrderSalesPersistence,
   createTelegramPurchaseFlowPersistence,
   createTelegramTicketAccessPersistence,
@@ -605,6 +607,21 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
 
       await pool.ping();
 
+      // Переписка. Одна на оба канала: это её смысл — лента в карточке собирается из
+      // Telegram и MAX как один разговор, а не как два.
+      const conversationRecorder = new ConversationLog(
+        createConversationPersistence(pool).repository,
+        idGenerator,
+        (error, context) => {
+          logger.error("conversation message not recorded", {
+            channel: context.channel,
+            direction: context.direction,
+            errorType: error instanceof Error ? error.name : "UnknownError",
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+        }
+      );
+
       if (config.telegramWebhook.enabled) {
         const bot = createTelegramBot(
           config.telegramWebhook.botToken,
@@ -612,6 +629,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           logger,
           {
             rethrowUpdateErrors: true,
+            conversationRecorder,
             ...(config.telegramWebhook.apiRoot ? { apiRoot: config.telegramWebhook.apiRoot } : {})
           }
         );
@@ -629,7 +647,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           }),
           conversation,
           logger,
-          { botUsername: config.max.botUsername }
+          { botUsername: config.max.botUsername, conversationRecorder }
         );
         logger.info("max webhook dependencies ready");
       }

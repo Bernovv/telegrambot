@@ -2,6 +2,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   AcceptTelegramOfferService,
   AdvanceTelegramScenarioService,
+  ConversationLog,
   CreateOrderService,
   CheckTelegramPhoneAccessService,
   GetTelegramReferralBalanceService,
@@ -19,6 +20,7 @@ import {
 } from "@ticket-platform/application";
 import { loadTelegramBotConfig } from "@ticket-platform/config";
 import {
+  createConversationPersistence,
   createOfferAcceptancePersistence,
   createNodePostgresPool,
   createOrderSalesPersistence,
@@ -180,7 +182,23 @@ export async function bootstrapTelegramBot(env: NodeJS.ProcessEnv = process.env)
     referralBalanceService,
     phoneAccessService
   );
+  // Переписка. Пишется до разбора и после отправки; если запись не удалась, разговор идёт
+  // дальше, а неудача уходит в журнал — молчащий бот дороже потерянной строки.
+  const conversationRecorder = new ConversationLog(
+    createConversationPersistence(pool).repository,
+    idGenerator,
+    (error, context) => {
+      logger.error("conversation message not recorded", {
+        channel: context.channel,
+        direction: context.direction,
+        errorType: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+    }
+  );
+
   const bot = createTelegramBot(config.telegramBotToken, controller, logger, {
+    conversationRecorder,
     ...(config.telegramApiRoot ? { apiRoot: config.telegramApiRoot } : {})
   });
   const stop = () => {
