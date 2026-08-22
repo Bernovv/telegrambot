@@ -29,6 +29,7 @@ interface EventRow {
 
 interface SessionRow {
   readonly id: string;
+  readonly channel: MessengerChannel;
   readonly user_id: string;
   readonly event_id: string;
   readonly scenario_version_id: string;
@@ -124,7 +125,7 @@ implements ScenarioRuntimeRepository {
     );
 
     const current = await this.session.query<SessionRow>(
-      `select id, user_id, event_id, scenario_version_id,
+      `select id, channel, user_id, event_id, scenario_version_id,
               current_node_id, lock_version, context
        from public.scenario_sessions
        where user_id = $1
@@ -180,6 +181,7 @@ implements ScenarioRuntimeRepository {
     return {
       status: "ready",
       session: {
+        channel: input.channel,
         id: input.proposedSessionId,
         userId: input.userId,
         eventId: event.id,
@@ -202,7 +204,7 @@ implements ScenarioRuntimeRepository {
     const result = await this.session.query<
       SessionRow & { readonly status: string; readonly expires_at: Date }
     >(
-      `select sessions.id, sessions.user_id, sessions.event_id,
+      `select sessions.id, sessions.channel, sessions.user_id, sessions.event_id,
               sessions.scenario_version_id,
               sessions.current_node_id, sessions.lock_version,
               sessions.status, sessions.expires_at, sessions.context
@@ -246,7 +248,7 @@ implements ScenarioRuntimeRepository {
     readonly occurredAt: Date;
   }) {
     const result = await this.session.query<SessionRow>(
-      `select sessions.id, sessions.user_id, sessions.event_id,
+      `select sessions.id, sessions.channel, sessions.user_id, sessions.event_id,
               sessions.scenario_version_id,
               sessions.current_node_id, sessions.lock_version,
               sessions.context
@@ -291,7 +293,7 @@ implements ScenarioRuntimeRepository {
     readonly occurredAt: Date;
   }) {
     const result = await this.session.query<SessionRow>(
-      `select sessions.id, sessions.user_id, sessions.event_id,
+      `select sessions.id, sessions.channel, sessions.user_id, sessions.event_id,
               sessions.scenario_version_id, sessions.current_node_id,
               sessions.lock_version, sessions.context
        from public.scenario_sessions sessions
@@ -343,7 +345,7 @@ implements ScenarioRuntimeRepository {
     // `operator does not exist: text = uuid`. Соседний lockForTelegramOrderAction работал
     // только потому, что там параметр встречается единственный раз — в текстовом сравнении.
     const result = await this.session.query<SessionRow>(
-      `select sessions.id, sessions.user_id, sessions.event_id,
+      `select sessions.id, sessions.channel, sessions.user_id, sessions.event_id,
               sessions.scenario_version_id, sessions.current_node_id,
               sessions.lock_version, sessions.context
        from public.scenario_sessions sessions
@@ -506,6 +508,7 @@ implements ScenarioRuntimeRepository {
     }
     return {
       id: row.id,
+      channel: row.channel,
       userId: row.user_id,
       eventId: row.event_id,
       scenarioVersionId: row.scenario_version_id,

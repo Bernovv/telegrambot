@@ -84,6 +84,7 @@ describe("PostgreSQL event sales persistence", () => {
 
     const result = await service.execute({
       idempotencyKey: "telegram-order:1001",
+      channel: "telegram",
       userId: "user-1",
       eventId: "event-1",
       currency: "RUB",

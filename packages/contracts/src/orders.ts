@@ -1,3 +1,14 @@
+/**
+ * Канал мессенджера.
+ *
+ * Тот же перечень объявлен в `./telegram.ts` и в домене: контракты по правилу репозитория
+ * не зависят ни от каких пакетов, поэтому общий тип им взять неоткуда.
+ */
+import type { MessengerChannel } from "./telegram.js";
+
+/** Где оформлен заказ: мессенджер, панель или сайт. */
+export type OrderChannel = MessengerChannel | "admin" | "web";
+
 export interface CreateOrderLineCommand {
   readonly productId: string;
   readonly quantity: number;
@@ -16,6 +27,14 @@ export interface CreateOrderCommand {
   readonly items: readonly CreateOrderLineCommand[];
   readonly wallet: WalletApplicationCommand;
   readonly source: string;
+  /**
+   * Где оформлен заказ.
+   *
+   * Для мессенджера это адрес доставки билета: он уйдёт туда же, где заказ оформили.
+   * `admin` и `web` мессенджерами не являются — по таким заказам билет уходит туда, где
+   * человек в последний раз был.
+   */
+  readonly channel: OrderChannel;
   readonly createdAt: Date;
 }
 

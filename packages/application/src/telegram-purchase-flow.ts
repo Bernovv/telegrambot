@@ -113,7 +113,7 @@ export class TelegramPurchaseFlowService {
     };
 
     if (isFamilyTicket(ticketType)) {
-      return this.createOrderForDraft(userId, { ...draft, adultQuantity: 1 }, now);
+      return this.createOrderForDraft(sender, userId, { ...draft, adultQuantity: 1 }, now);
     }
 
     await this.draftRepository.setDraft(userId, draft);
@@ -159,7 +159,7 @@ export class TelegramPurchaseFlowService {
     if (!draft || draft.adultQuantity === null) {
       return { kind: "no_active_draft" };
     }
-    return this.createOrderForDraft(userId, draft, now);
+    return this.createOrderForDraft(sender, userId, draft, now);
   }
 
   async handleChildQuantityText(
@@ -180,10 +180,11 @@ export class TelegramPurchaseFlowService {
       return { kind: "invalid_child_quantity" };
     }
 
-    return this.createOrderForDraft(userId, { ...draft, childQuantity: quantity }, now);
+    return this.createOrderForDraft(sender, userId, { ...draft, childQuantity: quantity }, now);
   }
 
   private async createOrderForDraft(
+    sender: ChannelIdentity,
     userId: string,
     draft: PurchaseDraft,
     now: Date
@@ -214,7 +215,8 @@ export class TelegramPurchaseFlowService {
       currency: catalog.currency,
       items,
       wallet: { mode: "none" },
-      source: "telegram_chat",
+      source: `${sender.channel}_chat`,
+      channel: sender.channel,
       createdAt: now
     });
 

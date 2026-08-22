@@ -31,10 +31,12 @@ export type MaxButton =
   | { readonly type: "link"; readonly text: string; readonly url: string }
   | { readonly type: "request_contact"; readonly text: string };
 
-export interface MaxAttachment {
-  readonly type: "inline_keyboard";
-  readonly payload: { readonly buttons: readonly (readonly MaxButton[])[] };
-}
+export type MaxAttachment =
+  | {
+      readonly type: "inline_keyboard";
+      readonly payload: { readonly buttons: readonly (readonly MaxButton[])[] };
+    }
+  | { readonly type: "image"; readonly payload: { readonly token: string } };
 
 export interface MaxSendResult {
   readonly providerMessageId: string;
@@ -96,6 +98,40 @@ export class MaxApi {
   }
 
   /**
+   * Картинка — билет.
+   *
+   * В MAX это три шага вместо одного: спросить адрес для загрузки, положить туда файл,
+   * отправить сообщение с полученным токеном. Внутри одного метода, потому что снаружи это
+   * одно действие: «показать человеку его QR».
+   *
+   * Загрузка возвращает токен не всегда сразу — иногда он приезжает только в ответе на
+   * саму загрузку. Поэтому берём тот, который есть, и падаем, если нет ни одного: билет
+   * без QR — это не билет, и молча отправить вместо него подпись хуже, чем не отправить.
+   */
+  async sendImage(input: {
+    readonly userId: string;
+    readonly bytes: Uint8Array;
+    readonly fileName: string;
+    readonly caption: string;
+    readonly buttons?: readonly (readonly MaxButton[])[];
+  }): Promise<MaxSendResult> {
+    const token = await this.uploadImage(input.bytes, input.fileName);
+    const attachments: MaxAttachment[] = [{ type: "image", payload: { token } }];
+    const keyboard = toAttachments(input.buttons);
+    if (keyboard) {
+      attachments.push(...keyboard);
+    }
+
+    const response = await this.call<{
+      readonly message?: { readonly body?: { readonly mid?: string } };
+    }>("messages", {
+      query: { user_id: input.userId },
+      body: { text: input.caption, attachments }
+    });
+    return { providerMessageId: response.message?.body?.mid ?? "" };
+  }
+
+  /**
    * Ответ на нажатие кнопки.
    *
    * Отвечать обязательно: иначе кнопка у человека «крутится» до таймаута. При этом MAX
@@ -129,6 +165,40 @@ export class MaxApi {
         ...(input.secret === undefined ? {} : { secret: input.secret })
       }
     });
+  }
+
+  /** Адрес загрузки, сама загрузка и токен картинки. */
+  private async uploadImage(bytes: Uint8Array, fileName: string): Promise<string> {
+    const requested = await this.call<{
+      readonly url?: string;
+      readonly token?: string;
+    }>("uploads", { query: { type: "image" } });
+    const uploadUrl = requested.url;
+    if (uploadUrl === undefined || uploadUrl === "") {
+      throw new MaxApiError(502, "upload.no_url", "MAX did not return an upload URL");
+    }
+
+    const form = new FormData();
+    form.append("data", new Blob([bytes], { type: "image/png" }), fileName);
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(this.timeoutMs)
+    });
+    const uploaded = await readJson(response);
+    if (!response.ok) {
+      throw new MaxApiError(
+        response.status,
+        "upload.failed",
+        `MAX upload answered ${response.status}`
+      );
+    }
+
+    const token = requested.token ?? photoToken(uploaded);
+    if (token === null) {
+      throw new MaxApiError(502, "upload.no_token", "MAX upload returned no photo token");
+    }
+    return token;
   }
 
   private async call<T>(
@@ -176,6 +246,31 @@ function toAttachments(
     return null;
   }
   return [{ type: "inline_keyboard", payload: { buttons } }];
+}
+
+/**
+ * Токен картинки из ответа загрузки.
+ *
+ * Их API отвечает по-разному: иногда полем `token`, иногда картой `photos`, где ключ —
+ * идентификатор фотографии. Берём первое, что нашлось: разница здесь не наша.
+ */
+function photoToken(uploaded: unknown): string | null {
+  if (uploaded === null || typeof uploaded !== "object") {
+    return null;
+  }
+  const body = uploaded as {
+    readonly token?: unknown;
+    readonly photos?: Readonly<Record<string, { readonly token?: unknown }>>;
+  };
+  if (typeof body.token === "string" && body.token !== "") {
+    return body.token;
+  }
+  for (const photo of Object.values(body.photos ?? {})) {
+    if (typeof photo?.token === "string" && photo.token !== "") {
+      return photo.token;
+    }
+  }
+  return null;
 }
 
 async function readJson(response: Response): Promise<unknown> {

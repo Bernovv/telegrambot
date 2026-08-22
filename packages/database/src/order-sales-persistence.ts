@@ -241,13 +241,13 @@ export class PostgresOrderSalesRepository implements OrderSalesRepository {
          user_id, event_id, status, currency, subtotal_kopecks, discount_kopecks,
          total_kopecks, wallet_applied_kopecks, external_due_kopecks, tax_kopecks,
          snapshot_schema_version, event_snapshot, pricing_snapshot, offer_version_id,
-         expires_at, source, created_at, updated_at
+         expires_at, source, channel, created_at, updated_at
        ) values (
          $1, $2, $3, $4, $5,
          $6, $7, $8, $9, $10, 0,
          $11, $12, $13, 0,
          1, $14::jsonb, $15::jsonb, $16,
-         $17, $18, $19, $19
+         $17, $18, $20::text, $19, $19
        )
        on conflict (creation_idempotency_key) do nothing
        returning
@@ -273,7 +273,8 @@ export class PostgresOrderSalesRepository implements OrderSalesRepository {
         input.offerVersionId,
         input.expiresAt,
         input.source,
-        input.createdAt
+        input.createdAt,
+        input.channel
       ]
     );
     const createdOrder = inserted.rows[0];

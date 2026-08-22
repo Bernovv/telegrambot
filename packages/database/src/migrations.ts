@@ -279,5 +279,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260822180000_max_channel_constraints",
     description: "Allow the MAX channel in scenario sessions, offer acceptances, contacts, and deliveries",
     destructive: false
+  },
+  {
+    id: "20260822200000_order_channel",
+    description: "Record which messenger an order was placed in so tickets are delivered there",
+    destructive: false
   }
 ];

@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
@@ -17,6 +18,8 @@ export interface TicketDeliveryContext {
   readonly orderNumber: string;
   readonly eventTitle: string;
   readonly recipientExternalUserId: string | null;
+  /** Куда отправлять: канал опознавателя, найденного по каналу заказа. */
+  readonly recipientChannel: MessengerChannel | null;
   readonly recipientBlocked: boolean;
   readonly tickets: readonly {
     readonly id: string;
@@ -55,11 +58,13 @@ export interface SiteRegistrationContext {
 
 export interface ScenarioDeliveryContext {
   readonly recipientExternalUserId: string | null;
+  readonly recipientChannel: MessengerChannel | null;
   readonly recipientBlocked: boolean;
 }
 
 export interface ReminderRecipientContext {
   readonly recipientExternalUserId: string | null;
+  readonly recipientChannel: MessengerChannel | null;
   readonly recipientBlocked: boolean;
   readonly eventTitle: string;
 }
@@ -69,6 +74,8 @@ export interface ReminderContextRepository {
 }
 
 export interface BroadcastRecipient {
+  /** Канал получателя: рассылка идёт в тот мессенджер, где человек есть. */
+  readonly recipientChannel: MessengerChannel;
   // Пробная рассылка уходит в административные чаты, за которыми не стоит участник, поэтому
   // получатель бывает без userId. Ключ идемпотентности тогда строится по номеру чата.
   readonly userId: string | null;
@@ -102,7 +109,7 @@ export interface BroadcastContextRepository {
     failedCount: number,
     completedAt: Date
   ): Promise<void>;
-  markRecipientBlocked(userId: string): Promise<void>;
+  markRecipientBlocked(userId: string, channel: MessengerChannel): Promise<void>;
 }
 
 export interface BroadcastPacing {
@@ -156,6 +163,8 @@ export interface ClaimNotificationDeliveryInput {
   readonly kind: NotificationDeliveryKind;
   readonly aggregateId: string;
   readonly recipientId: string;
+  /** Куда доставляли: журнал доставок общий на каналы, и без этого он врал бы. */
+  readonly recipientChannel: MessengerChannel;
   readonly workerId: string;
   readonly claimedAt: Date;
   readonly leaseSeconds: number;
@@ -376,7 +385,12 @@ export class HandleNotificationJobService {
     private readonly broadcastContexts?: BroadcastContextRepository,
     private readonly broadcastOptions: BroadcastDeliveryOptions =
       DEFAULT_BROADCAST_DELIVERY_OPTIONS,
-    private readonly broadcastPacing: BroadcastPacing = realTimePacing
+    private readonly broadcastPacing: BroadcastPacing = realTimePacing,
+    /**
+     * Отправитель в MAX. Отдельным параметром, а не заменой основного: админам мы пишем в
+     * Telegram всегда, чей бы заказ ни был.
+     */
+    private readonly maxSender?: NotificationSender
   ) {
     if (adminChatIds.length === 0) {
       throw new Error("Administrator notification chat ID is invalid");
@@ -386,6 +400,24 @@ export class HandleNotificationJobService {
         throw new Error("Administrator notification chat ID is invalid");
       }
     }
+  }
+
+  /**
+   * Кому и чем отправлять.
+   *
+   * Подмены каналов здесь быть не может, и это не педантизм: идентификаторы человека в Telegram и
+   * в MAX — оба числа, и отправка «максового» получателя телеграмным отправителем означала
+   * бы чужой билет постороннему человеку с тем же номером. Поэтому нет отправителя —
+   * доставка падает и уходит в повтор, а не «как-нибудь доставляется».
+   */
+  private senderFor(channel: MessengerChannel | null): NotificationSender {
+    if (channel === "max") {
+      if (!this.maxSender) {
+        throw new Error("MAX notification sender is not configured");
+      }
+      return this.maxSender;
+    }
+    return this.sender;
   }
 
   async execute(input: HandleNotificationJobInput): Promise<HandleNotificationJobResult> {
@@ -466,9 +498,10 @@ export class HandleNotificationJobService {
         kind: "ticket_user",
         aggregateId: event.sessionId,
         recipientId,
+        recipientChannel: context.recipientChannel,
         idempotencyKey:
           `telegram:scenario:${event.sourceEventId}:${index}`,
-        send: () => this.sender.sendScenarioPresentation(
+        send: () => this.senderFor(context.recipientChannel).sendScenarioPresentation(
           recipientId,
           event.sessionId,
           presentation
@@ -521,10 +554,11 @@ export class HandleNotificationJobService {
       kind: "ticket_user",
       aggregateId: first.id,
       recipientId,
+      recipientChannel: context.recipientChannel,
       idempotencyKey: event.eventType === "TicketsIssued"
         ? `telegram:order-paid:${event.orderId}`
         : `telegram:order-paid-redelivery:${event.sourceEventId}:${event.orderId}`,
-      send: async () => this.sender.sendText(
+      send: async () => this.senderFor(context.recipientChannel).sendText(
         recipientId,
         formatPaymentConfirmedMessage(
           context,
@@ -564,6 +598,7 @@ export class HandleNotificationJobService {
         kind: "admin_purchase",
         aggregateId: event.orderId,
         recipientId: chatId,
+        recipientChannel: null,
         idempotencyKey: `telegram:admin-purchase:${event.sourceEventId}:${chatId}`,
         send: () => this.sender.sendText(
           chatId,
@@ -609,6 +644,7 @@ export class HandleNotificationJobService {
         kind: "site_registration",
         aggregateId: event.registrationId,
         recipientId: chatId,
+        recipientChannel: null,
         idempotencyKey: `telegram:site-registration:${event.registrationId}:${chatId}`,
         send: () => this.sender.sendText(
           chatId,
@@ -651,8 +687,9 @@ export class HandleNotificationJobService {
       kind: "event_reminder",
       aggregateId: event.orderId,
       recipientId,
+      recipientChannel: context.recipientChannel,
       idempotencyKey: `telegram:reminder:${event.orderId}:${cadenceStep}`,
-      send: () => this.sender.sendText(
+      send: () => this.senderFor(context.recipientChannel).sendText(
         recipientId,
         formatEventReminderMessage(cadenceStep, context.eventTitle)
       )
@@ -686,6 +723,8 @@ export class HandleNotificationJobService {
     const recipients = context.isTest
       ? this.adminChatIds.map((chatId) => ({
           userId: null,
+          // Административные чаты всегда телеграмные: это наши чаты, а не аудитории.
+          recipientChannel: "telegram" as const,
           recipientExternalUserId: chatId
         }))
       : context.recipients;
@@ -722,7 +761,7 @@ export class HandleNotificationJobService {
 
       failed += 1;
       if (outcome === "blocked" && recipient.userId) {
-        await broadcasts.markRecipientBlocked(recipient.userId);
+        await broadcasts.markRecipientBlocked(recipient.userId, recipient.recipientChannel);
       }
       if (outcome !== "transient") {
         transientStreak = 0;
@@ -772,9 +811,11 @@ export class HandleNotificationJobService {
           kind: "admin_broadcast",
           aggregateId: event.broadcastId,
           recipientId: recipient.recipientExternalUserId,
+          recipientChannel: recipient.recipientChannel,
           idempotencyKey,
           send: () =>
-            this.sender.sendBroadcastMessage(recipient.recipientExternalUserId, message)
+            this.senderFor(recipient.recipientChannel)
+              .sendBroadcastMessage(recipient.recipientExternalUserId, message)
         });
       } catch (error) {
         const failure = classifyBroadcastSendFailure(error);
@@ -801,6 +842,7 @@ export class HandleNotificationJobService {
     readonly kind: NotificationDeliveryKind;
     readonly aggregateId: string;
     readonly recipientId: string;
+    readonly recipientChannel: MessengerChannel | null;
     readonly idempotencyKey: string;
     readonly send: () => Promise<{ readonly providerMessageId: string }>;
   }): Promise<"delivered" | "duplicate"> {
@@ -811,6 +853,8 @@ export class HandleNotificationJobService {
       kind: options.kind,
       aggregateId: options.aggregateId,
       recipientId: options.recipientId,
+      // Пусто — административный чат: он всегда телеграмный.
+      recipientChannel: options.recipientChannel ?? "telegram",
       workerId: options.input.workerId,
       claimedAt: options.input.handledAt,
       leaseSeconds: options.input.leaseSeconds

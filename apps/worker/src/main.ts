@@ -37,6 +37,7 @@ import {
   PostgresWorkerHeartbeatRepository
 } from "@ticket-platform/database";
 import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
+import { MaxApi, MaxNotificationSender } from "@ticket-platform/messenger-max";
 import { createTelegramNotificationSender } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
@@ -263,7 +264,19 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         {
           ...DEFAULT_BROADCAST_DELIVERY_OPTIONS,
           messagesPerSecond: notificationConfig.broadcastMessagesPerSecond
-        }
+        },
+        undefined,
+        // Отправитель в MAX появляется только вместе с токеном. Без него доставка по
+        // заказам MAX падает и уходит в повтор — и это правильно: идентификаторы человека
+        // в двух мессенджерах одинаковой формы, и «доставить хоть куда-нибудь» значит
+        // отправить чужой билет постороннему.
+        config.max.enabled
+          ? new MaxNotificationSender(new MaxApi({
+              token: config.max.botToken,
+              baseUrl: config.max.apiBaseUrl,
+              timeoutMs: config.max.httpTimeoutMs
+            }))
+          : undefined
       );
 
       await boss.work<DomainEventJobV1>(

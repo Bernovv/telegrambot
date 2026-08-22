@@ -469,6 +469,7 @@ function createFixture(options: {
   const rejections: string[] = [];
   const session: ScenarioRuntimeSession = {
     id: "session-1",
+    channel: "telegram",
     userId: "user-1",
     eventId: "event-1",
     scenarioVersionId: "version-1",

@@ -77,6 +77,8 @@ export class OrdersController {
       ...parsed.data,
       idempotencyKey,
       source: "admin",
+      // Панель — не мессенджер: билет по такому заказу уйдёт туда, где человек был.
+      channel: "admin",
       createdAt: new Date()
     });
   }

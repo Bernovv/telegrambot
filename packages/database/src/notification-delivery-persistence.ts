@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import type {
   AdminPurchaseContext,
   BroadcastContext,
@@ -24,6 +25,7 @@ interface TicketOrderContextRow {
   readonly event_title: string;
   readonly recipient_external_user_id: string | null;
   readonly recipient_blocked: boolean | null;
+  readonly recipient_channel: MessengerChannel | null;
 }
 
 interface TicketRow {
@@ -62,12 +64,14 @@ interface DeliveryStateRow {
 interface ScenarioDeliveryContextRow {
   readonly recipient_external_user_id: string | null;
   readonly recipient_blocked: boolean | null;
+  readonly recipient_channel: MessengerChannel | null;
 }
 
 interface RecipientContextRow {
   readonly event_title: string;
   readonly recipient_external_user_id: string | null;
   readonly recipient_blocked: boolean | null;
+  readonly recipient_channel: MessengerChannel | null;
 }
 
 interface BroadcastRow {
@@ -101,12 +105,13 @@ export function broadcastAudienceSelect(targetAudience: string): string {
 const ORDERS_AUDIENCE_SELECT =
   `select distinct on (o.user_id)
      o.user_id,
+     identity.channel as recipient_channel,
      identity.external_user_id as recipient_external_user_id
    from public.orders o
    join lateral (
-     select external_user_id, is_bot_blocked
+     select external_user_id, is_bot_blocked, channel
      from public.messenger_identities
-     where user_id = o.user_id and channel = 'telegram'
+     where user_id = o.user_id
      order by last_seen_at desc, id
      limit 1
    ) identity on true
@@ -123,12 +128,13 @@ const ORDERS_AUDIENCE_SELECT =
 const BOT_USERS_AUDIENCE_SELECT =
   `select distinct on (u.id)
      u.id as user_id,
+     identity.channel as recipient_channel,
      identity.external_user_id as recipient_external_user_id
    from public.users u
    join lateral (
-     select external_user_id, is_bot_blocked
+     select external_user_id, is_bot_blocked, channel
      from public.messenger_identities
-     where user_id = u.id and channel = 'telegram'
+     where user_id = u.id
      order by last_seen_at desc, id
      limit 1
    ) identity on true
@@ -141,6 +147,7 @@ const BOT_USERS_AUDIENCE_SELECT =
 
 interface BroadcastRecipientRow {
   readonly user_id: string;
+  readonly recipient_channel: MessengerChannel;
   readonly recipient_external_user_id: string;
 }
 
@@ -163,15 +170,16 @@ implements
          orders.number as order_number,
          coalesce(nullif(orders.event_snapshot ->> 'title', ''), events.title) as event_title,
          identity.external_user_id as recipient_external_user_id,
-         identity.is_bot_blocked as recipient_blocked
+         identity.is_bot_blocked as recipient_blocked,
+         identity.channel as recipient_channel
        from public.orders orders
        join public.events events on events.id = orders.event_id
        left join lateral (
-         select external_user_id, is_bot_blocked
+         select external_user_id, is_bot_blocked, channel
          from public.messenger_identities
          where user_id = orders.user_id
-           and channel = 'telegram'
-         order by last_seen_at desc, id
+           and (channel = orders.channel or orders.channel not in ('telegram', 'max'))
+         order by (channel = orders.channel) desc, last_seen_at desc, id
          limit 1
        ) identity on true
        left join lateral (
@@ -210,6 +218,7 @@ implements
       orderNumber: order.order_number,
       eventTitle: order.event_title,
       recipientExternalUserId: order.recipient_external_user_id,
+      recipientChannel: order.recipient_channel,
       recipientBlocked: order.recipient_blocked ?? false,
       tickets: ticketResult.rows.map((ticket) => ({
         id: ticket.id,
@@ -238,8 +247,8 @@ implements
          select username
          from public.messenger_identities
          where user_id = orders.user_id
-           and channel = 'telegram'
-         order by last_seen_at desc, id
+           and (channel = orders.channel or orders.channel not in ('telegram', 'max'))
+         order by (channel = orders.channel) desc, last_seen_at desc, id
          limit 1
        ) identity on true
        left join lateral (
@@ -329,13 +338,13 @@ implements
       this.pool,
       `select
          identity.external_user_id as recipient_external_user_id,
-         identity.is_bot_blocked as recipient_blocked
+         identity.is_bot_blocked as recipient_blocked,
+         identity.channel as recipient_channel
        from public.users users
        left join lateral (
-         select external_user_id, is_bot_blocked
+         select external_user_id, is_bot_blocked, channel
          from public.messenger_identities
          where user_id = users.id
-           and channel = 'telegram'
          order by last_seen_at desc, id
          limit 1
        ) identity on true
@@ -346,6 +355,7 @@ implements
     return row
       ? {
           recipientExternalUserId: row.recipient_external_user_id,
+          recipientChannel: row.recipient_channel,
           recipientBlocked: row.recipient_blocked ?? false
         }
       : null;
@@ -357,13 +367,13 @@ implements
       `select
          e.title as event_title,
          identity.external_user_id as recipient_external_user_id,
-         identity.is_bot_blocked as recipient_blocked
+         identity.is_bot_blocked as recipient_blocked,
+         identity.channel as recipient_channel
        from public.events e
        left join lateral (
-         select external_user_id, is_bot_blocked
+         select external_user_id, is_bot_blocked, channel
          from public.messenger_identities
          where user_id = $1
-           and channel = 'telegram'
          order by last_seen_at desc, id
          limit 1
        ) identity on true
@@ -378,6 +388,7 @@ implements
     return {
       eventTitle: row.event_title,
       recipientExternalUserId: row.recipient_external_user_id,
+      recipientChannel: row.recipient_channel,
       recipientBlocked: row.recipient_blocked ?? false
     };
   }
@@ -436,18 +447,19 @@ implements
       isTest: false,
       recipients: recipientResult.rows.map((row) => ({
         userId: row.user_id,
+        recipientChannel: row.recipient_channel,
         recipientExternalUserId: row.recipient_external_user_id
       }))
     };
   }
 
-  async markRecipientBlocked(userId: string): Promise<void> {
+  async markRecipientBlocked(userId: string, channel: MessengerChannel): Promise<void> {
     await query(
       this.pool,
       `update public.messenger_identities
        set is_bot_blocked = true
-       where user_id = $1 and channel = 'telegram' and is_bot_blocked = false`,
-      [userId]
+       where user_id = $1 and channel = $2::text and is_bot_blocked = false`,
+      [userId, channel]
     );
   }
 
@@ -498,7 +510,7 @@ implements NotificationDeliveryLedger {
            recipient_channel, recipient_id, status, created_at, updated_at
          ) values (
            $1, $2, $3, $4, $5,
-           'telegram', $6, 'pending', $7, $7
+           $8::text, $6, 'pending', $7, $7
          )
          on conflict (idempotency_key) do nothing`,
         [
@@ -508,7 +520,8 @@ implements NotificationDeliveryLedger {
           input.kind,
           input.aggregateId,
           input.recipientId,
-          input.claimedAt
+          input.claimedAt,
+          input.recipientChannel
         ]
       );
       const claimed = await connection.query<DeliveryStateRow>(

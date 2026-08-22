@@ -30,6 +30,8 @@ import type {
 
 export interface ScenarioRuntimeSession {
   readonly id: string;
+  /** Канал разговора. Заказ, собранный сценарием, оформляется в нём же. */
+  readonly channel: MessengerChannel;
   readonly userId: string;
   readonly eventId: string;
   readonly scenarioVersionId: string;
@@ -694,7 +696,8 @@ async function resolveScenarioActions(input: {
         currency: request.currency,
         items,
         wallet: { mode: "none" },
-        source: "telegram_scenario",
+        source: `${input.session.channel}_scenario`,
+        channel: input.session.channel,
         createdAt: input.occurredAt
       });
       const storedOrder = scenarioOrderContext(order);

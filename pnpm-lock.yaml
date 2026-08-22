@@ -168,6 +168,9 @@ importers:
       '@ticket-platform/messenger-core':
         specifier: workspace:*
         version: link:../../packages/messenger-core
+      '@ticket-platform/messenger-max':
+        specifier: workspace:*
+        version: link:../../packages/messenger-max
       '@ticket-platform/messenger-telegram':
         specifier: workspace:*
         version: link:../../packages/messenger-telegram

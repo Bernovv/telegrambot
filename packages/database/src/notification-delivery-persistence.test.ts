@@ -30,7 +30,8 @@ describe("PostgreSQL notification delivery persistence", () => {
       if (text.includes("from public.users users")) {
         return rows([{
           recipient_external_user_id: "123456789",
-          recipient_blocked: false
+          recipient_blocked: false,
+          recipient_channel: "telegram"
         }]);
       }
       return affected();
@@ -53,6 +54,7 @@ describe("PostgreSQL notification delivery persistence", () => {
     assert.equal(admin?.ticketCount, 2);
     assert.equal(admin?.totalKopecks, 249_000n);
     assert.equal(scenario?.recipientExternalUserId, "123456789");
+    assert.equal(scenario?.recipientChannel, "telegram");
     assert.match(
       findQuery(connection, "from public.orders orders").text,
       /orders\.status in \('paid', 'partially_refunded'\)/
@@ -61,9 +63,11 @@ describe("PostgreSQL notification delivery persistence", () => {
       findQuery(connection, "from public.tickets").text,
       /owner_user_id = \$3/
     );
+    // Канала в отборе больше нет: диалог продолжается там, где человек был последний раз,
+    // каким бы мессенджером это ни было.
     assert.match(
       findQuery(connection, "from public.users users").text,
-      /channel = 'telegram'/
+      /identity\.channel as recipient_channel/
     );
   });
 
@@ -71,7 +75,8 @@ describe("PostgreSQL notification delivery persistence", () => {
     const found = new FakeConnection(() => rows([{
       event_title: "Business Picnic",
       recipient_external_user_id: "123456789",
-      recipient_blocked: false
+      recipient_blocked: false,
+      recipient_channel: "telegram"
     }]));
     const repository = new PostgresNotificationContextRepository(new FakePool(found));
 
@@ -80,6 +85,7 @@ describe("PostgreSQL notification delivery persistence", () => {
     assert.deepEqual(context, {
       eventTitle: "Business Picnic",
       recipientExternalUserId: "123456789",
+      recipientChannel: "telegram",
       recipientBlocked: false
     });
     assert.match(findQuery(found, "from public.events e").text, /left join lateral/);
@@ -105,8 +111,8 @@ describe("PostgreSQL notification delivery persistence", () => {
         }]);
       }
       return rows([
-        { user_id: "user-1", recipient_external_user_id: "201" },
-        { user_id: "user-2", recipient_external_user_id: "202" }
+        { user_id: "user-1", recipient_external_user_id: "201", recipient_channel: "telegram" },
+        { user_id: "user-2", recipient_external_user_id: "202", recipient_channel: "max" }
       ]);
     });
     const repository = new PostgresNotificationContextRepository(new FakePool(found));
@@ -119,8 +125,8 @@ describe("PostgreSQL notification delivery persistence", () => {
       image: null,
       button: null,
       recipients: [
-        { userId: "user-1", recipientExternalUserId: "201" },
-        { userId: "user-2", recipientExternalUserId: "202" }
+        { userId: "user-1", recipientChannel: "telegram", recipientExternalUserId: "201" },
+        { userId: "user-2", recipientChannel: "max", recipientExternalUserId: "202" }
       ]
     });
     const audience = findQuery(found, "from public.orders o");
@@ -164,11 +170,11 @@ describe("PostgreSQL notification delivery persistence", () => {
     const connection = new FakeConnection(() => affected());
     const repository = new PostgresNotificationContextRepository(new FakePool(connection));
 
-    await repository.markRecipientBlocked("user-1");
+    await repository.markRecipientBlocked("user-1", "telegram");
 
     const update = findQuery(connection, "set is_bot_blocked = true");
-    assert.match(update.text, /channel = 'telegram' and is_bot_blocked = false/);
-    assert.deepEqual(update.values, ["user-1"]);
+    assert.match(update.text, /channel = \$2::text and is_bot_blocked = false/);
+    assert.deepEqual(update.values, ["user-1", "telegram"]);
   });
 
   it("transitions a broadcast from pending to sending, then to completed with final counts", async () => {
@@ -208,6 +214,7 @@ describe("PostgreSQL notification delivery persistence", () => {
       kind: "ticket_user",
       aggregateId: "ticket-1",
       recipientId: "123456789",
+      recipientChannel: "telegram",
       workerId: "worker-1",
       claimedAt,
       leaseSeconds: 60
@@ -284,7 +291,8 @@ const ticketOrderContextRow = {
   order_number: "BP-ORDER",
   event_title: "Business Picnic",
   recipient_external_user_id: "123456789",
-  recipient_blocked: false
+  recipient_blocked: false,
+  recipient_channel: "telegram"
 } as const;
 
 const ticketRows = [

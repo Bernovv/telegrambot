@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   CreateOrderCommand,
+  OrderChannel,
   CreateOrderResult,
   WalletApplicationCommand
 } from "@ticket-platform/contracts";
@@ -101,6 +102,7 @@ export interface PersistOrderInput {
   readonly offerPublicUrl: string | null;
   readonly expiresAt: Date;
   readonly source: string;
+  readonly channel: OrderChannel;
   readonly createdAt: Date;
   readonly items: readonly PersistOrderItemInput[];
 }
@@ -202,6 +204,7 @@ export class CreateOrderService {
         offerPublicUrl: context.event.activeOfferPublicUrl,
         expiresAt,
         source: command.source,
+        channel: command.channel,
         createdAt: command.createdAt,
         items: pricedItems
       });

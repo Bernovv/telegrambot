@@ -923,6 +923,7 @@ function createService(
     async getScenarioDeliveryContext() {
       return {
         recipientExternalUserId: ticketContext.recipientExternalUserId,
+        recipientChannel: "telegram" as const,
         recipientBlocked: false
       };
     }
@@ -976,6 +977,7 @@ const ticketContext: TicketDeliveryContext = {
   orderNumber: "BP-ORDER",
   eventTitle: "Business Picnic",
   recipientExternalUserId: "123456789",
+  recipientChannel: "telegram" as const,
   recipientBlocked: false,
   tickets: [
     {
@@ -1113,6 +1115,7 @@ const questionnaireJob = {
 
 const reminderContext: ReminderRecipientContext = {
   recipientExternalUserId: "123456789",
+  recipientChannel: "telegram" as const,
   recipientBlocked: false,
   eventTitle: "Business Picnic"
 };
@@ -1143,8 +1146,8 @@ const broadcastContext: BroadcastContext = {
   image: null,
   button: null,
   recipients: [
-    { userId: "019c0123-4567-789a-bcde-f0123456799e", recipientExternalUserId: "201" },
-    { userId: "019c0123-4567-789a-bcde-f0123456799f", recipientExternalUserId: "202" }
+    { userId: "019c0123-4567-789a-bcde-f0123456799e", recipientChannel: "telegram" as const, recipientExternalUserId: "201" },
+    { userId: "019c0123-4567-789a-bcde-f0123456799f", recipientChannel: "telegram" as const, recipientExternalUserId: "202" }
   ]
 };
 

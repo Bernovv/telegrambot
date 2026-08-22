@@ -185,6 +185,8 @@ export interface WorkerConfig extends AppConfig {
   readonly zvonobotPollIntervalMs: number;
   /** Служебная учётная запись из миграции 20260822160000: от её имени заводится заявка. */
   readonly zvonobotSystemAdminId: string;
+  /** Отправитель уведомлений в MAX. Выключен — билеты по заказам MAX доставлены не будут. */
+  readonly max: MaxChannelConfig;
   /** Страна по умолчанию при разборе телефонов: та же, что у вебхука Telegram. */
   readonly phoneDefaultCountry: string;
   readonly tbankReconciliation: TBankReconciliationConfig;
@@ -530,6 +532,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       3_600_000
     ),
     zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
+    max: loadMaxChannelConfig(env),
     tbankReconciliation,
     telegramNotifications
   };
