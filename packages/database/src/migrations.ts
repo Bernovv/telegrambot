@@ -294,5 +294,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823120000_activity_without_campaign",
     description: "Let a touchpoint exist outside a campaign and without a manager as its author",
     destructive: false
+  },
+  {
+    id: "20260823150000_attachment_download_attempts",
+    description: "Track attachment download attempts so one network blip is not a permanent failure",
+    destructive: false
   }
 ];

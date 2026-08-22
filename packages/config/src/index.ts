@@ -183,6 +183,7 @@ export interface WorkerConfig extends AppConfig {
   readonly autoTaskPollIntervalMs: number;
   readonly zvonobotBatchSize: number;
   readonly zvonobotPollIntervalMs: number;
+  readonly conversationAttachments: ConversationAttachmentsConfig;
   /** Служебная учётная запись из миграции 20260822160000: от её имени заводится заявка. */
   readonly zvonobotSystemAdminId: string;
   /** Отправитель уведомлений в MAX. Выключен — билеты по заказам MAX доставлены не будут. */
@@ -202,6 +203,74 @@ export interface WorkerConfig extends AppConfig {
         readonly localConcurrency: number;
         readonly broadcastMessagesPerSecond: number;
       };
+}
+
+/**
+ * Скачивание вложений переписки.
+ *
+ * Выключено, пока не задана папка. Это не осторожность ради осторожности: проход, которому
+ * некуда писать, ронял бы каждую попытку и за сутки довёл бы все вложения до потолка
+ * попыток — то есть тихо превратил бы «файлы у нас» в «файлов нет».
+ */
+export interface ConversationAttachmentsConfig {
+  readonly enabled: boolean;
+  /** Папка на диске. Внутри раскладка по годам и месяцам. */
+  readonly directory: string;
+  readonly batchSize: number;
+  readonly pollIntervalMs: number;
+  readonly maxBytes: number;
+  readonly maxAttempts: number;
+  readonly retryDelayMs: number;
+  readonly downloadTimeoutMs: number;
+}
+
+function loadConversationAttachmentsConfig(
+  env: NodeJS.ProcessEnv
+): ConversationAttachmentsConfig {
+  const directory = (env.CONVERSATION_FILES_DIR ?? "").trim();
+  return {
+    enabled: directory !== "",
+    directory,
+    batchSize: parseBoundedInteger(
+      env.CONVERSATION_FILES_BATCH_SIZE ?? "20",
+      "CONVERSATION_FILES_BATCH_SIZE",
+      1,
+      200
+    ),
+    // Пять минут: вложение нужно не сию секунду, а к тому моменту, когда менеджер откроет
+    // диалог. Ломиться за файлами чаще — зря дёргать чужой api.
+    pollIntervalMs: parseBoundedInteger(
+      env.CONVERSATION_FILES_POLL_INTERVAL_MS ?? "300000",
+      "CONVERSATION_FILES_POLL_INTERVAL_MS",
+      10_000,
+      3_600_000
+    ),
+    // 50 МБ — предел самого Telegram для бота. Больше он и не отдаст.
+    maxBytes: parseBoundedInteger(
+      env.CONVERSATION_FILES_MAX_BYTES ?? "52428800",
+      "CONVERSATION_FILES_MAX_BYTES",
+      1_024,
+      2_147_483_648
+    ),
+    maxAttempts: parseBoundedInteger(
+      env.CONVERSATION_FILES_MAX_ATTEMPTS ?? "5",
+      "CONVERSATION_FILES_MAX_ATTEMPTS",
+      1,
+      100
+    ),
+    retryDelayMs: parseBoundedInteger(
+      env.CONVERSATION_FILES_RETRY_DELAY_MS ?? "60000",
+      "CONVERSATION_FILES_RETRY_DELAY_MS",
+      1_000,
+      3_600_000
+    ),
+    downloadTimeoutMs: parseBoundedInteger(
+      env.CONVERSATION_FILES_TIMEOUT_MS ?? "30000",
+      "CONVERSATION_FILES_TIMEOUT_MS",
+      1_000,
+      300_000
+    )
+  };
 }
 
 export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -532,6 +601,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
       3_600_000
     ),
     zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
+    conversationAttachments: loadConversationAttachmentsConfig(env),
     max: loadMaxChannelConfig(env),
     tbankReconciliation,
     telegramNotifications

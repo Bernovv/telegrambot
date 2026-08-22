@@ -98,7 +98,8 @@ export default tseslint.config(
       "apps/worker/src/broadcast-status.ts",
       "apps/worker/src/import-participants.ts",
       "apps/worker/src/import-expenses.ts",
-      "apps/worker/src/clear-participants.ts"
+      "apps/worker/src/clear-participants.ts",
+      "apps/worker/src/conversation-files.ts"
     ],
     rules: {
       "no-console": "off"

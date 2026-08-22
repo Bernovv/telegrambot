@@ -12,6 +12,7 @@
     "expenses-import": "node --env-file=../../.env --import tsx src/import-expenses.ts",
     "participants-clear": "node --env-file=../../.env --import tsx src/clear-participants.ts",
     "broadcast-status": "node --env-file=../../.env --import tsx src/broadcast-status.ts",
+    "conversation-files": "node --env-file=../../.env --import tsx src/conversation-files.ts",
     "lint": "node ../../scripts/noop.mjs lint @ticket-platform/worker",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/*.test.ts"

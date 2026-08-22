@@ -24,6 +24,7 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
+import { createAttachmentDownloadPersistence } from "../src/conversation-attachment-persistence.js";
 import { createConversationPersistence } from "../src/conversation-persistence.js";
 import {
   createZvonobotIntakePersistence,
@@ -560,6 +561,40 @@ async function main(): Promise<void> {
     deliveryStatus: "sent",
     failureReason: null,
     occurredAt: new Date(now.getTime() + 130_000)
+  }));
+
+  // Очередь скачивания вложений. Отбор здесь — не обычный select: одним запросом идут
+  // блокировка с пропуском занятых, аренда строки и join до канала через две таблицы.
+  // Ровно такой запрос Postgres и отвергает целиком, если в нём ошибиться колонкой.
+  const attachments = createAttachmentDownloadPersistence(pool).repository;
+  await check("attachments claimPending", async () => {
+    const claimed = await attachments.claimPending({ batchSize: 5, at: now });
+    console.log(`        вложений в очереди: ${String(claimed.length)}`);
+    for (const attachment of claimed) {
+      // Возвращаем взятое обратно в очередь: смоук не должен оставлять за собой
+      // арендованные строки, которые следующий прогон не увидит.
+      await attachments.markAttemptFailed({
+        attachmentId: attachment.id,
+        reason: "смоук",
+        at: now,
+        retryAt: now
+      });
+    }
+  });
+  await check("attachments markStored", () => attachments.markStored({
+    attachmentId: randomUUID(),
+    stored: {
+      storagePath: "2026/08/smoke.ogg",
+      sha256: "a".repeat(64),
+      sizeBytes: 4_096
+    },
+    at: now
+  }));
+  await check("attachments markAttemptFailed", () => attachments.markAttemptFailed({
+    attachmentId: randomUUID(),
+    reason: "смоук",
+    at: now,
+    retryAt: null
   }));
 
   await pool.close();

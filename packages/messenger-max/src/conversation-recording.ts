@@ -1,3 +1,4 @@
+import type { AttachmentSource } from "@ticket-platform/application";
 import type {
   AttachmentKind,
   ConversationRecorder,
@@ -104,9 +105,12 @@ function attachmentsOf(
       fileName: text(attachment.payload?.["filename"]) ?? text(attachment.payload?.["name"]),
       mimeType: null,
       sizeBytes: number(attachment.payload?.["size"]),
-      externalFileId: text(attachment.payload?.["token"])
+      // Ссылка идёт первой, а не токен: по ссылке файл можно забрать к себе, а токен —
+      // это то, чем в MAX отправляют, а не скачивают. Из двух опознавателей выбираем тот,
+      // с которым вложение переживёт мессенджер.
+      externalFileId: text(attachment.payload?.["url"])
+        ?? text(attachment.payload?.["token"])
         ?? text(attachment.payload?.["file_id"])
-        ?? text(attachment.payload?.["url"])
     }));
 }
 
@@ -141,4 +145,44 @@ function text(value: unknown): string | null {
 
 function number(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Забирает файл у MAX.
+ *
+ * У MAX нет отдельного вызова «дай файл по идентификатору», как `getFile` у Telegram:
+ * вложение приезжает со ссылкой прямо в обновлении. Поэтому загрузчик умеет ровно то, что
+ * умеет их API, — скачать по ссылке.
+ *
+ * Вложение без ссылки честно возвращает `null`. Служба пометит его неудачей с причиной, и
+ * это правильнее, чем тихо считать такой файл сохранённым: в базе останется строка, по
+ * которой видно, что забрать не удалось и что именно.
+ */
+export function createMaxAttachmentSource(
+  options: { readonly timeoutMs?: number } = {}
+): AttachmentSource {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+
+  return {
+    async download(attachment) {
+      const url = attachment.externalFileId;
+      if (url === null || !/^https?:\/\//.test(url)) {
+        return null;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`MAX отдал файл с кодом ${String(response.status)}`);
+        }
+        return {
+          bytes: new Uint8Array(await response.arrayBuffer()),
+          fileName: attachment.fileName
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  };
 }

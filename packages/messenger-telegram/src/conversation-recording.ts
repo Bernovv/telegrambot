@@ -1,3 +1,4 @@
+import type { AttachmentSource } from "@ticket-platform/application";
 import type {
   AttachmentKind,
   ConversationRecorder,
@@ -232,4 +233,75 @@ function attachment(kind: AttachmentKind, file: TelegramFile): IncomingAttachmen
     sizeBytes: file.file_size ?? null,
     externalFileId: file.file_id ?? null
   };
+}
+
+/**
+ * Забирает файл у Telegram.
+ *
+ * Два шага, и второй — тот, о который спотыкаются: `getFile` отдаёт не файл, а путь, и
+ * скачивается он с другого адреса — `<апи>/file/bot<токен>/<путь>`. С этого сервера оба
+ * адреса идут через тот же прокси, что и всё остальное: напрямую Telegram отсюда
+ * недоступен, и загрузчик обязан ходить туда же, куда ходит бот.
+ *
+ * Путь живёт около часа. Это и есть причина, по которой файлы переезжают к нам, а не
+ * хранятся ссылкой: через час ссылка мертва, а через год мёртв и сам идентификатор.
+ */
+export function createTelegramAttachmentSource(
+  token: string,
+  options: { readonly apiRoot?: string; readonly timeoutMs?: number } = {}
+): AttachmentSource {
+  const apiRoot = (options.apiRoot ?? "https://api.telegram.org").replace(/\/+$/, "");
+  const timeoutMs = options.timeoutMs ?? 30_000;
+
+  return {
+    async download(attachment) {
+      if (attachment.externalFileId === null) {
+        return null;
+      }
+      const described = await request<{
+        readonly ok?: boolean;
+        readonly result?: { readonly file_path?: string; readonly file_size?: number };
+      }>(
+        `${apiRoot}/bot${token}/getFile?file_id=${encodeURIComponent(attachment.externalFileId)}`,
+        timeoutMs
+      );
+      const filePath = described.result?.file_path;
+      if (typeof filePath !== "string" || filePath === "") {
+        // Telegram ответил, но пути не дал: файла у него больше нет. Повторять нечего.
+        return null;
+      }
+
+      const response = await fetchWithTimeout(
+        `${apiRoot}/file/bot${token}/${filePath}`,
+        timeoutMs
+      );
+      if (!response.ok) {
+        throw new Error(`Telegram отдал файл с кодом ${String(response.status)}`);
+      }
+      return {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        // Имя из пути: у голосовых и фотографий своего имени нет, а расширение оттуда
+        // берётся правильное.
+        fileName: filePath.split("/").pop() ?? null
+      };
+    }
+  };
+}
+
+async function request<T>(url: string, timeoutMs: number): Promise<T> {
+  const response = await fetchWithTimeout(url, timeoutMs);
+  if (!response.ok) {
+    throw new Error(`Telegram ответил кодом ${String(response.status)}`);
+  }
+  return await response.json() as T;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }

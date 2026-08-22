@@ -28,6 +28,7 @@
     "expenses:import": "pnpm --filter @ticket-platform/worker expenses-import --",
     "participants:clear": "pnpm --filter @ticket-platform/worker participants-clear --",
     "broadcast:status": "pnpm --filter @ticket-platform/worker broadcast-status --",
+    "conversations:files": "pnpm --filter @ticket-platform/worker conversation-files",
     "db:pgboss:generate": "node scripts/generate-pgboss-migration.mjs",
     "db:pgboss:check": "node scripts/generate-pgboss-migration.mjs --check",
     "admin:bootstrap": "node --import tsx scripts/bootstrap-admin.ts",

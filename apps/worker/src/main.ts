@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   ConfirmPaymentService,
   ConversationLog,
+  DownloadConversationAttachmentsBatchService,
   DispatchOutboxBatchService,
   DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   ExpireOrdersBatchService,
@@ -24,6 +25,7 @@ import { loadWorkerConfig } from "@ticket-platform/config";
 import type { DomainEventJobV1 } from "@ticket-platform/contracts";
 import {
   createAdminOutreachPersistence,
+  createAttachmentDownloadPersistence,
   createConversationPersistence,
   createEventCampaignSyncPersistence,
   createAutoTaskPersistence,
@@ -40,9 +42,17 @@ import {
   PostgresWorkerHeartbeatRepository
 } from "@ticket-platform/database";
 import { LibPhoneNumberNormalizer } from "@ticket-platform/messenger-core";
-import { MaxApi, MaxNotificationSender } from "@ticket-platform/messenger-max";
-import { createTelegramNotificationSender } from "@ticket-platform/messenger-telegram";
+import {
+  MaxApi,
+  MaxNotificationSender,
+  createMaxAttachmentSource
+} from "@ticket-platform/messenger-max";
+import {
+  createTelegramAttachmentSource,
+  createTelegramNotificationSender
+} from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
+import { FileSystemAttachmentStorage } from "./conversation-file-storage.js";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
 import { QrTicketPngRenderer } from "@ticket-platform/ticket-rendering";
 import { PgBoss } from "pg-boss";
@@ -167,18 +177,51 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextEventCampaignSyncSweepAt = 0;
   let nextAutoTaskSweepAt = 0;
   let nextZvonobotSweepAt = 0;
+  let nextAttachmentSweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
   let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
   let lastEventCampaignSyncSweepAt: string | null = null;
   let lastAutoTaskSweepAt: string | null = null;
   let lastZvonobotSweepAt: string | null = null;
+  let lastAttachmentSweepAt: string | null = null;
   const orderExpiryWorkload = "order-expiry";
   const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
   const eventCampaignSyncWorkload = "event-campaign-sync";
   const autoTaskWorkload = "outreach-auto-tasks";
   const zvonobotWorkload = "zvonobot-calls";
+  const attachmentWorkload = "conversation-attachments";
+  // Скачивание вложений. Без папки не поднимается вовсе: проход, которому некуда писать,
+  // за сутки довёл бы каждое вложение до потолка попыток — то есть тихо превратил бы
+  // «файлы у нас» в «файлов нет», и заметили бы это через год по битым ссылкам.
+  const attachmentsConfig = config.conversationAttachments;
+  const downloadAttachments = attachmentsConfig.enabled
+    ? new DownloadConversationAttachmentsBatchService(
+      createAttachmentDownloadPersistence(pool).repository,
+      {
+        ...(config.telegramNotifications.enabled
+          ? {
+            telegram: createTelegramAttachmentSource(config.telegramNotifications.botToken, {
+              ...(config.telegramNotifications.apiRoot
+                ? { apiRoot: config.telegramNotifications.apiRoot }
+                : {}),
+              timeoutMs: attachmentsConfig.downloadTimeoutMs
+            })
+          }
+          : {}),
+        ...(config.max.enabled
+          ? { max: createMaxAttachmentSource({ timeoutMs: attachmentsConfig.downloadTimeoutMs }) }
+          : {})
+      },
+      new FileSystemAttachmentStorage(attachmentsConfig.directory),
+      {
+        maxAttempts: attachmentsConfig.maxAttempts,
+        retryDelayMs: attachmentsConfig.retryDelayMs,
+        maxBytes: attachmentsConfig.maxBytes
+      }
+    )
+    : null;
   const workloads = [
     OUTBOX_DISPATCH_QUEUE,
     orderExpiryWorkload,
@@ -186,6 +229,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     eventCampaignSyncWorkload,
     autoTaskWorkload,
     zvonobotWorkload,
+    ...(config.conversationAttachments.enabled ? [attachmentWorkload] : []),
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -222,7 +266,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           lastTBankReconciliationSweepAt,
           lastEventCampaignSyncSweepAt,
           lastAutoTaskSweepAt,
-          lastZvonobotSweepAt
+          lastZvonobotSweepAt,
+          lastAttachmentSweepAt
         }
       });
     } catch (error) {
@@ -516,6 +561,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextZvonobotSweepAt = Date.now() + config.zvonobotPollIntervalMs;
+        }
+      }
+
+      if (downloadAttachments && Date.now() >= nextAttachmentSweepAt) {
+        currentJobId = attachmentWorkload;
+
+        try {
+          const result = await downloadAttachments.execute({
+            at: new Date(),
+            batchSize: config.conversationAttachments.batchSize
+          });
+          lastAttachmentSweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("conversation attachments downloaded", {
+              claimed: result.claimed,
+              stored: result.stored,
+              retried: result.retried,
+              failed: result.failed
+            });
+          }
+        } catch (error) {
+          logger.error("conversation attachment batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextAttachmentSweepAt = Date.now() + config.conversationAttachments.pollIntervalMs;
         }
       }
 
