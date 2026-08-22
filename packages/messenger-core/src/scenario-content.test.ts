@@ -117,14 +117,22 @@ describe("scenario-content", () => {
     assert.ok(noActiveDraftReply().inlineButtons?.length);
   });
 
-  it("builds a partner link from the referrer's own Telegram user ID, with no new storage", () => {
-    const reply = partnerLinkReply("123456789", "business_proriv_bot");
+  it("builds a partner link from the referrer's own user ID, with no new storage", () => {
+    const reply = partnerLinkReply("123456789", "business_proriv_bot", "telegram");
 
     assert.equal(reply.text, "Ваша партнёрская ссылка 🔗\nhttps://t.me/business_proriv_bot?start=partner_123456789");
   });
 
+  it("отдаёт ссылку того мессенджера, в котором её попросили", () => {
+    // Ссылка на чужой мессенджер бота не откроет: тот, кому её переслали, не дойдёт до
+    // покупки, а партнёр не увидит комиссии.
+    const reply = partnerLinkReply("123456789", "business_proriv_bot", "max");
+
+    assert.equal(reply.text, "Ваша партнёрская ссылка 🔗\nhttps://max.ru/business_proriv_bot?start=partner_123456789");
+  });
+
   it("asks the user to try again later when the bot username is not yet known", () => {
-    const reply = partnerLinkReply("123456789", null);
+    const reply = partnerLinkReply("123456789", null, "telegram");
 
     assert.doesNotMatch(reply.text, /https:\/\//);
   });

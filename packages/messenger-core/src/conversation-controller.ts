@@ -329,7 +329,7 @@ export class ConversationController {
     if (!await this.isUnlocked(sender)) {
       return [phoneRequiredReply()];
     }
-    return [partnerLinkReply(sender.externalUserId, botUsername)];
+    return [partnerLinkReply(sender.externalUserId, botUsername, sender.channel)];
   }
 
   async onMyBonuses(sender: ChannelIdentity): Promise<readonly ReplyModel[]> {

@@ -1,3 +1,4 @@
+import type { MessengerChannel } from "@ticket-platform/domain";
 import type { InlineButton, ReplyModel } from "./conversation-controller.js";
 
 /**
@@ -361,15 +362,27 @@ export function myBonusesUnavailableReply(): ReplyModel {
  * touchpoint. Resolving the code back to its owner (to credit a referral commission) is Phase 3
  * work — see packages/database messenger_identities lookup by (channel, external_user_id).
  */
-export function partnerLinkReply(externalUserId: string, botUsername: string | null): ReplyModel {
+/**
+ * Партнёрская ссылка.
+ *
+ * Хост у каждого мессенджера свой: `t.me` у Telegram, `max.ru` у MAX. Общей она быть не
+ * может — ссылка на чужой мессенджер не откроет бота, а человек, которому её переслали,
+ * просто не дойдёт до покупки, и партнёр не увидит своей комиссии.
+ */
+export function partnerLinkReply(
+  externalUserId: string,
+  botUsername: string | null,
+  channel: MessengerChannel
+): ReplyModel {
   if (!botUsername) {
     return {
       text: "Бот пока не сообщил свой username — попробуйте ещё раз через пару минут."
     };
   }
 
+  const host = channel === "max" ? "https://max.ru" : "https://t.me";
   return {
-    text: `Ваша партнёрская ссылка 🔗\nhttps://t.me/${botUsername}?start=partner_${externalUserId}`,
+    text: `Ваша партнёрская ссылка 🔗\n${host}/${botUsername}?start=partner_${externalUserId}`,
     inlineButtons: [
       { text: "Мои бонусы", callbackData: "my_bonuses" },
       { text: "Назад", callbackData: "start" }
