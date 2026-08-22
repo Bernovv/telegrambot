@@ -27,7 +27,8 @@ import { createSiteRegistrationPersistence } from "../src/site-registration-pers
 import {
   createAdminConversationsPersistence,
   createAttachmentFilePersistence,
-  createConversationReplyPersistence
+  createConversationReplyPersistence,
+  createConversationReplyQueue
 } from "../src/admin-conversation-persistence.js";
 import { createAttachmentDownloadPersistence } from "../src/conversation-attachment-persistence.js";
 import { createConversationPersistence } from "../src/conversation-persistence.js";
@@ -650,6 +651,8 @@ async function main(): Promise<void> {
   // блокировкой с арендой и джойном до диалога: и то и другое Postgres отвергает целиком,
   // если ошибиться колонкой, а тесты этого не видят.
   const replies = createConversationReplyPersistence(pool);
+  const replyQueue = createConversationReplyQueue(pool, "bot");
+  const accountReplyQueue = createConversationReplyQueue(pool, "account");
   await check("conversations queueReply в несуществующий диалог", async () => {
     const result = await replies.repository.queueReply({
       conversationId: randomUUID(),
@@ -663,16 +666,22 @@ async function main(): Promise<void> {
       throw new Error("несуществующий диалог не должен принимать ответ");
     }
   });
-  await check("conversations claimQueued", () => replies.queue.claimQueued({
+  await check("conversations claimQueued", () => replyQueue.queue.claimQueued({
     batchSize: 5,
     at: now
   }));
-  await check("conversations markSent", () => replies.queue.markSent({
+  // Та же очередь другим транспортом: её читает процесс аккаунта, и её молчание выглядит
+  // ровно так же, как отсутствие ответов, — то есть никак.
+  await check("conversations claimQueued (аккаунт)", () => accountReplyQueue.queue.claimQueued({
+    batchSize: 5,
+    at: now
+  }));
+  await check("conversations markSent", () => replyQueue.queue.markSent({
     messageId: randomUUID(),
     providerMessageId: "1",
     at: now
   }));
-  await check("conversations markAttemptFailed", () => replies.queue.markAttemptFailed({
+  await check("conversations markAttemptFailed", () => replyQueue.queue.markAttemptFailed({
     messageId: randomUUID(),
     reason: "смоук",
     at: now,

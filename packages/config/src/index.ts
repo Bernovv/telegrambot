@@ -362,7 +362,7 @@ export interface ConversationRepliesConfig {
   readonly retryDelayMs: number;
 }
 
-function loadConversationRepliesConfig(
+export function loadConversationRepliesConfig(
   env: NodeJS.ProcessEnv
 ): ConversationRepliesConfig {
   return {

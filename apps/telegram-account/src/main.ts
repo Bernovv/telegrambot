@@ -17,27 +17,43 @@
  *
  * Чего пока не делает: не отправляет. Ответ из панели по этому каналу — следующий шаг.
  */
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { v7 as uuidv7 } from "uuid";
-import { ConversationLog, DownloadConversationAttachmentsBatchService } from "@ticket-platform/application";
+import {
+  ConversationLog,
+  DownloadConversationAttachmentsBatchService,
+  SendConversationRepliesBatchService
+} from "@ticket-platform/application";
 import type { IdGenerator } from "@ticket-platform/application";
-import { loadAppConfig, loadConversationAttachmentsConfig } from "@ticket-platform/config";
+import {
+  loadAppConfig,
+  loadConversationAttachmentsConfig,
+  loadConversationRepliesConfig
+} from "@ticket-platform/config";
 import {
   createConversationPersistence,
   createAttachmentDownloadPersistence,
+  createConversationReplyQueue,
   createNodePostgresPool
 } from "@ticket-platform/database";
 import {
   createTdlibAttachmentSource,
+  createTdlibReplySender,
   incomingPrivateMessage,
   participantOf,
   readAccountIdentity,
   readAuthorizationState,
+  sessionPaths,
+  TdlibSendConfirmations,
   toIncomingMessage
 } from "@ticket-platform/messenger-telegram-account";
 import { createLogger } from "@ticket-platform/observability";
 import { openAccount, reportConnection } from "./bootstrap.js";
-import { FileSystemAttachmentStorage } from "./conversation-file-storage.js";
+import {
+  FileSystemAttachmentReader,
+  FileSystemAttachmentStorage
+} from "./conversation-file-storage.js";
 
 async function main(): Promise<void> {
   const app = loadAppConfig(process.env);
@@ -105,6 +121,26 @@ async function main(): Promise<void> {
     });
   }
 
+  // Ответы менеджера из панели. Очередь та же, что у бота, но отобранная по транспорту:
+  // ответ, написанный в аккаунт, обязан уйти от аккаунта. Ушедший от бота — это письмо от
+  // другого собеседника, чем тот, с которым человек разговаривал.
+  const replyOptions = loadConversationRepliesConfig(process.env);
+  const replies = new SendConversationRepliesBatchService(
+    createConversationReplyQueue(pool, "account").queue,
+    {
+      telegram: createTdlibReplySender(client, new TdlibSendConfirmations(client), {
+        outgoingDirectory: join(sessionPaths(config.sessionDirectory).filesDirectory, "outgoing")
+      })
+    },
+    {
+      maxAttempts: replyOptions.maxAttempts,
+      retryDelayMs: replyOptions.retryDelayMs,
+      pauseBetweenMs: replyOptions.pauseBetweenMs
+    },
+    undefined,
+    attachments.enabled ? new FileSystemAttachmentReader(attachments.directory) : null
+  );
+
   client.on("update", (update) => {
     const incoming = incomingPrivateMessage(update);
     if (incoming === null) {
@@ -154,8 +190,30 @@ async function main(): Promise<void> {
   await reportConnection(client);
   logger.info("listening", { proxy: config.proxy === null ? "none" : config.proxy.kind });
 
+  // Два прохода с разной частотой: ответ менеджера человек ждёт прямо сейчас, а вложение
+  // нужно к моменту, когда диалог откроют. Отсюда отдельные сроки, а не общий такт.
+  let nextAttachmentSweepAt = 0;
   while (!stopping.now) {
-    if (downloads !== null) {
+    try {
+      const sent = await replies.execute({
+        at: new Date(),
+        batchSize: replyOptions.batchSize
+      });
+      if (sent.claimed > 0) {
+        logger.info("replies sent", {
+          claimed: sent.claimed,
+          sent: sent.sent,
+          retried: sent.retried,
+          failed: sent.failed
+        });
+      }
+    } catch (error) {
+      logger.error("reply sweep failed", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    if (downloads !== null && Date.now() >= nextAttachmentSweepAt) {
       try {
         const result = await downloads.execute({
           at: new Date(),
@@ -174,8 +232,10 @@ async function main(): Promise<void> {
           errorMessage: error instanceof Error ? error.message : String(error)
         });
       }
+      nextAttachmentSweepAt = Date.now() + attachments.pollIntervalMs;
     }
-    await delay(attachments.pollIntervalMs);
+
+    await delay(replyOptions.pollIntervalMs);
   }
 
   await client.close();

@@ -7,6 +7,7 @@ import type {
 import type {
   AdminConversationsRepository,
   AttachmentFileRepository,
+  ConversationTransport,
   StoredAttachmentFile,
   ConversationReplyQueueRepository,
   ConversationReplyRepository,
@@ -434,7 +435,16 @@ const REPLY_LEASE_SECONDS = 120;
 
 export class PostgresConversationReplyQueueRepository
 implements ConversationReplyQueueRepository {
-  constructor(private readonly pool: SqlConnectionPool) {}
+  constructor(
+    private readonly pool: SqlConnectionPool,
+    /**
+     * Чей это ответ. Очередь одна на всех, а отправителей двое и живут они в разных
+     * процессах: воркер умеет писать от имени бота, аккаунт компании — от своего имени.
+     * Без отбора ответ, написанный в аккаунт, уходил бы от бота — то есть человек получал
+     * бы его от другого собеседника, чем тот, с которым разговаривал.
+     */
+    private readonly transport: ConversationTransport
+  ) {}
 
   async claimQueued(input: {
     readonly batchSize: number;
@@ -457,7 +467,10 @@ implements ConversationReplyQueueRepository {
         `with claimed as (
            select message.id
              from public.conversation_messages message
+             join public.conversations conversation
+               on conversation.id = message.conversation_id
             where message.delivery_status = 'queued'
+              and conversation.transport = $4::text
               and (message.next_attempt_at is null
                    or message.next_attempt_at <= $2::timestamptz)
             order by message.next_attempt_at nulls first, message.occurred_at
@@ -486,7 +499,7 @@ implements ConversationReplyQueueRepository {
               order by created_at
               limit 1
            ) attachment on true`,
-        [input.batchSize, input.at, REPLY_LEASE_SECONDS]
+        [input.batchSize, input.at, REPLY_LEASE_SECONDS, this.transport]
       );
 
       return result.rows.map((row) => ({
@@ -562,10 +575,20 @@ implements ConversationReplyQueueRepository {
 }
 
 export function createConversationReplyPersistence(pool: SqlConnectionPool) {
-  return {
-    repository: new PostgresConversationReplyRepository(pool),
-    queue: new PostgresConversationReplyQueueRepository(pool)
-  } as const;
+  return { repository: new PostgresConversationReplyRepository(pool) } as const;
+}
+
+/**
+ * Очередь отправки — отдельной фабрикой и обязательно с транспортом.
+ *
+ * Отдельной, потому что читают её не там же, где пишут: панель через api кладёт ответ в
+ * очередь, а забирают его два разных процесса, каждый свой транспорт.
+ */
+export function createConversationReplyQueue(
+  pool: SqlConnectionPool,
+  transport: ConversationTransport
+) {
+  return { queue: new PostgresConversationReplyQueueRepository(pool, transport) } as const;
 }
 
 /**

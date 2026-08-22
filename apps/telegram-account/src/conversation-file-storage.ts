@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   attachmentRelativePath,
+  type AttachmentReader,
   type AttachmentStorage,
   type StoredAttachment
 } from "@ticket-platform/application";
@@ -44,5 +45,29 @@ export class FileSystemAttachmentStorage implements AttachmentStorage {
       sha256: createHash("sha256").update(input.bytes).digest("hex"),
       sizeBytes: input.bytes.byteLength
     };
+  }
+}
+
+/**
+ * Чтение файла из папки вложений — для отправки того, что менеджер приложил в панели.
+ *
+ * Путь берётся из базы и приходит относительным; выход за папку отвергается той же
+ * проверкой, что у воркера и api. Строку в базу кладём мы сами, но проверка стоит на день,
+ * когда туда попадёт то, чего мы не ждали.
+ */
+export class FileSystemAttachmentReader implements AttachmentReader {
+  constructor(private readonly rootDir: string) {}
+
+  async read(storagePath: string): Promise<Uint8Array> {
+    const root = resolve(this.rootDir);
+    if (storagePath.trim() === "" || isAbsolute(storagePath)) {
+      throw new Error("Путь вложения недопустим");
+    }
+    const full = resolve(root, storagePath);
+    if (full !== root && !full.startsWith(`${root}${sep}`)) {
+      throw new Error("Путь вложения ведёт за пределы папки");
+    }
+
+    return await readFile(full);
   }
 }

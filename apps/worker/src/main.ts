@@ -28,7 +28,7 @@ import {
   createAdminOutreachPersistence,
   createAttachmentDownloadPersistence,
   createConversationPersistence,
-  createConversationReplyPersistence,
+  createConversationReplyQueue,
   createEventCampaignSyncPersistence,
   createAutoTaskPersistence,
   createZvonobotProcessingPersistence,
@@ -348,7 +348,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         ...(maxSender ? { max: maxSender } : {})
       };
       sendReplies = new SendConversationRepliesBatchService(
-        createConversationReplyPersistence(pool).queue,
+        createConversationReplyQueue(pool, "bot").queue,
         replySenders,
         {
           maxAttempts: config.conversationReplies.maxAttempts,

@@ -282,7 +282,7 @@ function ReplyComposer({
                 : "conversation-composer-channel"}
               onClick={() => setConversationId(thread.conversationId)}
             >
-              {channelName(thread.channel)}
+              {threadName(thread, threads)}
             </button>
           ))}
         </div>
@@ -293,7 +293,11 @@ function ReplyComposer({
         value={text}
         rows={3}
         maxLength={4000}
-        placeholder={`Ответ в ${channelName(threads.find((thread) => thread.conversationId === conversationId)?.channel ?? "telegram")}`}
+        placeholder={`Ответ в ${(() => {
+          const thread = threads.find((item) => item.conversationId === conversationId);
+
+          return thread ? threadName(thread, threads) : "Telegram";
+        })()}`}
         disabled={busy}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
@@ -383,10 +387,9 @@ function ThreadChip({ thread }: { readonly thread: AdminConversationThread }) {
         : "Реплик пока не было"}
     >
       <Icon size={14} />
-      {channelName(thread.channel)}
       {/* Бот и аккаунт компании — два разных собеседника для человека, и в ленте они
-          обязаны быть различимы. Пока аккаунта нет, подпись появляется только у него. */}
-      {thread.transport === "account" ? " · аккаунт" : null}
+          обязаны быть различимы. */}
+      {thread.transport === "account" ? `${channelName(thread.channel)} · аккаунт` : channelName(thread.channel)}
       <span className="conversation-thread-count">{thread.messageCount}</span>
       {thread.assignedAdminName ? (
         <span className="conversation-thread-assignee">{thread.assignedAdminName}</span>
@@ -531,6 +534,27 @@ function attachmentName(attachment: AdminConversationAttachment): string {
 
 function channelName(channel: "telegram" | "max"): string {
   return channel === "telegram" ? "Telegram" : "MAX";
+}
+
+/**
+ * Как называется ветка в выборе «куда ответить».
+ *
+ * Пометка про транспорт появляется только тогда, когда без неё не обойтись — когда в том же
+ * мессенджере есть и бот, и аккаунт компании. Две одинаковые надписи «Telegram» здесь не
+ * мелкая неаккуратность: менеджер выбирает вслепую и отвечает не от того имени, с которым
+ * человек разговаривал. Там, где ветка одна, лишнее слово только мешает.
+ */
+function threadName(
+  thread: AdminConversationThread,
+  threads: readonly AdminConversationThread[]
+): string {
+  const ambiguous = threads.some((other) =>
+    other.conversationId !== thread.conversationId && other.channel === thread.channel);
+  if (!ambiguous) {
+    return channelName(thread.channel);
+  }
+
+  return `${channelName(thread.channel)} · ${thread.transport === "account" ? "аккаунт" : "бот"}`;
 }
 
 function formatSize(bytes: number): string {
