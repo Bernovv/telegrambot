@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ConversationLog,
+  RecordingNotificationSender,
   conversationContactIdentifier,
   type ConversationRepository,
   type IncomingConversationMessage,
@@ -176,5 +177,93 @@ describe("conversationContactIdentifier", () => {
       conversationContactIdentifier("max", { ...sender, username: null }),
       { telegramUsername: null, maxIdentifier: "123456789" }
     );
+  });
+});
+
+describe("RecordingNotificationSender", () => {
+  const ticket = {
+    bytes: new Uint8Array([1, 2, 3]),
+    mimeType: "image/png" as const,
+    width: 512,
+    height: 512
+  };
+
+  function sender(fail = false) {
+    const calls: string[] = [];
+    return {
+      calls,
+      async sendText() {
+        calls.push("sendText");
+        if (fail) {
+          throw new Error("Telegram отверг сообщение");
+        }
+        return { providerMessageId: "500" };
+      },
+      async sendBroadcastMessage() {
+        calls.push("sendBroadcastMessage");
+        return { providerMessageId: "501" };
+      },
+      async sendImage() {
+        calls.push("sendImage");
+        return { providerMessageId: "502" };
+      },
+      async sendScenarioPresentation() {
+        calls.push("sendScenarioPresentation");
+        return { providerMessageId: "503" };
+      }
+    };
+  }
+
+  it("пишет билет в ленту его подписью: QR-код там не нужен, а факт отправки нужен", async () => {
+    const repository = new RecordingRepository();
+    const log = new ConversationLog(repository, idGenerator());
+    const recording = new RecordingNotificationSender(sender(), "telegram", log);
+
+    await recording.sendImage("123456789", ticket, "ticket.png", "Ваш билет BP-XXX");
+
+    const stored = repository.outgoing[0];
+    assert.equal(stored?.body, "Ваш билет BP-XXX");
+    assert.equal(stored?.externalMessageId, "502");
+    assert.equal(stored?.authorKind, "bot");
+  });
+
+  it("не пишет то, что не ушло", async () => {
+    // Отправка бросает — записи быть не должно: иначе в ленте окажется сказанное,
+    // которого человек не получал, и менеджер станет спрашивать «вы же видели билет?».
+    const repository = new RecordingRepository();
+    const log = new ConversationLog(repository, idGenerator());
+    const recording = new RecordingNotificationSender(sender(true), "telegram", log);
+
+    await assert.rejects(() => recording.sendText("123456789", "Билет отправлен"));
+    assert.equal(repository.outgoing.length, 0);
+  });
+
+  it("уведомления организаторам в переписку не идут", async () => {
+    // Это сообщение самим себе. Заводить на него диалог значит засыпать список
+    // неопознанных разговоров собственными уведомлениями о продажах.
+    const repository = new RecordingRepository();
+    const log = new ConversationLog(repository, idGenerator());
+    const recording = new RecordingNotificationSender(
+      sender(),
+      "telegram",
+      log,
+      ["999000111"]
+    );
+
+    await recording.sendText("999000111", "Продан билет BP-XXX");
+    await recording.sendText("123456789", "Ваш билет готов");
+
+    assert.equal(repository.outgoing.length, 1);
+    assert.equal(repository.outgoing[0]?.externalChatId, "123456789");
+  });
+
+  it("канал берёт из того, чем его обернули", async () => {
+    const repository = new RecordingRepository();
+    const log = new ConversationLog(repository, idGenerator());
+    const recording = new RecordingNotificationSender(sender(), "max", log);
+
+    await recording.sendText("777", "Напоминание о встрече");
+
+    assert.equal(repository.outgoing[0]?.channel, "max");
   });
 });

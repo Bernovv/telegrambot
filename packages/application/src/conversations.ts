@@ -1,5 +1,11 @@
+import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
 import type { MessengerChannel } from "@ticket-platform/domain";
 import type { IdGenerator } from "./identity.js";
+import type {
+  BroadcastMessage,
+  NotificationSender,
+  TicketPng
+} from "./notification-delivery.js";
 
 /**
  * Переписка: всё сказанное сохраняется до того, как мы решим, что с этим делать.
@@ -211,4 +217,92 @@ export function conversationContactIdentifier(
     telegramUsername: null,
     maxIdentifier: username === "" ? participant.externalUserId : username
   };
+}
+
+/**
+ * Запись того, что уходит из воркера.
+ *
+ * Билеты, напоминания, продолжения сценария и рассылки идут не из бота, а из очереди
+ * доставки, и до сих пор в переписку не попадали вовсе: у воркера свой отправитель, мимо
+ * которого стоят все хуки канала. В ленте это выглядело как разговор, где наша половина
+ * реплик пропущена, — а именно там уходит главное, билет.
+ *
+ * Обёртка на общий порт отправки, а не на каждый канал: `NotificationSender` один и тот же
+ * у Telegram и MAX, и второй копии этой логики быть не должно.
+ */
+export class RecordingNotificationSender implements NotificationSender {
+  constructor(
+    private readonly sender: NotificationSender,
+    private readonly channel: MessengerChannel,
+    private readonly log: ConversationLog,
+    /**
+     * Чаты, которые в переписку не идут. Это чаты организаторов: «продали билет» —
+     * служебное сообщение самим себе, и заводить на него диалог с человеком значит
+     * засыпать список неопознанных разговоров собственными уведомлениями.
+     */
+    private readonly skipRecipients: readonly string[] = []
+  ) {}
+
+  async sendText(recipientId: string, text: string) {
+    const sent = await this.sender.sendText(recipientId, text);
+    await this.record(recipientId, text, sent.providerMessageId);
+    return sent;
+  }
+
+  async sendBroadcastMessage(recipientId: string, message: BroadcastMessage) {
+    const sent = await this.sender.sendBroadcastMessage(recipientId, message);
+    await this.record(recipientId, message.text, sent.providerMessageId);
+    return sent;
+  }
+
+  async sendImage(
+    recipientId: string,
+    image: TicketPng,
+    fileName: string,
+    caption: string
+  ) {
+    const sent = await this.sender.sendImage(recipientId, image, fileName, caption);
+    // Билет — это картинка с подписью. В ленте от него остаётся подпись: сам QR-код там
+    // не нужен, а «отправили билет такой-то» — нужно.
+    await this.record(recipientId, caption, sent.providerMessageId);
+    return sent;
+  }
+
+  async sendScenarioPresentation(
+    recipientId: string,
+    sessionId: string,
+    presentation: ScenarioPresentationModel
+  ) {
+    const sent = await this.sender.sendScenarioPresentation(
+      recipientId,
+      sessionId,
+      presentation
+    );
+    await this.record(recipientId, presentation.text, sent.providerMessageId);
+    return sent;
+  }
+
+  /** Пишем только то, что действительно ушло: неудачная отправка бросает до этой строки. */
+  private async record(
+    recipientId: string,
+    body: string,
+    providerMessageId: string
+  ): Promise<void> {
+    if (this.skipRecipients.includes(recipientId)) {
+      return;
+    }
+    await this.log.recordOutgoing({
+      channel: this.channel,
+      transport: "bot",
+      externalChatId: recipientId,
+      recipient: { externalUserId: recipientId, username: null, displayName: null },
+      authorKind: "bot",
+      authorAdminId: null,
+      body,
+      externalMessageId: providerMessageId === "" ? null : providerMessageId,
+      deliveryStatus: "sent",
+      failureReason: null,
+      occurredAt: new Date()
+    });
+  }
 }

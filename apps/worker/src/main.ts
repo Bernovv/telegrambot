@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   ConfirmPaymentService,
+  ConversationLog,
   DispatchOutboxBatchService,
   DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   ExpireOrdersBatchService,
@@ -16,12 +17,14 @@ import {
   SendEventRemindersBatchService,
   SyncEventCampaignsBatchService,
   AdminOutreachService,
+  RecordingNotificationSender,
   type IdGenerator
 } from "@ticket-platform/application";
 import { loadWorkerConfig } from "@ticket-platform/config";
 import type { DomainEventJobV1 } from "@ticket-platform/contracts";
 import {
   createAdminOutreachPersistence,
+  createConversationPersistence,
   createEventCampaignSyncPersistence,
   createAutoTaskPersistence,
   createZvonobotProcessingPersistence,
@@ -250,10 +253,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           scenarioPersistence.outboxWriter,
           idGenerator
         );
+      // Переписка. Билеты, напоминания и рассылки уходят отсюда, а не из бота, и до сих
+      // пор в ленту не попадали вовсе: в диалоге была видна половина реплик, и как раз
+      // без той, ради которой всё затевалось.
+      const conversationLog = new ConversationLog(
+        createConversationPersistence(pool).repository,
+        idGenerator,
+        (error, context) => {
+          logger.error("conversation message not recorded", {
+            channel: context.channel,
+            direction: context.direction,
+            errorType: error instanceof Error ? error.name : "UnknownError",
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+        }
+      );
+
       const notificationHandler = new HandleNotificationJobService(
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationLedger,
-        createTelegramNotificationSender(notificationConfig.botToken, notificationConfig.apiRoot),
+        new RecordingNotificationSender(
+          createTelegramNotificationSender(
+            notificationConfig.botToken,
+            notificationConfig.apiRoot
+          ),
+          "telegram",
+          conversationLog,
+          notificationConfig.adminChatIds
+        ),
         new HmacTicketReferenceGenerator(notificationConfig.ticketTokenSecret),
         new QrTicketPngRenderer(),
         idGenerator,
@@ -271,11 +298,16 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         // в двух мессенджерах одинаковой формы, и «доставить хоть куда-нибудь» значит
         // отправить чужой билет постороннему.
         config.max.enabled
-          ? new MaxNotificationSender(new MaxApi({
+          ? new RecordingNotificationSender(
+            new MaxNotificationSender(new MaxApi({
               token: config.max.botToken,
               baseUrl: config.max.apiBaseUrl,
               timeoutMs: config.max.httpTimeoutMs
-            }))
+            })),
+            "max",
+            conversationLog,
+            notificationConfig.adminChatIds
+          )
           : undefined
       );
 
