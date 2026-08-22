@@ -5,6 +5,19 @@
 
 Скрипт — `packages/database/scripts/max-import.ts`, запуск — `pnpm max:import`.
 
+## Важное про источник: у MAX два хранилища
+
+Postgres завели позже файла, и в него попадает не всё. Заказы, кошельки, партнёрка и оферта
+— в базе. А люди, их имена и **телефоны** так и остались в `.data/max-users.json`, из
+которого читает старая админка: в боевой базе колонка `users.phone` пуста у всех до одного.
+
+Поэтому переносу нужны оба источника. Без файла телефоны не поедут, а часть людей потеряется
+совсем — Postgres-строка появлялась, только когда человек доходил до кошелька или заказа,
+и те, кто до покупки не дошёл, живут лишь в файле. Это как раз те, с кем предстоит работать.
+
+Связь между хранилищами одна — `max_user_id`. Путь к файлу передаётся в `MAX_USERS_JSON`;
+если его не передать, скрипт об этом скажет отдельной строкой в списке непереносимого.
+
 ## Как он устроен
 
 **По умолчанию — сухой прогон.** Скрипт делает всю работу целиком и в конце откатывает
@@ -29,8 +42,8 @@
 
 | Из MAX | Куда | Как |
 |---|---|---|
-| `users` | `users` + `messenger_identities` (`channel='max'`) | `bot_state` кроме `active` становится «бот заблокирован» |
-| телефон на человеке | `user_contacts` | источник `max_contact`, а не `import`: человек нажал кнопку, а не приехал таблицей |
+| `users` из Postgres **и** из файла | `users` + `messenger_identities` (`channel='max'`) | связь по `max_user_id`; `bot_state` кроме `active` становится «бот заблокирован» |
+| телефон и имя из файла | `users`, `user_contacts` | источник `max_contact`, а не `import`: человек нажал кнопку, а не приехал таблицей |
 | `wallet_accounts` | `wallet_accounts` + одна проводка `MIGRATION_OPENING_BALANCE` | переносится итог, а не история |
 | `referral_relations` | `referral_attributions` | партнёр берётся из самой строки, гадать по коду не нужно |
 | `orders` | `orders` + `order_items` | тариф ищется в каталоге по коду, цена — из заказа |
@@ -78,7 +91,11 @@ pg_dump "$MAX_DATABASE_URL" > /tmp/max-copy.sql
 и так пароль не попадёт ни в историю терминала, ни в переписку:
 
 ```bash
-cd ~/telegrambot && MAX_DATABASE_URL="$(sudo grep -m1 '^DATABASE_URL=' /home/maxbot/max-bot/.env | cut -d= -f2-)" pnpm max:import
+sudo ls -l /home/maxbot/max-bot/.data/max-users.json
+```
+
+```bash
+cd ~/telegrambot && MAX_USERS_JSON=/home/maxbot/max-bot/.data/max-users.json MAX_DATABASE_URL="$(sudo grep -m1 '^DATABASE_URL=' /home/maxbot/max-bot/.env | cut -d= -f2-)" pnpm max:import
 ```
 
 База Timeweb принимает только защищённое подключение, и скрипт по умолчанию так и
@@ -99,7 +116,7 @@ systemctl stop max-bot
 **5. Запись:**
 
 ```bash
-cd ~/telegrambot && MAX_DATABASE_URL="$(sudo grep -m1 '^DATABASE_URL=' /home/maxbot/max-bot/.env | cut -d= -f2-)" pnpm max:import --apply
+cd ~/telegrambot && MAX_USERS_JSON=/home/maxbot/max-bot/.data/max-users.json MAX_DATABASE_URL="$(sudo grep -m1 '^DATABASE_URL=' /home/maxbot/max-bot/.env | cut -d= -f2-)" pnpm max:import --apply
 ```
 
 **6. Сверка после записи.** Отчёт печатает её сам; кроме того:

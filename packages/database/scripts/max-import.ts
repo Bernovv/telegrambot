@@ -16,6 +16,12 @@
  *   node --env-file=.env --import tsx scripts/max-import.ts            # сухой прогон
  *   node --env-file=.env --import tsx scripts/max-import.ts --apply    # запись
  *
+ * **У MAX два хранилища сразу.** Постгрес завели позже, и в него попадает не всё: заказы,
+ * кошельки и партнёрка — там, а люди, их имена и телефоны так и остались в файле
+ * `.data/max-users.json`, из которого читает старая админка. Поэтому перенос смотрит в оба
+ * места: `MAX_USERS_JSON` — путь к файлу, и без него телефоны просто не поедут, а часть
+ * людей потеряется. Связь между хранилищами одна — `max_user_id`.
+ *
  * Нужны две строки подключения: `MAX_DATABASE_URL` — база MAX-бота (читается),
  * `DATABASE_DIRECT_URL` — общая база (пишется). Управляемая база Timeweb требует TLS,
  * поэтому подключение к ней идёт по тем же правилам, что у самого MAX-бота
@@ -31,6 +37,7 @@
  * - **Не трогает исходную базу.** Ни одной записи в неё.
  */
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import pg from "pg";
 
 /** Пространство имён для выведенных идентификаторов. Менять нельзя: от него зависит повтор. */
@@ -64,6 +71,20 @@ const ORDER_STATUSES: Readonly<Record<string, string>> = {
 interface Options {
   readonly apply: boolean;
   readonly eventSlug: string;
+  /** Путь к `.data/max-users.json`. Пусто — файл не читаем, и об этом сказано в отчёте. */
+  readonly usersJsonPath: string | null;
+}
+
+/** Человек в файловом хранилище MAX. Полей больше, нас интересуют эти. */
+interface JsonUser {
+  readonly maxUserId?: string;
+  readonly username?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly phone?: string;
+  readonly phoneVerified?: boolean;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
 }
 
 interface Counters {
@@ -91,8 +112,9 @@ async function main(): Promise<void> {
     console.log(`Мероприятие: ${event.title} (${options.eventSlug})`);
     console.log(`Тарифы в каталоге: ${[...catalog.keys()].join(", ")}\n`);
 
-    await importUsers(source, target, counters);
-    await importContacts(source, target, counters, warnings);
+    const jsonUsers = await readJsonUsers(options.usersJsonPath, warnings);
+    await importUsers(source, target, jsonUsers, counters, warnings);
+    await importContacts(source, target, jsonUsers, counters, warnings);
     await importWallets(source, target, counters, warnings);
     await importReferrals(source, target, counters, warnings);
     // Документы и версии оферты — до заказов: у заказа с принятой офертой обязана быть
@@ -102,7 +124,7 @@ async function main(): Promise<void> {
     await importOfferAcceptances(source, target, counters, warnings);
 
     report(counters, warnings);
-    await reconcile(source, target);
+    await reconcile(source, target, jsonUsers);
 
     if (options.apply) {
       await target.query("commit");
@@ -195,7 +217,9 @@ async function resolveCatalog(
 async function importUsers(
   source: pg.Client,
   target: pg.Client,
-  counters: Counters
+  jsonUsers: ReadonlyMap<string, JsonUser>,
+  counters: Counters,
+  warnings: string[]
 ): Promise<void> {
   const users = await source.query<{
     id: string;
@@ -213,13 +237,23 @@ async function importUsers(
              is_blocked, bot_state, created_at, updated_at
         from users order by created_at`);
 
+  const seen = new Set<string>();
+
   for (const user of users.rows) {
     const userId = derive("user", user.id);
-    // Телефон в MAX хранится на самом человеке, и его наличие — это и есть «известен».
-    // `verified` ставим только тем, кто подтвердил его кнопкой: остальным — `imported`.
-    const phoneStatus = user.phone === null
+    seen.add(user.max_user_id);
+    const fromFile = jsonUsers.get(user.max_user_id);
+
+    // Телефон живёт в файловом хранилище: в Postgres колонка есть, но пустая. Берём то, что
+    // нашлось хоть где-то, — иначе человек приедет карточкой, которой нельзя позвонить.
+    const phone = user.phone ?? fromFile?.phone ?? null;
+    const phoneVerified = user.phone_verified || (fromFile?.phoneVerified ?? false);
+    const phoneStatus = phone === null
       ? "unknown"
-      : user.phone_verified ? "verified" : "imported";
+      : phoneVerified ? "verified" : "imported";
+    const username = user.username ?? fromFile?.username ?? null;
+    const firstName = user.first_name ?? fromFile?.firstName ?? null;
+    const lastName = user.last_name ?? fromFile?.lastName ?? null;
 
     await count(counters, "люди", target.query(
       `insert into public.users (
@@ -230,9 +264,9 @@ async function importUsers(
        on conflict (id) do nothing`,
       [
         userId,
-        displayName(user.first_name, user.last_name, user.username),
-        user.first_name,
-        user.last_name,
+        displayName(firstName, lastName, username),
+        firstName,
+        lastName,
         phoneStatus,
         user.created_at,
         user.updated_at,
@@ -252,14 +286,71 @@ async function importUsers(
         derive("identity", user.id),
         userId,
         user.max_user_id,
-        user.username,
-        user.username === null ? null : user.username.replace(/^@+/, "").toLowerCase(),
+        username,
+        username === null ? null : username.replace(/^@+/, "").toLowerCase(),
         user.created_at,
         user.updated_at,
         // `stopped` и `dialog_removed` в MAX значат ровно то же, что «заблокировал бота».
         user.bot_state !== "active"
       ]
     ));
+  }
+
+  // Человек, которого в Postgres нет вовсе.
+  //
+  // Postgres завели позже файла, и строка там появлялась, только когда человек доходил до
+  // кошелька или заказа. Все остальные живут лишь в файле — и это как раз те, кто до
+  // покупки не дошёл: с ними и предстоит работать.
+  for (const [maxUserId, fromFile] of jsonUsers) {
+    if (seen.has(maxUserId)) {
+      continue;
+    }
+    const userId = derive("user", `max-json:${maxUserId}`);
+    const phone = fromFile.phone ?? null;
+    const createdAt = parseDate(fromFile.createdAt) ?? new Date();
+    const updatedAt = parseDate(fromFile.updatedAt) ?? createdAt;
+    const username = fromFile.username ?? null;
+
+    await count(counters, "люди (только из файла)", target.query(
+      `insert into public.users (
+         id, display_name, first_name, last_name, phone_status,
+         registered_at, last_seen_at, is_blocked, metadata, created_at, updated_at
+       ) values ($1::uuid, $2::text, $3::text, $4::text, $5::text,
+                 $6::timestamptz, $7::timestamptz, false, $8::jsonb, $6, $7)
+       on conflict (id) do nothing`,
+      [
+        userId,
+        displayName(fromFile.firstName ?? null, fromFile.lastName ?? null, username),
+        fromFile.firstName ?? null,
+        fromFile.lastName ?? null,
+        phone === null ? "unknown" : (fromFile.phoneVerified ?? false) ? "verified" : "imported",
+        createdAt,
+        updatedAt,
+        JSON.stringify({ importedFrom: "max-json", maxUserId })
+      ]
+    ));
+
+    await count(counters, "опознаватели MAX", target.query(
+      `insert into public.messenger_identities (
+         id, user_id, channel, external_user_id, username, username_normalized,
+         first_seen_at, last_seen_at, is_bot_blocked
+       ) values ($1::uuid, $2::uuid, 'max', $3::text, $4::text, $5::text,
+                 $6::timestamptz, $7::timestamptz, false)
+       on conflict (channel, external_user_id) do nothing`,
+      [
+        derive("identity", `max-json:${maxUserId}`),
+        userId,
+        maxUserId,
+        username,
+        username === null ? null : username.replace(/^@+/, "").toLowerCase(),
+        createdAt,
+        updatedAt
+      ]
+    ));
+
+    if (phone !== null && normalizePhone(phone) === null) {
+      warnings.push(`телефон ${maxUserId} из файла: «${phone}» не похож на номер`);
+    }
   }
 }
 
@@ -272,41 +363,51 @@ async function importUsers(
 async function importContacts(
   source: pg.Client,
   target: pg.Client,
+  jsonUsers: ReadonlyMap<string, JsonUser>,
   counters: Counters,
   warnings: string[]
 ): Promise<void> {
   const rows = await source.query<{
     id: string;
-    phone: string;
+    max_user_id: string;
+    phone: string | null;
     phone_verified: boolean;
     phone_verified_at: Date | null;
     created_at: Date;
-  }>(`select id, phone, phone_verified, phone_verified_at, created_at
-        from users where phone is not null and btrim(phone) <> ''`);
+  }>(`select id, max_user_id, phone, phone_verified, phone_verified_at, created_at
+        from users`);
 
   // Сколько номеров вообще есть в исходной базе. Без этой строки «телефоны» просто
   // отсутствовали бы в отчёте, и было бы не понять, чего именно не случилось: номеров нет
   // или они не разобрались. Молчание — худший из возможных ответов, когда речь о том,
   // сможем ли мы этим людям позвонить.
-  const total = await source.query<{ readonly n: number }>(
-    "select count(*)::int as n from users"
-  );
+  const inPostgres = rows.rows.filter((row) => (row.phone ?? "").trim() !== "").length;
+  const inFile = [...jsonUsers.values()].filter(
+    (user) => (user.phone ?? "").trim() !== ""
+  ).length;
   console.log(
-    `\nТелефоны: заполнены у ${rows.rowCount ?? 0} человек из ${total.rows[0]?.n ?? 0}`
+    `\nТелефоны: в Postgres ${inPostgres}, в файловом хранилище ${inFile}`
   );
 
   for (const row of rows.rows) {
-    const phone = normalizePhone(row.phone);
+    const fromFile = jsonUsers.get(row.max_user_id);
+    const raw = (row.phone ?? "").trim() !== ""
+      ? (row.phone as string)
+      : (fromFile?.phone ?? "");
+    if (raw.trim() === "") {
+      continue;
+    }
+    const phone = normalizePhone(raw);
     if (phone === null) {
       warnings.push(
-        `телефон человека ${row.id}: «${row.phone}» не похож на номер — перенесён не будет`
+        `телефон человека ${row.id}: «${raw}» не похож на номер — перенесён не будет`
       );
       continue;
     }
     // «Подтверждён» обязан сказать когда: схема этого требует, и правильно — иначе
     // подтверждение нечем датировать. В MAX время подтверждения проставлялось не всегда,
     // и там, где его нет, берём время появления человека: раньше он подтвердить не мог.
-    const verified = row.phone_verified;
+    const verified = row.phone_verified || (fromFile?.phoneVerified ?? false);
     const verifiedAt = verified ? (row.phone_verified_at ?? row.created_at) : null;
 
     await count(counters, "телефоны", target.query(
@@ -323,6 +424,41 @@ async function importContacts(
         verified ? "verified" : "imported",
         verifiedAt,
         row.created_at
+      ]
+    ));
+  }
+
+  // Те, кого в Postgres нет вовсе: их телефон живёт только в файле, и без этого прохода
+  // человек приехал бы карточкой без номера — ровно то, ради чего всё и затевалось.
+  const known = new Set(rows.rows.map((row) => row.max_user_id));
+  for (const [maxUserId, fromFile] of jsonUsers) {
+    if (known.has(maxUserId)) {
+      continue;
+    }
+    const raw = (fromFile.phone ?? "").trim();
+    if (raw === "") {
+      continue;
+    }
+    const phone = normalizePhone(raw);
+    if (phone === null) {
+      continue;
+    }
+    const createdAt = parseDate(fromFile.createdAt) ?? new Date();
+    const verified = fromFile.phoneVerified ?? false;
+    await count(counters, "телефоны", target.query(
+      `insert into public.user_contacts (
+         id, user_id, contact_type, value_normalized, source,
+         verification_status, is_primary, verified_at, created_at, updated_at
+       ) values ($1::uuid, $2::uuid, 'phone', $3::text, 'max_contact',
+                 $4::text, true, $5::timestamptz, $6::timestamptz, $6)
+       on conflict (id) do nothing`,
+      [
+        derive("contact", `max-json:${maxUserId}`),
+        derive("user", `max-json:${maxUserId}`),
+        phone,
+        verified ? "verified" : "imported",
+        verified ? createdAt : null,
+        createdAt
       ]
     ));
   }
@@ -912,7 +1048,11 @@ async function importOfferAcceptances(
 }
 
 /** Сверка: сколько было в MAX и сколько стало в общей базе. */
-async function reconcile(source: pg.Client, target: pg.Client): Promise<void> {
+async function reconcile(
+  source: pg.Client,
+  target: pg.Client,
+  jsonUsers: ReadonlyMap<string, JsonUser>
+): Promise<void> {
   const before = await source.query<{
     users: string; paid_orders: string; paid_sum: string; wallet_sum: string;
   }>(`select
@@ -938,8 +1078,15 @@ async function reconcile(source: pg.Client, target: pg.Client): Promise<void> {
     throw new Error("Сверка не получила ни одной строки — проверьте подключения");
   }
 
+  // Людей считаем по обоим хранилищам MAX: половина из них живёт только в файле, и
+  // сравнение с одним Postgres показывало бы расхождение там, где всё как раз сошлось.
+  const inPostgres = await source.query<{ readonly ids: readonly string[] }>(
+    "select coalesce(array_agg(max_user_id), array[]::text[]) as ids from users"
+  );
+  const everyone = new Set([...(inPostgres.rows[0]?.ids ?? []), ...jsonUsers.keys()]);
+
   const rows: readonly (readonly [string, string, string])[] = [
-    ["людей", source_.users, target_.users],
+    ["людей", String(everyone.size), target_.users],
     ["оплаченных заказов", source_.paid_orders, target_.paid_orders],
     ["сумма оплаченных, копеек", source_.paid_sum, target_.paid_sum],
     ["баланс кошельков, копеек", source_.wallet_sum, target_.wallet_sum]
@@ -1008,6 +1155,15 @@ function derive(kind: string, sourceId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Дата из файлового хранилища: там она строкой ISO и может быть кривой. */
+function parseDate(value: string | undefined): Date | null {
+  if (value === undefined || value.trim() === "") {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -1044,10 +1200,48 @@ function normalizePhone(raw: string): string | null {
 
 function parseOptions(argv: readonly string[]): Options {
   const slugIndex = argv.indexOf("--event");
+  const jsonIndex = argv.indexOf("--users-json");
+  const jsonFromArgv = jsonIndex >= 0 ? argv[jsonIndex + 1] : undefined;
+  const jsonFromEnv = (process.env.MAX_USERS_JSON ?? "").trim();
   return {
     apply: argv.includes("--apply"),
-    eventSlug: slugIndex >= 0 ? (argv[slugIndex + 1] ?? "") : "business-picnic-2026"
+    eventSlug: slugIndex >= 0 ? (argv[slugIndex + 1] ?? "") : "business-picnic-2026",
+    usersJsonPath: jsonFromArgv ?? (jsonFromEnv === "" ? null : jsonFromEnv)
   };
+}
+
+/**
+ * Люди из файлового хранилища MAX.
+ *
+ * Телефоны живут только здесь: в Postgres колонка есть, но заполнена не была ни разу.
+ * Отсутствие файла — не ошибка, а решение, и оно должно быть громким: без него у
+ * перенесённых людей не будет ни одного номера, и позвонить им будет нельзя.
+ */
+async function readJsonUsers(
+  path: string | null,
+  warnings: string[]
+): Promise<ReadonlyMap<string, JsonUser>> {
+  if (path === null) {
+    warnings.push(
+      "файл .data/max-users.json не указан (MAX_USERS_JSON) — телефоны и имена не поедут"
+    );
+    return new Map();
+  }
+
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${path}: ожидался список людей, а лежит что-то другое`);
+  }
+
+  const byMaxUserId = new Map<string, JsonUser>();
+  for (const item of parsed as readonly JsonUser[]) {
+    const maxUserId = (item.maxUserId ?? "").trim();
+    if (maxUserId !== "") {
+      byMaxUserId.set(maxUserId, item);
+    }
+  }
+  console.log(`Файловое хранилище MAX: ${byMaxUserId.size} человек`);
+  return byMaxUserId;
 }
 
 /**
