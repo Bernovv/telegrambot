@@ -101,3 +101,17 @@ export interface AdminPersonConversations {
 export type ConversationReplyResult =
   | { readonly status: "queued"; readonly messageId: string }
   | { readonly status: "assigned_to_other"; readonly assignedAdminName: string };
+
+/**
+ * Файл, отправляемый из панели.
+ *
+ * Содержимое идёт base64 внутри JSON — тем же путём, что картинка рассылки. Multipart был бы
+ * экономнее на треть, но потребовал бы отдельной обработки в прокси панели ради одной ручки.
+ */
+export interface SendConversationFileRequest {
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly contentBase64: string;
+  readonly caption?: string;
+  readonly takeOver?: boolean;
+}

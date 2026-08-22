@@ -1,4 +1,5 @@
 import type { MessengerChannel } from "@ticket-platform/domain";
+import type { AttachmentKind } from "./conversations.js";
 
 /**
  * Проход отправки ответов менеджера.
@@ -24,6 +25,21 @@ export interface QueuedReply {
   readonly externalChatId: string;
   readonly body: string;
   readonly attempts: number;
+  /** Файл, если менеджер отправил его вместе с текстом. Текст тогда идёт подписью. */
+  readonly attachment: QueuedReplyAttachment | null;
+}
+
+export interface QueuedReplyAttachment {
+  readonly attachmentId: string;
+  readonly kind: AttachmentKind;
+  readonly storagePath: string;
+  readonly fileName: string | null;
+  readonly mimeType: string | null;
+}
+
+/** Читает файл из папки вложений. Диск знает только тот, кто отправляет. */
+export interface AttachmentReader {
+  read(storagePath: string): Promise<Uint8Array>;
 }
 
 export interface ConversationReplyQueueRepository {
@@ -50,6 +66,24 @@ export interface ConversationReplySender {
     recipientId: string,
     text: string
   ): Promise<{ readonly providerMessageId: string }>;
+  /**
+   * Отправка файла. Метод необязательный: у MAX картинку отправить можно, а документ —
+   * нет, и притворяться обратным нельзя. Канал без него честно откажет с причиной, и
+   * менеджер увидит это в ленте, а не будет ждать доставки, которой не будет.
+   */
+  sendFile?(input: {
+    readonly recipientId: string;
+    readonly bytes: Uint8Array;
+    readonly fileName: string;
+    readonly mimeType: string | null;
+    readonly kind: AttachmentKind;
+    readonly caption: string;
+  }): Promise<{ readonly providerMessageId: string }>;
+  /**
+   * Что канал умеет отправлять. У MAX это только картинки: документов их Bot API не берёт.
+   * Спрашиваем заранее, чтобы отказать сразу — а не после пяти попыток и часа ожидания.
+   */
+  supportsFileKind?(kind: AttachmentKind): boolean;
 }
 
 export interface SendRepliesOptions {
@@ -79,7 +113,9 @@ export class SendConversationRepliesBatchService {
     private readonly senders: Partial<Record<MessengerChannel, ConversationReplySender>>,
     private readonly options: SendRepliesOptions = DEFAULT_REPLY_SEND_OPTIONS,
     /** Пауза вынесена наружу ради тестов: ждать по-настоящему им незачем. */
-    private readonly pause: (ms: number) => Promise<void> = defaultPause
+    private readonly pause: (ms: number) => Promise<void> = defaultPause,
+    /** Чтение файла с диска. Без него отправлять можно только текст. */
+    private readonly files: AttachmentReader | null = null
   ) {}
 
   async execute(input: {
@@ -124,7 +160,9 @@ export class SendConversationRepliesBatchService {
     }
 
     try {
-      const result = await sender.sendText(reply.externalChatId, reply.body);
+      const result = reply.attachment === null
+        ? await sender.sendText(reply.externalChatId, reply.body)
+        : await this.sendFile(sender, reply, reply.attachment);
       await this.repository.markSent({
         messageId: reply.messageId,
         providerMessageId: result.providerMessageId === ""
@@ -135,6 +173,11 @@ export class SendConversationRepliesBatchService {
       return "sent";
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      // Отказ, который не исправится повтором: канал не умеет отправлять файлы, отправка
+      // не настроена. Держать такое в очереди значит обещать доставку, которой не будет.
+      if (error instanceof PermanentReplyFailure) {
+        return this.giveUp(reply, reason, at);
+      }
       const attempts = reply.attempts + 1;
       if (attempts >= this.options.maxAttempts) {
         return this.giveUp(reply, reason, at);
@@ -149,6 +192,39 @@ export class SendConversationRepliesBatchService {
     }
   }
 
+  /**
+   * Файл читается с диска в момент отправки, а не хранится в очереди.
+   *
+   * Иначе мегабайтная картинка лежала бы в памяти воркера всё время ожидания — и столько
+   * раз, сколько ответов в пачке.
+   */
+  private async sendFile(
+    sender: ConversationReplySender,
+    reply: QueuedReply,
+    attachment: QueuedReplyAttachment
+  ): Promise<{ readonly providerMessageId: string }> {
+    if (!sender.sendFile) {
+      throw new PermanentReplyFailure("канал не умеет отправлять файлы");
+    }
+    if (!this.files) {
+      throw new PermanentReplyFailure("отправка файлов не настроена");
+    }
+    if (sender.supportsFileKind && !sender.supportsFileKind(attachment.kind)) {
+      throw new PermanentReplyFailure(
+        `канал не принимает такие файлы: ${attachment.kind}`
+      );
+    }
+    const bytes = await this.files.read(attachment.storagePath);
+    return await sender.sendFile({
+      recipientId: reply.externalChatId,
+      bytes,
+      fileName: attachment.fileName ?? `${attachment.attachmentId}`,
+      mimeType: attachment.mimeType,
+      kind: attachment.kind,
+      caption: reply.body
+    });
+  }
+
   private async giveUp(
     reply: QueuedReply,
     reason: string,
@@ -161,6 +237,14 @@ export class SendConversationRepliesBatchService {
       retryAt: null
     });
     return "failed";
+  }
+}
+
+/** Отказ, который повторять бессмысленно. */
+export class PermanentReplyFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PermanentReplyFailure";
   }
 }
 

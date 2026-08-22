@@ -1,15 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   attachmentRelativePath,
-  type AttachmentReader,
   type AttachmentStorage,
   type StoredAttachment
 } from "@ticket-platform/application";
 
 /**
- * Вложения переписки на диске.
+ * Вложения переписки на диске — та же папка, что у воркера.
+ *
+ * Копия у api своя, потому что писать в папку приходится обоим: воркер кладёт входящие,
+ * api — то, что менеджер отправляет из панели. Раскладку при этом задаёт общая функция из
+ * `application`, и вот её дублировать было бы нельзя: два правила для одной папки означали
+ * бы, что посчитать её объём по месяцам больше невозможно.
+ *
+ * Прежнее описание:
  *
  * Файлы лежат рядом с ботом, как оферта, и это осознанно проще внешнего хранилища: ставить
  * зависимость от чужого сервиса ради голосовых сообщений — менять понятную папку на чужую
@@ -51,29 +57,5 @@ export class FileSystemAttachmentStorage implements AttachmentStorage {
       sha256: createHash("sha256").update(input.bytes).digest("hex"),
       sizeBytes: input.bytes.byteLength
     };
-  }
-}
-
-
-/**
- * Чтение файла из папки вложений — для отправки того, что менеджер приложил в панели.
- *
- * Путь берётся из базы и приходит относительным; выход за папку отвергается той же
- * проверкой, что и в api. Здесь она нужна по той же причине: строку в базе кладём мы сами,
- * но проверка стоит на день, когда туда попадёт то, чего мы не ждали.
- */
-export class FileSystemAttachmentReader implements AttachmentReader {
-  constructor(private readonly rootDir: string) {}
-
-  async read(storagePath: string): Promise<Uint8Array> {
-    const root = resolve(this.rootDir);
-    if (storagePath.trim() === "" || isAbsolute(storagePath)) {
-      throw new Error("Путь вложения недопустим");
-    }
-    const absolute = resolve(join(root, storagePath));
-    if (!absolute.startsWith(root + sep)) {
-      throw new Error("Путь вложения ведёт за папку");
-    }
-    return new Uint8Array(await readFile(absolute));
   }
 }

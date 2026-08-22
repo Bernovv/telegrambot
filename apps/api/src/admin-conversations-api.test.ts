@@ -195,6 +195,9 @@ async function application(
       },
       async openAttachment() {
         return stored;
+      },
+      async sendFile() {
+        return { status: "not_found" as const };
       }
     },
     conversationFiles: { directory }

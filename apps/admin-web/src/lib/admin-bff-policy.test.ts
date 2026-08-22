@@ -680,3 +680,28 @@ test("forwards the manager reply into an existing conversation", () => {
     false
   );
 });
+
+test("forwards a file into an existing conversation with its own body limit", () => {
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "conversations/00000000-0000-4000-8000-000000000101/files"
+    ),
+    true
+  );
+  // Предел должен совпадать с пределом api: иначе панель отдаст 413 на файл, который
+  // api принял бы, и менеджер решит, что сломалась отправка.
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "conversations/00000000-0000-4000-8000-000000000101/files"
+    ),
+    7_000_000
+  );
+  // Обычный ответ файлом не становится: у него прежний общий предел.
+  assert.equal(
+    getAdminMutationBodyLimit(
+      "conversations/00000000-0000-4000-8000-000000000101/messages"
+    ),
+    65_536
+  );
+});

@@ -17,6 +17,12 @@ export function getAdminMutationBodyLimit(path: string): number {
   if (/^events\/[0-9a-f-]{36}\/participants\/import$/i.test(path)) {
     return 524_288;
   }
+  // Файл в переписку: пять мегабайт, раздутые base64 примерно на треть, плюс запас на
+  // подпись. Столько же разрешает api — предел в двух местах должен совпадать, иначе
+  // панель отдаст 413 на файл, который api принял бы.
+  if (/^conversations\/[0-9a-f-]{36}\/files$/i.test(path)) {
+    return 7_000_000;
+  }
   return (
     /^events\/[0-9a-f-]{36}\/offer-versions$/i.test(path)
     || /^events\/[0-9a-f-]{36}\/scenario-drafts$/i.test(path)
@@ -63,7 +69,7 @@ export function isAllowedAdminApiPath(
   if (method === "POST") {
     // Ответ менеджера в конкретный диалог. Путь узкий намеренно: писать можно только в
     // существующий разговор, а не «человеку» — бот первым написать всё равно не может.
-    return /^conversations\/[0-9a-f-]{36}\/messages$/i.test(path)
+    return /^conversations\/[0-9a-f-]{36}\/(?:messages|files)$/i.test(path)
       || path === "events"
       || path === "broadcasts"
       || path === "broadcast-images"

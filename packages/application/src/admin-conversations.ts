@@ -3,6 +3,12 @@ import type {
   AdminRequestActor
 } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
+import {
+  attachmentKindForMime,
+  type AttachmentStorage,
+  type StoredAttachment
+} from "./conversation-attachments.js";
+import type { AttachmentKind } from "./conversations.js";
 
 /**
  * Переписка для панели.
@@ -186,5 +192,102 @@ export class OpenConversationAttachmentService {
       throw new Error("Administrator conversations attachment id is invalid");
     }
     return await this.repository.findStored(input.attachmentId);
+  }
+}
+
+/**
+ * Отправка файла из панели.
+ *
+ * Менеджер до сих пор мог ответить только текстом, и на первой же просьбе «пришлите
+ * программу файлом» разговор пришлось бы уводить в мессенджер — ровно туда, откуда мы его
+ * забираем.
+ *
+ * Файл сначала ложится к нам и только потом встаёт в очередь. Порядок важен: реплика,
+ * попавшая в очередь раньше файла, отправилась бы в пустоту, а очередь честно доложила бы
+ * об успехе. И у отправленного файла ровно та же судьба, что у принятого, — он лежит в той
+ * же папке и виден в ленте так же.
+ */
+
+/** Предел на файл. Больше не пропустит ни прокси панели, ни общий предел тела запроса. */
+export const REPLY_FILE_LIMIT_BYTES = 5 * 1_024 * 1_024;
+
+export interface QueueFileReplyInput {
+  readonly conversationId: string;
+  readonly messageId: string;
+  readonly attachmentId: string;
+  readonly authorAdminId: string;
+  /** Подпись к файлу. Пусто — отправляем файл без текста. */
+  readonly caption: string | null;
+  readonly kind: AttachmentKind;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly stored: StoredAttachment;
+  readonly occurredAt: Date;
+  readonly takeOver: boolean;
+}
+
+export interface ConversationFileReplyRepository {
+  queueFileReply(input: QueueFileReplyInput): Promise<QueueReplyResult>;
+}
+
+export class SendConversationFileService {
+  constructor(
+    private readonly repository: ConversationFileReplyRepository,
+    private readonly storage: AttachmentStorage,
+    private readonly ids: IdGenerator
+  ) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly conversationId: string;
+    readonly fileName: string;
+    readonly mimeType: string;
+    readonly bytes: Uint8Array;
+    readonly caption?: string | undefined;
+    readonly takeOver?: boolean | undefined;
+    readonly now: Date;
+  }): Promise<QueueReplyResult> {
+    requirePermission(input.actor, "conversations.write");
+    if (!UUID_PATTERN.test(input.conversationId)) {
+      throw new Error("Administrator conversations conversation id is invalid");
+    }
+    const fileName = input.fileName.trim();
+    if (fileName === "" || fileName.length > 200) {
+      throw new Error("Administrator conversations file name is invalid");
+    }
+    if (!/^[-\w.+]+\/[-\w.+]+$/.test(input.mimeType) || input.mimeType.length > 200) {
+      throw new Error("Administrator conversations file type is invalid");
+    }
+    if (input.bytes.byteLength < 1 || input.bytes.byteLength > REPLY_FILE_LIMIT_BYTES) {
+      throw new Error("Administrator conversations file size is invalid");
+    }
+
+    const caption = (input.caption ?? "").trim();
+    if (caption.length > REPLY_TEXT_LIMIT) {
+      throw new Error("Administrator conversations reply text is invalid");
+    }
+
+    const attachmentId = this.ids.newId();
+    // Файл кладём до очереди: реплика, вставшая в очередь раньше файла, ушла бы в пустоту.
+    const stored = await this.storage.save({
+      attachmentId,
+      bytes: input.bytes,
+      fileName,
+      mimeType: input.mimeType
+    });
+
+    return await this.repository.queueFileReply({
+      conversationId: input.conversationId,
+      messageId: this.ids.newId(),
+      attachmentId,
+      authorAdminId: input.actor.adminId,
+      caption: caption === "" ? null : caption,
+      kind: attachmentKindForMime(input.mimeType),
+      fileName,
+      mimeType: input.mimeType,
+      stored,
+      occurredAt: input.now,
+      takeOver: input.takeOver ?? false
+    });
   }
 }

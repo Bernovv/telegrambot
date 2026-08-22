@@ -12,8 +12,11 @@ import type {
   ConversationReplyRepository,
   PersonConversationsQuery,
   QueueReplyInput,
+  QueueFileReplyInput,
   QueueReplyResult,
-  QueuedReply
+  QueuedReply,
+  QueuedReplyAttachment,
+  ConversationFileReplyRepository
 } from "@ticket-platform/application";
 import { recordTouchpoint } from "./conversation-touchpoint.js";
 import type { SqlConnectionPool, SqlExecutor } from "./postgres.js";
@@ -256,10 +259,40 @@ export function createAdminConversationsPersistence(pool: SqlConnectionPool) {
  * менеджеров отвечают одному человеку одновременно, и он получает два разных ответа на один
  * вопрос. Чужой диалог отвечающему не отдаётся — только с явным перехватом.
  */
-export class PostgresConversationReplyRepository implements ConversationReplyRepository {
+export class PostgresConversationReplyRepository
+implements ConversationReplyRepository, ConversationFileReplyRepository {
   constructor(private readonly pool: SqlConnectionPool) {}
 
   async queueReply(input: QueueReplyInput): Promise<QueueReplyResult> {
+    return await this.queue(input, null);
+  }
+
+  /**
+   * Ответ с файлом.
+   *
+   * Строка вложения заводится сразу `stored`: файл уже наш — его положил api, прежде чем
+   * ставить реплику в очередь. Проходу скачивания здесь делать нечего, и `pending` означал
+   * бы, что он однажды пойдёт качать наш же файл из мессенджера, куда мы его ещё не
+   * отправили.
+   */
+  async queueFileReply(input: QueueFileReplyInput): Promise<QueueReplyResult> {
+    return await this.queue(
+      {
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        authorAdminId: input.authorAdminId,
+        body: input.caption ?? "",
+        occurredAt: input.occurredAt,
+        takeOver: input.takeOver
+      },
+      input
+    );
+  }
+
+  private async queue(
+    input: QueueReplyInput,
+    file: QueueFileReplyInput | null
+  ): Promise<QueueReplyResult> {
     const connection = await this.pool.connect();
     try {
       await connection.query("begin");
@@ -311,10 +344,34 @@ export class PostgresConversationReplyRepository implements ConversationReplyRep
             input.messageId,
             conversation.id,
             input.authorAdminId,
-            input.body,
+            // Файл без подписи — реплика без текста: в ленте у неё будет само вложение.
+            input.body === "" ? null : input.body,
             input.occurredAt
           ]
         );
+
+        if (file) {
+          await connection.query(
+            `insert into public.conversation_attachments (
+               id, message_id, kind, file_name, mime_type, size_bytes,
+               storage_path, sha256, download_status, downloaded_at
+             ) values (
+               $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::bigint,
+               $7::text, $8::text, 'stored', $9::timestamptz
+             )`,
+            [
+              file.attachmentId,
+              file.messageId,
+              file.kind,
+              file.fileName,
+              file.mimeType,
+              file.stored.sizeBytes,
+              file.stored.storagePath,
+              file.stored.sha256,
+              file.occurredAt
+            ]
+          );
+        }
 
         await connection.query(
           `update public.conversations
@@ -335,7 +392,9 @@ export class PostgresConversationReplyRepository implements ConversationReplyRep
           channel: conversation.channel,
           actorAdminId: input.authorAdminId,
           result: "sent",
-          note: input.body,
+          // У файла без подписи в ленте касаний осталась бы пустая строка. Название файла
+          // здесь полезнее: по нему видно, что именно человеку отправили.
+          note: input.body === "" && file ? `Файл: ${file.fileName}` : input.body,
           occurredAt: input.occurredAt,
           activityId: input.messageId
         });
@@ -379,6 +438,11 @@ implements ConversationReplyQueueRepository {
         readonly external_chat_id: string;
         readonly body: string | null;
         readonly send_attempts: number;
+        readonly attachment_id: string | null;
+        readonly kind: QueuedReplyAttachment["kind"] | null;
+        readonly storage_path: string | null;
+        readonly file_name: string | null;
+        readonly mime_type: string | null;
       }>(
         `with claimed as (
            select message.id
@@ -399,10 +463,19 @@ implements ConversationReplyQueueRepository {
                       message.send_attempts
          )
          select leased.id, conversation.channel, conversation.external_chat_id,
-                leased.body, leased.send_attempts
+                leased.body, leased.send_attempts,
+                attachment.id as attachment_id, attachment.kind, attachment.storage_path,
+                attachment.file_name, attachment.mime_type
            from leased
            join public.conversations conversation
-             on conversation.id = leased.conversation_id`,
+             on conversation.id = leased.conversation_id
+           left join lateral (
+             select id, kind, storage_path, file_name, mime_type
+               from public.conversation_attachments
+              where message_id = leased.id and download_status = 'stored'
+              order by created_at
+              limit 1
+           ) attachment on true`,
         [input.batchSize, input.at, REPLY_LEASE_SECONDS]
       );
 
@@ -411,7 +484,19 @@ implements ConversationReplyQueueRepository {
         channel: row.channel,
         externalChatId: row.external_chat_id,
         body: row.body ?? "",
-        attempts: row.send_attempts
+        attempts: row.send_attempts,
+        // Вложение без пути отправлять нечем: файл ещё не у нас либо не доехал вовсе.
+        attachment: row.attachment_id !== null
+          && row.kind !== null
+          && row.storage_path !== null
+          ? {
+            attachmentId: row.attachment_id,
+            kind: row.kind,
+            storagePath: row.storage_path,
+            fileName: row.file_name,
+            mimeType: row.mime_type
+          }
+          : null
       }));
     } finally {
       connection.release();

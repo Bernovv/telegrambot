@@ -6722,3 +6722,59 @@ a.person-channel:hover {
   color: var(--accent);
   font-size: 12px;
 }
+
+/* Кнопка файла в поле ответа. Отдельная от «Отправить»: менеджер сначала выбирает файл,
+   потом пишет подпись, и совмещать это в одну кнопку значит терять подпись. */
+.conversation-composer-attach {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  gap: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.conversation-composer-attach:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.conversation-composer-actions {
+  gap: 8px;
+}
+
+.conversation-composer-hint {
+  margin-left: auto;
+}
+
+.conversation-composer-file {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 6px 10px;
+  gap: 8px;
+  color: var(--ink);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.conversation-composer-file-size {
+  color: var(--muted);
+}
+
+.conversation-composer-file button {
+  display: inline-flex;
+  margin-left: auto;
+  padding: 2px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}

@@ -26,6 +26,7 @@ import {
   CreateAdminEventDraftService,
   AdminConversationsService,
   OpenConversationAttachmentService,
+  SendConversationFileService,
   SendConversationReplyService,
   ConversationLog,
   CreateOrderService,
@@ -125,6 +126,7 @@ import {
   type TelegramUpdateProcessor
 } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
+import { FileSystemAttachmentStorage } from "./conversation-file-storage.js";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
 import { createApiApplication } from "./app.js";
 import { SupabaseAdminAccessTokenVerifier } from "./supabase-admin-token-verifier.js";
@@ -315,6 +317,13 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           const attachments = new OpenConversationAttachmentService(
             createAttachmentFilePersistence(pool).repository
           );
+          // Файл кладёт api, а не воркер: он пришёл из панели и уже у нас в руках. Папка
+          // при этом та же, что у входящих, — раскладку задаёт общая функция.
+          const files = new SendConversationFileService(
+            createConversationReplyPersistence(pool).repository,
+            new FileSystemAttachmentStorage(config.conversationAttachments.directory),
+            idGenerator
+          );
           return {
             getPersonConversations: (
               input: Parameters<AdminConversationsService["getPersonConversations"]>[0]
@@ -324,7 +333,10 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             ) => reply.execute(input),
             openAttachment: (
               input: Parameters<OpenConversationAttachmentService["execute"]>[0]
-            ) => attachments.execute(input)
+            ) => attachments.execute(input),
+            sendFile: (
+              input: Parameters<SendConversationFileService["execute"]>[0]
+            ) => files.execute(input)
           };
         })()
       : undefined;
@@ -691,13 +703,17 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
 
     app = await createApiApplication({
       appVersion: config.appVersion,
-      // 1.6 МБ — под мегабайтную картинку рассылки, раздутую base64 примерно на треть.
-      // Предел общий на весь API, поэтому больше не берём: у вебхуков Т-Банка и Telegram
-      // на этом же пределе стоит защита от переростков.
+      // 7 МБ — под пятимегабайтный файл, который менеджер отправляет из панели, раздутый
+      // base64 примерно на треть.
+      //
+      // Раньше здесь стояло 1.6 МБ «под картинку рассылки», и предел был общим на весь API.
+      // Общим он и остался, но это уже не защита: каждый вебхук — Telegram, MAX, Т-Банк,
+      // Звонобот — считает размер присланного сам и отвергает переростка своим пределом.
+      // Здесь остаётся только последний рубеж, чтобы Fastify не собирал в память гигабайт.
       bodyLimitBytes: Math.max(
         config.telegramWebhook.bodyLimitBytes,
         config.tbankPayments.bodyLimitBytes,
-        1_600_000
+        7_000_000
       ),
       readiness,
       ...(adminAuth ? { adminAuth } : {}),

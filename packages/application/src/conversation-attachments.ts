@@ -219,3 +219,66 @@ export class DownloadConversationAttachmentsBatchService {
     return "failed";
   }
 }
+
+/**
+ * Куда лечь файлу внутри папки вложений.
+ *
+ * Общая для двух мест сразу: воркер кладёт сюда входящие, api — то, что менеджер отправляет
+ * из панели. Раскладка одна, потому что папка одна, и разъехаться она не должна: посчитать
+ * «сколько ушло за август» можно только пока все файлы лежат по одному правилу.
+ *
+ * Имя файла — идентификатор вложения, а не то, как файл назвал отправитель. Присланное имя
+ * бывает каким угодно, включая путь наружу из папки; из него берётся только расширение.
+ */
+export function attachmentRelativePath(
+  attachmentId: string,
+  file: { readonly fileName: string | null; readonly mimeType: string | null },
+  at: Date
+): string {
+  const year = String(at.getUTCFullYear());
+  const month = String(at.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}/${month}/${attachmentId}${attachmentExtension(file)}`;
+}
+
+/** Расширение из имени файла, а если его нет — из типа содержимого. */
+export function attachmentExtension(file: {
+  readonly fileName: string | null;
+  readonly mimeType: string | null;
+}): string {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(file.fileName ?? "");
+  if (fromName?.[1]) {
+    return `.${fromName[1].toLowerCase()}`;
+  }
+  switch (file.mimeType) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+    case "audio/ogg":
+      return ".ogg";
+    case "video/mp4":
+      return ".mp4";
+    case "application/pdf":
+      return ".pdf";
+    default:
+      // Без расширения файл всё равно откроется — по содержимому. Придумывать его наугад
+      // хуже: `.bin` у голосового сообщения только собьёт с толку.
+      return "";
+  }
+}
+
+/** Что можно отправить из панели. Шире этого списка мессенджеры всё равно не примут. */
+export function attachmentKindForMime(mimeType: string): AttachmentKind {
+  if (mimeType.startsWith("image/")) {
+    return "photo";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  return "document";
+}

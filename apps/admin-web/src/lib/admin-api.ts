@@ -927,6 +927,53 @@ export function getPersonConversations(
  * Обычная ссылка, а не запрос: картинку показывает `<img>`, голосовое — `<audio>`, и оба
  * ходят за файлом сами, с той же сессией. Тянуть файл в память панели ради этого незачем.
  */
+/**
+ * Файл в переписку.
+ *
+ * Содержимое уходит base64 внутри JSON — тем же путём, что картинка рассылки: прокси панели
+ * принимает только JSON, и ради одной ручки учить его multipart дороже, чем смириться с
+ * третью лишних байт.
+ */
+export async function sendConversationFile(
+  conversationId: string,
+  input: {
+    readonly file: File;
+    readonly caption?: string;
+    readonly takeOver?: boolean;
+  }
+): Promise<ConversationReplyResult> {
+  const buffer = await input.file.arrayBuffer();
+  return await requestAdminMutation(
+    `conversations/${encodeURIComponent(conversationId)}/files`,
+    "POST",
+    {
+      fileName: input.file.name,
+      // Пустой тип бывает у файлов без расширения: пусть решает сервер, а не браузер.
+      mimeType: input.file.type === "" ? "application/octet-stream" : input.file.type,
+      contentBase64: toBase64(new Uint8Array(buffer)),
+      ...(input.caption === undefined || input.caption === ""
+        ? {}
+        : { caption: input.caption }),
+      ...(input.takeOver === undefined ? {} : { takeOver: input.takeOver })
+    }
+  );
+}
+
+/**
+ * Base64 без загрузки всего файла в строку одним куском.
+ *
+ * `String.fromCharCode(...bytes)` на мегабайтном файле роняет вкладку: аргументов у вызова
+ * столько же, сколько байт, и стек кончается. Отсюда куски по 32 КБ.
+ */
+function toBase64(bytes: Uint8Array): string {
+  const chunkSize = 32 * 1_024;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export function conversationAttachmentUrl(attachmentId: string): string {
   return `/admin-api/conversations/attachments/${encodeURIComponent(attachmentId)}/file`;
 }

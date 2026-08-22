@@ -64,6 +64,38 @@ export class MaxNotificationSender {
     });
   }
 
+  /**
+   * Файл от менеджера. У MAX это только картинка.
+   *
+   * Их Bot API умеет вложение типа `image` и не умеет произвольный документ: программу в
+   * PDF отправить нечем. Врать об этом нельзя, поэтому канал прямо сообщает, что он берёт,
+   * и очередь отказывает сразу, а не после пяти попыток.
+   */
+  supportsFileKind(kind: string): boolean {
+    return kind === "photo";
+  }
+
+  async sendFile(input: {
+    readonly recipientId: string;
+    readonly bytes: Uint8Array;
+    readonly fileName: string;
+    readonly mimeType: string | null;
+    readonly kind: string;
+    readonly caption: string;
+  }): Promise<{ readonly providerMessageId: string }> {
+    validateRecipient(input.recipientId);
+    if (input.kind !== "photo") {
+      throw new Error("MAX принимает только изображения");
+    }
+    return await this.api.sendImage({
+      userId: input.recipientId,
+      bytes: input.bytes,
+      fileName: input.fileName,
+      // MAX не принимает пустой текст сообщения, как и у ответа на кнопку: шлём пробел.
+      caption: input.caption === "" ? " " : input.caption
+    });
+  }
+
   async sendImage(
     recipientId: string,
     image: {

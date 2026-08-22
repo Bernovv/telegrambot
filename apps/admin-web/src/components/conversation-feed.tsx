@@ -3,6 +3,7 @@
 import {
   conversationAttachmentUrl,
   getPersonConversations,
+  sendConversationFile,
   sendConversationReply
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
@@ -12,7 +13,17 @@ import type {
   AdminConversationThread,
   AdminPersonConversations
 } from "@ticket-platform/contracts/admin-conversations";
-import { AlertTriangle, Bot, Clock, MessageSquare, Search, Send, User } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Clock,
+  MessageSquare,
+  Paperclip,
+  Search,
+  Send,
+  User,
+  X
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
@@ -32,6 +43,9 @@ const PAGE_SIZE = 50;
 
 /** Пауза перед поиском: человек печатает «билет» шестью нажатиями, а не одним. */
 const SEARCH_DEBOUNCE_MS = 350;
+
+/** Столько же принимают прокси панели и api. Проверяем здесь, чтобы сказать до отправки. */
+const FILE_LIMIT_BYTES = 5 * 1_024 * 1_024;
 
 export function ConversationFeed({ contactId }: { readonly contactId: string }) {
   const [data, setData] = useState<AdminPersonConversations | null>(null);
@@ -194,28 +208,46 @@ function ReplyComposer({
     threads[0]?.conversationId ?? ""
   );
   const [text, setText] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [takeOverFrom, setTakeOverFrom] = useState<string | null>(null);
+  const filePicker = useRef<HTMLInputElement | null>(null);
 
   const send = useCallback(
     (takeOver: boolean) => {
       const body = text.trim();
-      if (body === "" || conversationId === "") {
+      // Без файла нужен текст; с файлом текст необязателен — он идёт подписью.
+      if (conversationId === "" || (body === "" && file === null)) {
+        return;
+      }
+      if (file !== null && file.size > FILE_LIMIT_BYTES) {
+        setError(`Файл больше ${formatSize(FILE_LIMIT_BYTES)} — столько не примет панель.`);
         return;
       }
       setBusy(true);
       setError(null);
-      sendConversationReply(conversationId, { text: body, takeOver })
+      const sending = file === null
+        ? sendConversationReply(conversationId, { text: body, takeOver })
+        : sendConversationFile(conversationId, {
+          file,
+          ...(body === "" ? {} : { caption: body }),
+          takeOver
+        });
+      sending
         .then((result) => {
           setBusy(false);
           if (result.status === "assigned_to_other") {
             // Не ошибка, а развилка: диалог ведёт коллега, и перехватить его — решение
-            // человека. Текст при этом остаётся в поле, чтобы не набирать заново.
+            // человека. Текст и файл при этом остаются, чтобы не набирать заново.
             setTakeOverFrom(result.assignedAdminName);
             return;
           }
           setText("");
+          setFile(null);
+          if (filePicker.current) {
+            filePicker.current.value = "";
+          }
           setTakeOverFrom(null);
           onSent();
         })
@@ -224,7 +256,7 @@ function ReplyComposer({
           setError(errorText(cause));
         });
     },
-    [conversationId, onSent, text]
+    [conversationId, file, onSent, text]
   );
 
   if (threads.length === 0) {
@@ -288,12 +320,50 @@ function ReplyComposer({
 
       {error ? <p className="conversation-composer-error">{error}</p> : null}
 
+      {file ? (
+        <p className="conversation-composer-file">
+          <Paperclip size={13} />
+          {file.name}
+          <span className="conversation-composer-file-size">{formatSize(file.size)}</span>
+          <button
+            type="button"
+            aria-label="Убрать файл"
+            onClick={() => {
+              setFile(null);
+              if (filePicker.current) {
+                filePicker.current.value = "";
+              }
+            }}
+          >
+            <X size={13} />
+          </button>
+        </p>
+      ) : null}
+
       <div className="conversation-composer-actions">
+        <input
+          ref={filePicker}
+          type="file"
+          hidden
+          onChange={(event) => {
+            setError(null);
+            setFile(event.target.files?.[0] ?? null);
+          }}
+        />
+        <button
+          type="button"
+          className="conversation-composer-attach"
+          disabled={busy}
+          onClick={() => filePicker.current?.click()}
+        >
+          <Paperclip size={15} />
+          Файл
+        </button>
         <span className="conversation-composer-hint">Ctrl+Enter — отправить</span>
         <button
           type="button"
           className="conversation-composer-send"
-          disabled={busy || text.trim() === ""}
+          disabled={busy || (text.trim() === "" && file === null)}
           onClick={() => send(false)}
         >
           {busy ? "Отправляем…" : "Отправить"}

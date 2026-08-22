@@ -54,7 +54,10 @@ import {
   createTelegramNotificationSender
 } from "@ticket-platform/messenger-telegram";
 import { createLogger } from "@ticket-platform/observability";
-import { FileSystemAttachmentStorage } from "./conversation-file-storage.js";
+import {
+  FileSystemAttachmentReader,
+  FileSystemAttachmentStorage
+} from "./conversation-file-storage.js";
 import { TBankPaymentProvider } from "@ticket-platform/payment-tbank";
 import { QrTicketPngRenderer } from "@ticket-platform/ticket-rendering";
 import { PgBoss } from "pg-boss";
@@ -349,7 +352,13 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           maxAttempts: config.conversationReplies.maxAttempts,
           retryDelayMs: config.conversationReplies.retryDelayMs,
           pauseBetweenMs: config.conversationReplies.pauseBetweenMs
-        }
+        },
+        undefined,
+        // Файл читается с диска в момент отправки. Без папки читать неоткуда, и отправка
+        // файла честно станет неудачей с причиной — текст при этом уходит как обычно.
+        attachmentsConfig.enabled
+          ? new FileSystemAttachmentReader(attachmentsConfig.directory)
+          : null
       );
 
       const notificationHandler = new HandleNotificationJobService(

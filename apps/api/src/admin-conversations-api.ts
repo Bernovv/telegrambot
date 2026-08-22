@@ -20,6 +20,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import type {
   AdminConversationsService,
   OpenConversationAttachmentService,
+  SendConversationFileService,
   SendConversationReplyService
 } from "@ticket-platform/application";
 import type { FastifyReply } from "fastify";
@@ -41,6 +42,20 @@ const pageQuery = z.object({
    */
   before: z.string().datetime({ offset: true }).optional(),
   search: z.string().max(200).optional()
+});
+
+/**
+ * Пять мегабайт. Столько же разрешает прокси панели, и столько влезает в общий предел тела
+ * запроса с запасом на раздувание base64 примерно на треть.
+ */
+const FILE_LIMIT_BYTES = 5 * 1_024 * 1_024;
+
+const fileBody = z.object({
+  fileName: z.string().min(1).max(200),
+  mimeType: z.string().min(3).max(200),
+  contentBase64: z.string().min(4).max(Math.ceil(FILE_LIMIT_BYTES * 4 / 3) + 1_024),
+  caption: z.string().max(4_000).optional(),
+  takeOver: z.boolean().optional()
 });
 
 const replyBody = z.object({
@@ -68,6 +83,16 @@ export interface AdminConversationsHandler {
     readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
     readonly attachmentId: string;
   }): ReturnType<OpenConversationAttachmentService["execute"]>;
+  sendFile(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly conversationId: string;
+    readonly fileName: string;
+    readonly mimeType: string;
+    readonly bytes: Uint8Array;
+    readonly caption?: string | undefined;
+    readonly takeOver?: boolean | undefined;
+    readonly now: Date;
+  }): ReturnType<SendConversationFileService["execute"]>;
 }
 
 /** Папка вложений на диске. Ту же переменную читает воркер, когда их туда кладёт. */
@@ -153,6 +178,59 @@ export class AdminConversationRepliesController {
     }
     return result;
   }
+
+  /**
+   * Файл от менеджера.
+   *
+   * Содержимое приходит base64 внутри JSON — тем же путём, что картинка рассылки. Разбираем
+   * его здесь и дальше несём байтами: чем раньше строка перестаёт существовать, тем меньше
+   * шансов, что она попадёт в журнал целиком.
+   */
+  @Post(":id/files")
+  @RequireAdminPermission("conversations.write")
+  async sendFile(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const conversationId = parse(uuid, id);
+    const parsed = parse(fileBody, body);
+    const bytes = decodeBase64(parsed.contentBase64);
+    if (bytes === null || bytes.byteLength > FILE_LIMIT_BYTES) {
+      throw new BadRequestException({
+        code: "INVALID_CONVERSATIONS_REQUEST",
+        title: "Файл не разобрался или слишком большой"
+      });
+    }
+
+    const result = await execute(() =>
+      this.handler.sendFile({
+        actor: requireActor(request),
+        conversationId,
+        fileName: parsed.fileName,
+        mimeType: parsed.mimeType,
+        bytes,
+        caption: parsed.caption,
+        takeOver: parsed.takeOver,
+        now: new Date()
+      })
+    );
+    if (result.status === "not_found") {
+      throw new NotFoundException({
+        code: "CONVERSATION_NOT_FOUND",
+        title: "Диалог не найден"
+      });
+    }
+    return result;
+  }
+}
+
+/** `null` — строка не base64. Проверяем обратным преобразованием: `Buffer` молча глотает мусор. */
+function decodeBase64(value: string): Uint8Array | null {
+  const bytes = Buffer.from(value, "base64");
+  return bytes.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, "")
+    ? new Uint8Array(bytes)
+    : null;
 }
 
 /**

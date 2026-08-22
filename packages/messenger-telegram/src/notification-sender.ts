@@ -3,6 +3,17 @@ import { Api, InlineKeyboard, InputFile } from "grammy";
 import { encodeScenarioCallback } from "@ticket-platform/messenger-core";
 
 export interface TelegramNotificationApi {
+  /**
+   * Необязательный: у уведомлений документов не бывает, и требовать его от каждого
+   * двойника в тестах значит чинить два десятка тестов ради одной новой возможности.
+   * Отсутствие метода означает «этот отправитель документов не шлёт», и служба отправки
+   * узнаёт об этом до попытки, а не после.
+   */
+  sendDocument?(
+    chatId: string | number,
+    document: InputFile,
+    options: { readonly caption?: string }
+  ): Promise<{ readonly message_id: number }>;
   sendMessage(
     chatId: string | number,
     text: string,
@@ -130,6 +141,56 @@ export class GrammyTextNotificationSender {
     return { providerMessageId: String(message.message_id) };
   }
 
+  /**
+   * Файл от менеджера: фотография картинкой, остальное документом.
+   *
+   * Разница не косметическая. Фотография, отправленная документом, приходит человеку
+   * файлом, который надо скачать, чтобы посмотреть; документ, отправленный картинкой,
+   * Telegram просто не примет — он ждёт изображение.
+   *
+   * Подпись у Telegram ограничена 1024 знаками против 4096 у обычного сообщения. Более
+   * длинную обрезаем: потерять хвост подписи лучше, чем не отправить файл вовсе.
+   */
+  async sendFile(input: {
+    readonly recipientId: string;
+    readonly bytes: Uint8Array;
+    readonly fileName: string;
+    readonly mimeType: string | null;
+    readonly kind: string;
+    readonly caption: string;
+  }): Promise<{ readonly providerMessageId: string }> {
+    validateRecipient(input.recipientId);
+    if (input.bytes.byteLength < 1) {
+      throw new Error("Telegram file is empty");
+    }
+    const caption = input.caption.slice(0, 1_024);
+    const file = new InputFile(input.bytes, safeFileName(input.fileName));
+
+    if (input.kind === "photo") {
+      const photo = await this.api.sendPhoto(
+        input.recipientId,
+        file,
+        // Telegram не принимает пустую подпись у фотографии — шлём пробел.
+        { caption: caption === "" ? " " : caption }
+      );
+      validateMessageId(photo.message_id);
+      return { providerMessageId: String(photo.message_id) };
+    }
+
+    if (!this.api.sendDocument) {
+      // Отправитель без документов: так устроены двойники в тестах уведомлений, где
+      // документов не бывает. Для очереди это отказ без повторов.
+      throw new Error("Telegram document sending is not available");
+    }
+    const message = await this.api.sendDocument(
+      input.recipientId,
+      file,
+      caption === "" ? {} : { caption }
+    );
+    validateMessageId(message.message_id);
+    return { providerMessageId: String(message.message_id) };
+  }
+
   async sendScenarioPresentation(
     recipientId: string,
     sessionId: string,
@@ -192,6 +253,17 @@ export function createTelegramNotificationSender(
   return new GrammyTextNotificationSender(
     new Api(token, apiRoot ? { apiRoot } : undefined)
   );
+}
+
+/**
+ * Имя файла для Telegram.
+ *
+ * Присланное менеджером имя может содержать что угодно, включая разделители пути. Telegram
+ * такое имя примет и покажет человеку — но лучше, чтобы у файла было имя, а не путь.
+ */
+function safeFileName(fileName: string): string {
+  const cleaned = fileName.replace(/[/\\]/g, "_").trim();
+  return cleaned === "" ? "file" : cleaned.slice(0, 200);
 }
 
 function validateRecipient(recipientId: string): void {
