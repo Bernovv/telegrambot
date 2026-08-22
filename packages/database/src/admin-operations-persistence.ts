@@ -23,6 +23,7 @@ interface UserSummaryRow {
   readonly paid_order_count: string;
   readonly wallet_available_kopecks: string;
   readonly wallet_held_kopecks: string;
+  readonly channels: readonly AdminUserSummary["channels"][number][] | null;
 }
 
 interface OrderSummaryRow {
@@ -38,6 +39,7 @@ interface OrderSummaryRow {
   readonly external_due_kopecks: string;
   readonly currency: string;
   readonly ticket_count: string;
+  readonly channel: AdminOrderSummary["channel"];
   readonly created_at: Date | string;
   readonly paid_at: Date | string | null;
   readonly excluded_at: Date | string | null;
@@ -407,7 +409,8 @@ function mapUserSummary(row: UserSummaryRow): AdminUserSummary {
     orderCount: toCount(row.order_count),
     paidOrderCount: toCount(row.paid_order_count),
     walletAvailableKopecks: row.wallet_available_kopecks,
-    walletHeldKopecks: row.wallet_held_kopecks
+    walletHeldKopecks: row.wallet_held_kopecks,
+    channels: row.channels ?? []
   };
 }
 
@@ -425,6 +428,7 @@ function mapOrderSummary(row: OrderSummaryRow): AdminOrderSummary {
     externalDueKopecks: row.external_due_kopecks,
     currency: row.currency,
     ticketCount: toCount(row.ticket_count),
+    channel: row.channel,
     createdAt: toIso(row.created_at),
     paidAt: toNullableIso(row.paid_at),
     excludedAt: toNullableIso(row.excluded_at),
@@ -470,7 +474,8 @@ const USER_SUMMARY_SELECT = `select
   coalesce(order_totals.order_count, 0)::text as order_count,
   coalesce(order_totals.paid_order_count, 0)::text as paid_order_count,
   coalesce(wallet.cached_available_kopecks, 0)::text as wallet_available_kopecks,
-  coalesce(wallet.cached_held_kopecks, 0)::text as wallet_held_kopecks
+  coalesce(wallet.cached_held_kopecks, 0)::text as wallet_held_kopecks,
+  coalesce(channels.list, array[]::text[]) as channels
 from public.users users
 left join lateral (
   select identity.username, identity.username_normalized, identity.external_user_id
@@ -479,6 +484,13 @@ left join lateral (
   order by identity.first_seen_at
   limit 1
 ) identity on true
+-- Каналы человека одним подзапросом, а не join'ом: join размножил бы строку пользователя
+-- на число его опознавателей, и постраничный отбор поехал бы.
+left join lateral (
+  select array_agg(distinct identity.channel order by identity.channel) as list
+  from public.messenger_identities identity
+  where identity.user_id = users.id
+) channels on true
 left join lateral (
   select contact.value_normalized
   from public.user_contacts contact
@@ -520,6 +532,7 @@ const ORDER_SUMMARY_SELECT = `select
   orders.excluded_reason,
   orders.expires_at,
   orders.source,
+  orders.channel,
   orders.lock_version
 from public.orders orders
 join public.users users on users.id = orders.user_id

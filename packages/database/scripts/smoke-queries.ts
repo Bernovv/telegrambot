@@ -17,6 +17,7 @@
  * по-настоящему их меняет.
  */
 import { randomUUID } from "node:crypto";
+import { createAdminOperationsPersistence } from "../src/admin-operations-persistence.js";
 import { createAdminOutreachPersistence } from "../src/admin-outreach-persistence.js";
 import { createAutoTaskPersistence } from "../src/auto-task-persistence.js";
 import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-persistence.js";
@@ -390,6 +391,36 @@ async function main(): Promise<void> {
       }
     })
   ));
+
+  // Списки людей и заказов: то, что панель открывает первым делом. Здесь легко потерять
+  // колонку, которой нет в подзапросе, — Postgres отвергнет запрос целиком, и страница
+  // отдаст 500. Именно так уже случалось со списком контактов воронки.
+  console.log("\nСписки панели:");
+  const operations = createAdminOperationsPersistence(pool);
+  await check("listUsers", async () => {
+    const users = await operations.listUsers({
+      search: null, blocked: null, cursor: null, limit: 20
+    });
+    console.log(`        людей: ${users.length}, каналы первого: ${
+      users[0] ? JSON.stringify(users[0].channels) : "—"
+    }`);
+  });
+  await check("listUsers с поиском", () => operations.listUsers({
+    search: "иван", blocked: null, cursor: null, limit: 20
+  }));
+  await check("listOrders", async () => {
+    const orders = await operations.listOrders({
+      search: null, status: null, userId: null, eventId: null,
+      includeExcluded: true, cursor: null, limit: 20
+    });
+    console.log(`        заказов: ${orders.length}`);
+  });
+  await check("listOrders с отбором по статусу и мероприятию", () => operations.listOrders({
+    search: "BP", status: "paid", userId: null, eventId: upcomingEventId,
+    includeExcluded: false, cursor: null, limit: 20
+  }));
+  await check("getUser", () => operations.getUser(contactId));
+  await check("getOrder", () => operations.getOrder(upcomingEventId));
 
   // Звонобот: приём вебхука и разбор принятого. Разбор заводит человека, карточку в
   // воронке и звонок — то есть трогает те же таблицы, что и заявка с сайта, и ломается

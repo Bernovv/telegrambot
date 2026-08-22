@@ -1,5 +1,6 @@
 "use client";
 
+import { ChannelBadge } from "@/components/channel-badge";
 import { OrderActions } from "@/components/order-actions";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
@@ -171,6 +172,10 @@ export default function OrderDetailPage() {
         <div>
           <span>Создан</span>
           <strong>{formatDateTime(order.createdAt)}</strong>
+        </div>
+        <div>
+          <span>Канал</span>
+          <strong><ChannelBadge channel={order.channel} /></strong>
         </div>
       </div>
 

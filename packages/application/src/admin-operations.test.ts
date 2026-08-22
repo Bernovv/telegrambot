@@ -121,6 +121,7 @@ const userOne: AdminUserSummary = {
   lastSeenAt: "2026-07-25T14:30:00.000Z",
   orderCount: 2,
   paidOrderCount: 1,
+  channels: ["telegram"],
   walletAvailableKopecks: "10000",
   walletHeldKopecks: "0"
 };

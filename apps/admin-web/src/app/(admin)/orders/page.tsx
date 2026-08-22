@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
+import { ChannelBadge } from "@/components/channel-badge";
 import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
@@ -184,6 +185,7 @@ export default function OrdersPage() {
                 <tr>
                   <th>Заказ</th>
                   <th>Покупатель</th>
+                  <th>Канал</th>
                   <th>Мероприятие</th>
                   <th>Статус</th>
                   <th>Сумма</th>
@@ -209,6 +211,7 @@ export default function OrdersPage() {
                       </div>
                     </td>
                     <td>{order.userDisplayName ?? "Без имени"}</td>
+                    <td><ChannelBadge channel={order.channel} /></td>
                     <td>{order.eventTitle}</td>
                     <td>
                       <StatusPill tone={orderStatusTone(order.status)}>

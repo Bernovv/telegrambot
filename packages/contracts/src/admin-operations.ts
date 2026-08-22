@@ -1,3 +1,11 @@
+import type { MessengerChannel } from "./telegram.js";
+import type { OrderChannel } from "./orders.js";
+
+// Панель берёт типы контрактов из этого файла (см. paths в apps/admin-web/tsconfig.json),
+// поэтому каналы переэкспортируются здесь: колонка «Канал» есть и в списке людей, и в
+// списке заказов.
+export type { MessengerChannel, OrderChannel };
+
 export const ADMIN_ORDER_STATUSES = [
   "draft",
   "awaiting_offer",
@@ -16,6 +24,14 @@ export interface AdminUserSummary {
   readonly id: string;
   readonly displayName: string | null;
   readonly telegramUsername: string | null;
+  /**
+   * В каких мессенджерах человек к нам приходил.
+   *
+   * Список, а не одно значение: один и тот же человек может открыть и Telegram, и MAX, и
+   * тогда «канал» у него не один. Пусто — не открывал ни одного: так выглядят те, кого
+   * завели импортом или руками.
+   */
+  readonly channels: readonly MessengerChannel[];
   /**
    * Полный номер, без маскирования: менеджеру нужно позвонить человеку и найти его в списке
    * участников. Панель закрыта двухфакторной аутентификацией и RBAC, а каждое открытие
@@ -45,6 +61,8 @@ export interface AdminOrderSummary {
   readonly externalDueKopecks: string;
   readonly currency: string;
   readonly ticketCount: number;
+  /** Где оформлен заказ. По нему же уходит билет. */
+  readonly channel: OrderChannel;
   readonly createdAt: string;
   readonly paidAt: string | null;
   /** Заказ скрыт из отчётов: тестовый, истёкший или ошибочный. */

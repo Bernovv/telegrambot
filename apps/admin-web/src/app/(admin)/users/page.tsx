@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState, PageError, PageLoading } from "@/components/page-state";
+import { ChannelBadges } from "@/components/channel-badge";
 import { StatusPill } from "@/components/status-pill";
 import {
   AdminApiError,
@@ -168,6 +169,7 @@ export default function UsersPage() {
               <thead>
                 <tr>
                   <th>Пользователь</th>
+                  <th>Канал</th>
                   <th>Контакт</th>
                   <th>Заказы</th>
                   <th>Баланс</th>
@@ -194,6 +196,9 @@ export default function UsersPage() {
                           </span>
                         </div>
                       </div>
+                    </td>
+                    <td>
+                      <ChannelBadges channels={user.channels} />
                     </td>
                     <td>
                       <div className="stacked-cell">
