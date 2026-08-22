@@ -22,8 +22,7 @@ import type {
   OpenConversationAttachmentService,
   SendConversationReplyService
 } from "@ticket-platform/application";
-import type { ServerResponse } from "node:http";
-import { pipeline } from "node:stream/promises";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   RequireAdminPermission,
@@ -180,7 +179,11 @@ export class AdminConversationFilesController {
   async openAttachment(
     @Param("id") id: string,
     @Req() request: AuthenticatedAdminRequest,
-    @Res({ passthrough: false }) response: ServerResponse
+    // Ответ Fastify, а не Express: у api адаптер Fastify, и `setHeader`/`pipeline` здесь
+    // не работают — их вызов падает с TypeError, а браузер видит 500 и битую картинку.
+    // Отличить одно от другого типами нельзя: `@Res()` в Nest не типизирован, и на что
+    // именно он указывает, знает только адаптер приложения.
+    @Res({ passthrough: false }) response: FastifyReply
   ): Promise<void> {
     const attachmentId = parse(uuid, id);
     const found = await execute(() =>
@@ -212,15 +215,16 @@ export class AdminConversationFilesController {
       });
     }
 
-    response.setHeader("content-type", found.mimeType ?? "application/octet-stream");
-    response.setHeader("cache-control", "private, max-age=300");
     // `inline`, а не `attachment`: голосовое слушают в ленте, а не скачивают. Имя всё
     // равно передаём — с ним «Сохранить как» предложит осмысленное.
-    response.setHeader(
-      "content-disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(found.fileName ?? found.attachmentId)}`
-    );
-    await pipeline(createReadStream(absolute), response);
+    await response
+      .header("content-type", found.mimeType ?? "application/octet-stream")
+      .header("cache-control", "private, max-age=300")
+      .header(
+        "content-disposition",
+        `inline; filename*=UTF-8''${encodeURIComponent(found.fileName ?? found.attachmentId)}`
+      )
+      .send(createReadStream(absolute));
   }
 }
 
