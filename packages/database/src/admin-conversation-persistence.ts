@@ -6,8 +6,14 @@ import type {
 } from "@ticket-platform/contracts";
 import type {
   AdminConversationsRepository,
-  PersonConversationsQuery
+  ConversationReplyQueueRepository,
+  ConversationReplyRepository,
+  PersonConversationsQuery,
+  QueueReplyInput,
+  QueueReplyResult,
+  QueuedReply
 } from "@ticket-platform/application";
+import { recordTouchpoint } from "./conversation-touchpoint.js";
 import type { SqlConnectionPool, SqlExecutor } from "./postgres.js";
 
 /**
@@ -236,4 +242,231 @@ function nullableIso(value: Date | string | null): string | null {
 
 export function createAdminConversationsPersistence(pool: SqlConnectionPool) {
   return { repository: new PostgresAdminConversationsRepository(pool) } as const;
+}
+
+/**
+ * Постановка ответа в очередь.
+ *
+ * Всё одной транзакцией: реплика, время диалога, ответственный и касание в ленте — это одно
+ * действие менеджера, и половина его хуже, чем ничего.
+ *
+ * Ответ забирает диалог себе. Не из вежливости: пока за диалогом никто не закреплён, двое
+ * менеджеров отвечают одному человеку одновременно, и он получает два разных ответа на один
+ * вопрос. Чужой диалог отвечающему не отдаётся — только с явным перехватом.
+ */
+export class PostgresConversationReplyRepository implements ConversationReplyRepository {
+  constructor(private readonly pool: SqlConnectionPool) {}
+
+  async queueReply(input: QueueReplyInput): Promise<QueueReplyResult> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query("begin");
+      try {
+        const found = await connection.query<{
+          readonly id: string;
+          readonly contact_id: string | null;
+          readonly channel: "telegram" | "max";
+          readonly assigned_admin_id: string | null;
+          readonly assigned_admin_name: string | null;
+        }>(
+          `select conversation.id, conversation.contact_id, conversation.channel,
+                  conversation.assigned_admin_id,
+                  coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер')
+                    as assigned_admin_name
+             from public.conversations conversation
+             left join public.admin_accounts assignee
+               on assignee.id = conversation.assigned_admin_id
+            where conversation.id = $1::uuid
+            for update of conversation`,
+          [input.conversationId]
+        );
+        const conversation = found.rows[0];
+        if (!conversation) {
+          await connection.query("rollback");
+          return { status: "not_found" };
+        }
+        if (
+          conversation.assigned_admin_id !== null
+          && conversation.assigned_admin_id !== input.authorAdminId
+          && !input.takeOver
+        ) {
+          await connection.query("rollback");
+          return {
+            status: "assigned_to_other",
+            assignedAdminName: conversation.assigned_admin_name ?? "Менеджер"
+          };
+        }
+
+        await connection.query(
+          `insert into public.conversation_messages (
+             id, conversation_id, direction, author_kind, author_admin_id, body,
+             delivery_status, occurred_at
+           ) values (
+             $1::uuid, $2::uuid, 'outbound', 'manager', $3::uuid, $4::text,
+             'queued', $5::timestamptz
+           )`,
+          [
+            input.messageId,
+            conversation.id,
+            input.authorAdminId,
+            input.body,
+            input.occurredAt
+          ]
+        );
+
+        await connection.query(
+          `update public.conversations
+              set last_message_at = greatest(coalesce(last_message_at, $2::timestamptz), $2::timestamptz),
+                  status = 'open',
+                  assigned_admin_id = $3::uuid,
+                  assigned_at = coalesce(
+                    case when assigned_admin_id = $3::uuid then assigned_at end,
+                    $2::timestamptz
+                  ),
+                  updated_at = now()
+            where id = $1::uuid`,
+          [conversation.id, input.occurredAt, input.authorAdminId]
+        );
+
+        await recordTouchpoint(connection, {
+          contactId: conversation.contact_id,
+          channel: conversation.channel,
+          actorAdminId: input.authorAdminId,
+          result: "sent",
+          note: input.body,
+          occurredAt: input.occurredAt,
+          activityId: input.messageId
+        });
+
+        await connection.query("commit");
+        return { status: "queued", messageId: input.messageId };
+      } catch (error) {
+        await connection.query("rollback");
+        throw error;
+      }
+    } finally {
+      connection.release();
+    }
+  }
+}
+
+/**
+ * Очередь отправки.
+ *
+ * Аренда та же, что у вложений: взятая строка отодвигается по времени следующей попытки,
+ * поэтому второй проход её не тронет, а воркер, умерший с репликой на руках, вернёт её в
+ * очередь сам.
+ *
+ * Порядок — по времени написания. Разговор, отправленный вразнобой, читается задом наперёд.
+ */
+const REPLY_LEASE_SECONDS = 120;
+
+export class PostgresConversationReplyQueueRepository
+implements ConversationReplyQueueRepository {
+  constructor(private readonly pool: SqlConnectionPool) {}
+
+  async claimQueued(input: {
+    readonly batchSize: number;
+    readonly at: Date;
+  }): Promise<readonly QueuedReply[]> {
+    const connection = await this.pool.connect();
+    try {
+      const result = await connection.query<{
+        readonly id: string;
+        readonly channel: QueuedReply["channel"];
+        readonly external_chat_id: string;
+        readonly body: string | null;
+        readonly send_attempts: number;
+      }>(
+        `with claimed as (
+           select message.id
+             from public.conversation_messages message
+            where message.delivery_status = 'queued'
+              and (message.next_attempt_at is null
+                   or message.next_attempt_at <= $2::timestamptz)
+            order by message.next_attempt_at nulls first, message.occurred_at
+            limit $1::int
+            for update of message skip locked
+         ),
+         leased as (
+           update public.conversation_messages message
+              set next_attempt_at = $2::timestamptz + make_interval(secs => $3::int)
+             from claimed
+            where message.id = claimed.id
+            returning message.id, message.conversation_id, message.body,
+                      message.send_attempts
+         )
+         select leased.id, conversation.channel, conversation.external_chat_id,
+                leased.body, leased.send_attempts
+           from leased
+           join public.conversations conversation
+             on conversation.id = leased.conversation_id`,
+        [input.batchSize, input.at, REPLY_LEASE_SECONDS]
+      );
+
+      return result.rows.map((row) => ({
+        messageId: row.id,
+        channel: row.channel,
+        externalChatId: row.external_chat_id,
+        body: row.body ?? "",
+        attempts: row.send_attempts
+      }));
+    } finally {
+      connection.release();
+    }
+  }
+
+  async markSent(input: {
+    readonly messageId: string;
+    readonly providerMessageId: string | null;
+    readonly at: Date;
+  }): Promise<void> {
+    const connection = await this.pool.connect();
+    try {
+      // Идентификатор у мессенджера защищён триггером неизменяемости, а до отправки его
+      // взять неоткуда. Поэтому он проставляется ровно один раз — здесь, и только когда
+      // был пуст: второй проход по той же строке не подменит его чужим.
+      await connection.query(
+        `update public.conversation_messages
+            set delivery_status = 'sent',
+                external_message_id = coalesce(external_message_id, $2::text),
+                send_attempts = send_attempts + 1,
+                next_attempt_at = null,
+                failure_reason = null
+          where id = $1::uuid and delivery_status = 'queued'`,
+        [input.messageId, input.providerMessageId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  async markAttemptFailed(input: {
+    readonly messageId: string;
+    readonly reason: string;
+    readonly at: Date;
+    readonly retryAt: Date | null;
+  }): Promise<void> {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query(
+        `update public.conversation_messages
+            set send_attempts = send_attempts + 1,
+                delivery_status = case when $3::timestamptz is null then 'failed' else 'queued' end,
+                failure_reason = case when $3::timestamptz is null then $2::text else null end,
+                next_attempt_at = $3::timestamptz
+          where id = $1::uuid and delivery_status = 'queued'`,
+        [input.messageId, input.reason, input.retryAt]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+}
+
+export function createConversationReplyPersistence(pool: SqlConnectionPool) {
+  return {
+    repository: new PostgresConversationReplyRepository(pool),
+    queue: new PostgresConversationReplyQueueRepository(pool)
+  } as const;
 }

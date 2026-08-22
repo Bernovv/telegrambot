@@ -1,4 +1,7 @@
-import type { AdminPersonConversations } from "@ticket-platform/contracts/admin-conversations";
+import type {
+  AdminPersonConversations,
+  ConversationReplyResult
+} from "@ticket-platform/contracts/admin-conversations";
 import type {
   AdminOrderDetail,
   AdminOrderStatus,
@@ -908,6 +911,24 @@ export function getPersonConversations(
   return requestAdminApi(
     `conversations/people/${encodeURIComponent(contactId)}${suffix ? `?${suffix}` : ""}`,
     signal
+  );
+}
+
+/**
+ * Ответ менеджера.
+ *
+ * Ручка отвечает сразу, не дожидаясь мессенджера: реплика ложится в очередь и появляется в
+ * ленте со статусом «отправляется». Ждать Telegram здесь нельзя — их сеть иногда думает
+ * секундами, а менеджер в это время жмёт кнопку второй раз.
+ */
+export function sendConversationReply(
+  conversationId: string,
+  input: { readonly text: string; readonly takeOver?: boolean }
+): Promise<ConversationReplyResult> {
+  return requestAdminMutation(
+    `conversations/${encodeURIComponent(conversationId)}/messages`,
+    "POST",
+    input
   );
 }
 

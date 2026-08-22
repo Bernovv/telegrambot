@@ -184,6 +184,7 @@ export interface WorkerConfig extends AppConfig {
   readonly zvonobotBatchSize: number;
   readonly zvonobotPollIntervalMs: number;
   readonly conversationAttachments: ConversationAttachmentsConfig;
+  readonly conversationReplies: ConversationRepliesConfig;
   /** Служебная учётная запись из миграции 20260822160000: от её имени заводится заявка. */
   readonly zvonobotSystemAdminId: string;
   /** Отправитель уведомлений в MAX. Выключен — билеты по заказам MAX доставлены не будут. */
@@ -269,6 +270,59 @@ function loadConversationAttachmentsConfig(
       "CONVERSATION_FILES_TIMEOUT_MS",
       1_000,
       300_000
+    )
+  };
+}
+
+/**
+ * Отправка ответов менеджера.
+ *
+ * Пауза между отправками — главная настройка здесь. Десяток ответов, ушедших в одну
+ * секунду, для антиспама выглядит как рассылка, а для человека — как стена сообщений.
+ */
+export interface ConversationRepliesConfig {
+  readonly batchSize: number;
+  readonly pollIntervalMs: number;
+  readonly pauseBetweenMs: number;
+  readonly maxAttempts: number;
+  readonly retryDelayMs: number;
+}
+
+function loadConversationRepliesConfig(
+  env: NodeJS.ProcessEnv
+): ConversationRepliesConfig {
+  return {
+    batchSize: parseBoundedInteger(
+      env.CONVERSATION_REPLIES_BATCH_SIZE ?? "10",
+      "CONVERSATION_REPLIES_BATCH_SIZE",
+      1,
+      100
+    ),
+    // Пятнадцать секунд: ответ менеджера человек ждёт, и минута тишины после «Отправлено»
+    // читается как «не дошло». Проход по пустой очереди стоит одного запроса.
+    pollIntervalMs: parseBoundedInteger(
+      env.CONVERSATION_REPLIES_POLL_INTERVAL_MS ?? "15000",
+      "CONVERSATION_REPLIES_POLL_INTERVAL_MS",
+      5_000,
+      600_000
+    ),
+    pauseBetweenMs: parseBoundedInteger(
+      env.CONVERSATION_REPLIES_PAUSE_MS ?? "1000",
+      "CONVERSATION_REPLIES_PAUSE_MS",
+      0,
+      60_000
+    ),
+    maxAttempts: parseBoundedInteger(
+      env.CONVERSATION_REPLIES_MAX_ATTEMPTS ?? "5",
+      "CONVERSATION_REPLIES_MAX_ATTEMPTS",
+      1,
+      100
+    ),
+    retryDelayMs: parseBoundedInteger(
+      env.CONVERSATION_REPLIES_RETRY_DELAY_MS ?? "60000",
+      "CONVERSATION_REPLIES_RETRY_DELAY_MS",
+      1_000,
+      3_600_000
     )
   };
 }
@@ -602,6 +656,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     ),
     zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
     conversationAttachments: loadConversationAttachmentsConfig(env),
+    conversationReplies: loadConversationRepliesConfig(env),
     max: loadMaxChannelConfig(env),
     tbankReconciliation,
     telegramNotifications

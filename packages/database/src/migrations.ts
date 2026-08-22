@@ -299,5 +299,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823150000_attachment_download_attempts",
     description: "Track attachment download attempts so one network blip is not a permanent failure",
     destructive: false
+  },
+  {
+    id: "20260823180000_conversation_reply_queue",
+    description: "Queue manager replies as messages instead of sending them straight from the panel",
+    destructive: false
   }
 ];

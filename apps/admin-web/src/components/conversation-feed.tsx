@@ -1,6 +1,6 @@
 "use client";
 
-import { getPersonConversations } from "@/lib/admin-api";
+import { getPersonConversations, sendConversationReply } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
 import type {
   AdminConversationAttachment,
@@ -8,7 +8,7 @@ import type {
   AdminConversationThread,
   AdminPersonConversations
 } from "@ticket-platform/contracts/admin-conversations";
-import { AlertTriangle, Bot, MessageSquare, Search, Send, User } from "lucide-react";
+import { AlertTriangle, Bot, Clock, MessageSquare, Search, Send, User } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
@@ -36,6 +36,7 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [reloads, setReloads] = useState(0);
   const bottom = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
         setLoading(false);
       });
     return () => controller.abort();
-  }, [contactId, query]);
+  }, [contactId, query, reloads]);
 
   // Открываемся на свежем сообщении — там, где менеджер и продолжит разговор. Только при
   // первой загрузке: подгрузка ранних реплик не должна утаскивать его обратно вниз.
@@ -159,6 +160,141 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
         ))}
       </ol>
       <div ref={bottom} />
+
+      <ReplyComposer
+        threads={data.threads}
+        onSent={() => setReloads((value) => value + 1)}
+      />
+    </div>
+  );
+}
+
+/**
+ * Поле ответа.
+ *
+ * Канал выбирается диалогом, а не галочкой: писать можно только туда, где разговор уже
+ * начался. Бот первым написать не может — это ограничение мессенджера, а не наше, и
+ * притворяться, что кнопка «написать в MAX» что-то даст, значит врать менеджеру.
+ *
+ * Ответ уходит в очередь и появляется в ленте сразу со статусом «отправляется». Отдельного
+ * «отправлено» здесь нет: его показывает сама лента, когда воркер доложит.
+ */
+function ReplyComposer({
+  threads,
+  onSent
+}: {
+  readonly threads: readonly AdminConversationThread[];
+  readonly onSent: () => void;
+}) {
+  const [conversationId, setConversationId] = useState(
+    threads[0]?.conversationId ?? ""
+  );
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [takeOverFrom, setTakeOverFrom] = useState<string | null>(null);
+
+  const send = useCallback(
+    (takeOver: boolean) => {
+      const body = text.trim();
+      if (body === "" || conversationId === "") {
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      sendConversationReply(conversationId, { text: body, takeOver })
+        .then((result) => {
+          setBusy(false);
+          if (result.status === "assigned_to_other") {
+            // Не ошибка, а развилка: диалог ведёт коллега, и перехватить его — решение
+            // человека. Текст при этом остаётся в поле, чтобы не набирать заново.
+            setTakeOverFrom(result.assignedAdminName);
+            return;
+          }
+          setText("");
+          setTakeOverFrom(null);
+          onSent();
+        })
+        .catch((cause: unknown) => {
+          setBusy(false);
+          setError(errorText(cause));
+        });
+    },
+    [conversationId, onSent, text]
+  );
+
+  if (threads.length === 0) {
+    return (
+      <p className="conversation-empty">
+        Ответить некуда: человек нам не писал, а первым бот написать не может.
+      </p>
+    );
+  }
+
+  return (
+    <div className="conversation-composer">
+      {threads.length > 1 ? (
+        <div className="conversation-composer-channels" role="radiogroup" aria-label="Куда ответить">
+          {threads.map((thread) => (
+            <button
+              key={thread.conversationId}
+              type="button"
+              role="radio"
+              aria-checked={thread.conversationId === conversationId}
+              className={thread.conversationId === conversationId
+                ? "conversation-composer-channel conversation-composer-channel-active"
+                : "conversation-composer-channel"}
+              onClick={() => setConversationId(thread.conversationId)}
+            >
+              {channelName(thread.channel)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <textarea
+        className="conversation-composer-text"
+        value={text}
+        rows={3}
+        maxLength={4000}
+        placeholder={`Ответ в ${channelName(threads.find((thread) => thread.conversationId === conversationId)?.channel ?? "telegram")}`}
+        disabled={busy}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter переносит строку, отправляет Ctrl+Enter. Наоборот было бы быстрее, но
+          // цена опечатки здесь — сообщение, ушедшее человеку недописанным.
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            send(false);
+          }
+        }}
+      />
+
+      {takeOverFrom ? (
+        <p className="conversation-composer-takeover">
+          Диалог ведёт {takeOverFrom}. Ответить всё равно?
+          <button type="button" onClick={() => send(true)} disabled={busy}>
+            Перехватить и отправить
+          </button>
+          <button type="button" onClick={() => setTakeOverFrom(null)} disabled={busy}>
+            Отмена
+          </button>
+        </p>
+      ) : null}
+
+      {error ? <p className="conversation-composer-error">{error}</p> : null}
+
+      <div className="conversation-composer-actions">
+        <span className="conversation-composer-hint">Ctrl+Enter — отправить</span>
+        <button
+          type="button"
+          className="conversation-composer-send"
+          disabled={busy || text.trim() === ""}
+          onClick={() => send(false)}
+        >
+          {busy ? "Отправляем…" : "Отправить"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -216,6 +352,13 @@ function MessageRow({ message }: { readonly message: AdminConversationMessage })
         {message.attachments.map((attachment) => (
           <AttachmentRow key={attachment.id} attachment={attachment} />
         ))}
+
+        {message.deliveryStatus === "queued" ? (
+          <p className="conversation-queued">
+            <Clock size={13} />
+            Отправляется
+          </p>
+        ) : null}
 
         {message.deliveryStatus === "failed" ? (
           <p className="conversation-failed">

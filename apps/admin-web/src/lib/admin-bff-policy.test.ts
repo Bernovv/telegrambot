@@ -664,3 +664,19 @@ test("forwards the person conversation feed with its cursor and search", () => {
     false
   );
 });
+
+test("forwards the manager reply into an existing conversation", () => {
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "conversations/00000000-0000-4000-8000-000000000101/messages"
+    ),
+    true
+  );
+  // Написать «человеку» мимо диалога нельзя: бот первым написать всё равно не может,
+  // и открытый путь без диалога означал бы обещание, которого мессенджер не выполнит.
+  assert.equal(
+    isAllowedAdminApiPath("POST", "conversations/messages"),
+    false
+  );
+});

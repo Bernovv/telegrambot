@@ -2,6 +2,7 @@ import type {
   AdminPersonConversations,
   AdminRequestActor
 } from "@ticket-platform/contracts";
+import type { IdGenerator } from "./identity.js";
 
 /**
  * Переписка для панели.
@@ -79,4 +80,75 @@ function pageSize(requested: number | undefined): number {
     return DEFAULT_PAGE_SIZE;
   }
   return Math.min(Math.max(Math.trunc(requested), 1), MAX_PAGE_SIZE);
+}
+
+/**
+ * Ответ менеджера.
+ *
+ * Уходит очередью, а не прямым вызовом из панели, и причины перечислены в миграции
+ * `20260823180000`: чужая сеть моргает, антиспам считает скорость, а два одновременных
+ * ответа приходят человеку в случайном порядке.
+ *
+ * Очередь — это сами реплики со статусом `queued`. Ответ появляется в ленте сразу, ещё до
+ * отправки: менеджер видит своё сообщение там же, где всё остальное, и меняется у него
+ * только судьба доставки.
+ */
+
+/** Предел текста. У Telegram 4096, у MAX 4000; берём меньший, чтобы правило было одно. */
+const REPLY_TEXT_LIMIT = 4_000;
+
+export type QueueReplyResult =
+  | { readonly status: "queued"; readonly messageId: string }
+  | { readonly status: "not_found" }
+  /** Диалог взят другим менеджером. Перехват — отдельное осознанное действие. */
+  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string };
+
+export interface QueueReplyInput {
+  readonly conversationId: string;
+  readonly messageId: string;
+  readonly authorAdminId: string;
+  readonly body: string;
+  readonly occurredAt: Date;
+  /** Отвечать в чужой диалог, отобрав его себе. Только по явному согласию менеджера. */
+  readonly takeOver: boolean;
+}
+
+export interface ConversationReplyRepository {
+  queueReply(input: QueueReplyInput): Promise<QueueReplyResult>;
+}
+
+export class SendConversationReplyService {
+  constructor(
+    private readonly repository: ConversationReplyRepository,
+    private readonly ids: IdGenerator
+  ) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly conversationId: string;
+    readonly text: string;
+    readonly takeOver?: boolean | undefined;
+    readonly now: Date;
+  }): Promise<QueueReplyResult> {
+    requirePermission(input.actor, "conversations.write");
+    if (!UUID_PATTERN.test(input.conversationId)) {
+      throw new Error("Administrator conversations conversation id is invalid");
+    }
+
+    const body = input.text.trim();
+    if (body === "" || body.length > REPLY_TEXT_LIMIT) {
+      // Предел проверяем до очереди: отправка, которая заведомо не пройдёт, иначе легла бы
+      // в ленту ответом и три часа притворялась, что вот-вот дойдёт.
+      throw new Error("Administrator conversations reply text is invalid");
+    }
+
+    return await this.repository.queueReply({
+      conversationId: input.conversationId,
+      messageId: this.ids.newId(),
+      authorAdminId: input.actor.adminId,
+      body,
+      occurredAt: input.now,
+      takeOver: input.takeOver ?? false
+    });
+  }
 }

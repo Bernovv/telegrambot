@@ -3,8 +3,12 @@ import { describe, it } from "node:test";
 import type { AdminRequestActor } from "@ticket-platform/contracts";
 import {
   AdminConversationsService,
+  SendConversationReplyService,
   type AdminConversationsRepository,
-  type PersonConversationsQuery
+  type ConversationReplyRepository,
+  type PersonConversationsQuery,
+  type QueueReplyInput,
+  type QueueReplyResult
 } from "./admin-conversations.js";
 
 const CONTACT = "11111111-1111-4111-8111-111111111111";
@@ -91,5 +95,106 @@ describe("переписка в панели", () => {
       }),
       /contact id is invalid/
     );
+  });
+});
+
+describe("ответ менеджера", () => {
+  class ReplyRepository implements ConversationReplyRepository {
+    calls: QueueReplyInput[] = [];
+
+    async queueReply(input: QueueReplyInput): Promise<QueueReplyResult> {
+      this.calls.push(input);
+      return { status: "queued", messageId: input.messageId };
+    }
+  }
+
+  function replyService(): {
+    readonly repository: ReplyRepository;
+    readonly instance: SendConversationReplyService;
+  } {
+    const repository = new ReplyRepository();
+    let counter = 0;
+    return {
+      repository,
+      instance: new SendConversationReplyService(repository, {
+        newId: () => {
+          counter += 1;
+          return `message-${counter}`;
+        }
+      })
+    };
+  }
+
+  const CONVERSATION = "33333333-3333-4333-8333-333333333333";
+  const now = new Date("2026-08-23T15:00:00.000Z");
+
+  it("требует право писать, а не только читать", async () => {
+    // Читать переписку и отвечать в неё — разные права намеренно: первое можно дать
+    // шире, второе говорит от имени компании.
+    const { instance } = replyService();
+
+    await assert.rejects(
+      () => instance.execute({
+        actor: actor("conversations.read"),
+        conversationId: CONVERSATION,
+        text: "привет",
+        now
+      }),
+      /permission is invalid/
+    );
+  });
+
+  it("ставит ответ в очередь и обрезает пробелы по краям", async () => {
+    const { repository, instance } = replyService();
+
+    const result = await instance.execute({
+      actor: actor("conversations.write"),
+      conversationId: CONVERSATION,
+      text: "  Детский билет 1500 ₽  ",
+      now
+    });
+
+    assert.equal(result.status, "queued");
+    assert.equal(repository.calls[0]?.body, "Детский билет 1500 ₽");
+    assert.equal(repository.calls[0]?.takeOver, false);
+  });
+
+  it("не пускает в очередь пустой ответ и слишком длинный", async () => {
+    // Отправка, которая заведомо не пройдёт, иначе легла бы в ленту ответом и три часа
+    // притворялась бы, что вот-вот дойдёт.
+    const { instance } = replyService();
+
+    await assert.rejects(
+      () => instance.execute({
+        actor: actor("conversations.write"),
+        conversationId: CONVERSATION,
+        text: "   ",
+        now
+      }),
+      /reply text is invalid/
+    );
+    await assert.rejects(
+      () => instance.execute({
+        actor: actor("conversations.write"),
+        conversationId: CONVERSATION,
+        text: "я".repeat(4_001),
+        now
+      }),
+      /reply text is invalid/
+    );
+  });
+
+  it("перехват чужого диалога передаётся вниз только когда его попросили", async () => {
+    const { repository, instance } = replyService();
+
+    await instance.execute({
+      actor: actor("conversations.write"),
+      conversationId: CONVERSATION,
+      text: "отвечаю я",
+      takeOver: true,
+      now
+    });
+
+    assert.equal(repository.calls[0]?.takeOver, true);
   });
 });

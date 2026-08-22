@@ -24,7 +24,10 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
-import { createAdminConversationsPersistence } from "../src/admin-conversation-persistence.js";
+import {
+  createAdminConversationsPersistence,
+  createConversationReplyPersistence
+} from "../src/admin-conversation-persistence.js";
 import { createAttachmentDownloadPersistence } from "../src/conversation-attachment-persistence.js";
 import { createConversationPersistence } from "../src/conversation-persistence.js";
 import {
@@ -620,6 +623,39 @@ async function main(): Promise<void> {
       before: now,
       search: "билет"
     }));
+
+  // Очередь ответов менеджера. Постановка идёт транзакцией с четырьмя запросами, а отбор —
+  // блокировкой с арендой и джойном до диалога: и то и другое Postgres отвергает целиком,
+  // если ошибиться колонкой, а тесты этого не видят.
+  const replies = createConversationReplyPersistence(pool);
+  await check("conversations queueReply в несуществующий диалог", async () => {
+    const result = await replies.repository.queueReply({
+      conversationId: randomUUID(),
+      messageId: randomUUID(),
+      authorAdminId: SITE_ADMIN,
+      body: "смоук",
+      occurredAt: now,
+      takeOver: false
+    });
+    if (result.status !== "not_found") {
+      throw new Error("несуществующий диалог не должен принимать ответ");
+    }
+  });
+  await check("conversations claimQueued", () => replies.queue.claimQueued({
+    batchSize: 5,
+    at: now
+  }));
+  await check("conversations markSent", () => replies.queue.markSent({
+    messageId: randomUUID(),
+    providerMessageId: "1",
+    at: now
+  }));
+  await check("conversations markAttemptFailed", () => replies.queue.markAttemptFailed({
+    messageId: randomUUID(),
+    reason: "смоук",
+    at: now,
+    retryAt: null
+  }));
 
   await pool.close();
 

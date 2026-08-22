@@ -1,16 +1,22 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   DynamicModule,
   Get,
   Inject,
   Module,
+  NotFoundException,
   Param,
+  Post,
   Query,
   Req,
   UnauthorizedException
 } from "@nestjs/common";
-import type { AdminConversationsService } from "@ticket-platform/application";
+import type {
+  AdminConversationsService,
+  SendConversationReplyService
+} from "@ticket-platform/application";
 import { z } from "zod";
 import {
   RequireAdminPermission,
@@ -30,6 +36,12 @@ const pageQuery = z.object({
   search: z.string().max(200).optional()
 });
 
+const replyBody = z.object({
+  text: z.string().min(1).max(4_000),
+  /** Отобрать чужой диалог себе. Панель спрашивает об этом отдельно. */
+  takeOver: z.boolean().optional()
+});
+
 export interface AdminConversationsHandler {
   getPersonConversations(input: {
     readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
@@ -38,6 +50,13 @@ export interface AdminConversationsHandler {
     readonly before?: Date | null | undefined;
     readonly search?: string | null | undefined;
   }): ReturnType<AdminConversationsService["getPersonConversations"]>;
+  sendReply(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly conversationId: string;
+    readonly text: string;
+    readonly takeOver?: boolean | undefined;
+    readonly now: Date;
+  }): ReturnType<SendConversationReplyService["execute"]>;
 }
 
 /**
@@ -75,12 +94,57 @@ export class AdminConversationsController {
   }
 }
 
+/**
+ * Ответ менеджера.
+ *
+ * Ручка кладёт реплику в очередь и отвечает сразу: ждать, пока Telegram ответит, панель не
+ * должна — их сеть иногда думает секундами, а менеджер в это время смотрит на крутящуюся
+ * кнопку и жмёт её второй раз.
+ *
+ * `assigned_to_other` — обычный ответ, а не ошибка. Это развилка: диалог ведёт коллега, и
+ * решение перехватить его принимает человек, а не код.
+ */
+@Controller("api/v1/conversations")
+export class AdminConversationRepliesController {
+  constructor(
+    @Inject(ADMIN_CONVERSATIONS)
+    private readonly handler: AdminConversationsHandler
+  ) {}
+
+  @Post(":id/messages")
+  @RequireAdminPermission("conversations.write")
+  async sendReply(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const conversationId = parse(uuid, id);
+    const parsed = parse(replyBody, body);
+    const result = await execute(() =>
+      this.handler.sendReply({
+        actor: requireActor(request),
+        conversationId,
+        text: parsed.text,
+        takeOver: parsed.takeOver,
+        now: new Date()
+      })
+    );
+    if (result.status === "not_found") {
+      throw new NotFoundException({
+        code: "CONVERSATION_NOT_FOUND",
+        title: "Диалог не найден"
+      });
+    }
+    return result;
+  }
+}
+
 @Module({})
 export class AdminConversationsApiModule {
   static register(handler: AdminConversationsHandler): DynamicModule {
     return {
       module: AdminConversationsApiModule,
-      controllers: [AdminConversationsController],
+      controllers: [AdminConversationsController, AdminConversationRepliesController],
       providers: [{ provide: ADMIN_CONVERSATIONS, useValue: handler }]
     };
   }

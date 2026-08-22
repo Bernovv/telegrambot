@@ -5,6 +5,7 @@ import {
   ConfirmPaymentService,
   ConversationLog,
   DownloadConversationAttachmentsBatchService,
+  SendConversationRepliesBatchService,
   DispatchOutboxBatchService,
   DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   ExpireOrdersBatchService,
@@ -27,6 +28,7 @@ import {
   createAdminOutreachPersistence,
   createAttachmentDownloadPersistence,
   createConversationPersistence,
+  createConversationReplyPersistence,
   createEventCampaignSyncPersistence,
   createAutoTaskPersistence,
   createZvonobotProcessingPersistence,
@@ -178,6 +180,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextAutoTaskSweepAt = 0;
   let nextZvonobotSweepAt = 0;
   let nextAttachmentSweepAt = 0;
+  let nextReplySweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
   let lastReminderSweepAt: string | null = null;
   let lastTBankReconciliationSweepAt: string | null = null;
@@ -185,6 +188,9 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let lastAutoTaskSweepAt: string | null = null;
   let lastZvonobotSweepAt: string | null = null;
   let lastAttachmentSweepAt: string | null = null;
+  let lastReplySweepAt: string | null = null;
+  // Появляется только вместе с отправителем уведомлений: без него отправлять нечем.
+  let sendReplies: SendConversationRepliesBatchService | null = null;
   const orderExpiryWorkload = "order-expiry";
   const reminderWorkload = "event-reminders";
   const tbankReconciliationWorkload = "tbank-reconciliation";
@@ -192,6 +198,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   const autoTaskWorkload = "outreach-auto-tasks";
   const zvonobotWorkload = "zvonobot-calls";
   const attachmentWorkload = "conversation-attachments";
+  const replyWorkload = "conversation-replies";
   // Скачивание вложений. Без папки не поднимается вовсе: проход, которому некуда писать,
   // за сутки довёл бы каждое вложение до потолка попыток — то есть тихо превратил бы
   // «файлы у нас» в «файлов нет», и заметили бы это через год по битым ссылкам.
@@ -230,6 +237,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     autoTaskWorkload,
     zvonobotWorkload,
     ...(config.conversationAttachments.enabled ? [attachmentWorkload] : []),
+    ...(config.telegramNotifications.enabled ? [replyWorkload] : []),
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
   ];
 
@@ -267,7 +275,8 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           lastEventCampaignSyncSweepAt,
           lastAutoTaskSweepAt,
           lastZvonobotSweepAt,
-          lastAttachmentSweepAt
+          lastAttachmentSweepAt,
+          lastReplySweepAt
         }
       });
     } catch (error) {
@@ -301,6 +310,18 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
       // Переписка. Билеты, напоминания и рассылки уходят отсюда, а не из бота, и до сих
       // пор в ленту не попадали вовсе: в диалоге была видна половина реплик, и как раз
       // без той, ради которой всё затевалось.
+      const telegramSender = createTelegramNotificationSender(
+        notificationConfig.botToken,
+        notificationConfig.apiRoot
+      );
+      const maxSender = config.max.enabled
+        ? new MaxNotificationSender(new MaxApi({
+          token: config.max.botToken,
+          baseUrl: config.max.apiBaseUrl,
+          timeoutMs: config.max.httpTimeoutMs
+        }))
+        : null;
+
       const conversationLog = new ConversationLog(
         createConversationPersistence(pool).repository,
         idGenerator,
@@ -314,14 +335,28 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         }
       );
 
+      // Ответы менеджеров из панели. Отправитель тот же, что у уведомлений, но **без**
+      // обёртки записи: реплика уже лежит в переписке — её туда положила панель, — и
+      // вторая запись означала бы, что менеджер видит свой ответ дважды.
+      const replySenders = {
+        telegram: telegramSender,
+        ...(maxSender ? { max: maxSender } : {})
+      };
+      sendReplies = new SendConversationRepliesBatchService(
+        createConversationReplyPersistence(pool).queue,
+        replySenders,
+        {
+          maxAttempts: config.conversationReplies.maxAttempts,
+          retryDelayMs: config.conversationReplies.retryDelayMs,
+          pauseBetweenMs: config.conversationReplies.pauseBetweenMs
+        }
+      );
+
       const notificationHandler = new HandleNotificationJobService(
         notificationPersistence.notificationContexts,
         notificationPersistence.notificationLedger,
         new RecordingNotificationSender(
-          createTelegramNotificationSender(
-            notificationConfig.botToken,
-            notificationConfig.apiRoot
-          ),
+          telegramSender,
           "telegram",
           conversationLog,
           notificationConfig.adminChatIds
@@ -342,13 +377,9 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         // заказам MAX падает и уходит в повтор — и это правильно: идентификаторы человека
         // в двух мессенджерах одинаковой формы, и «доставить хоть куда-нибудь» значит
         // отправить чужой билет постороннему.
-        config.max.enabled
+        maxSender
           ? new RecordingNotificationSender(
-            new MaxNotificationSender(new MaxApi({
-              token: config.max.botToken,
-              baseUrl: config.max.apiBaseUrl,
-              timeoutMs: config.max.httpTimeoutMs
-            })),
+            maxSender,
             "max",
             conversationLog,
             notificationConfig.adminChatIds
@@ -561,6 +592,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextZvonobotSweepAt = Date.now() + config.zvonobotPollIntervalMs;
+        }
+      }
+
+      if (sendReplies && Date.now() >= nextReplySweepAt) {
+        currentJobId = replyWorkload;
+
+        try {
+          const result = await sendReplies.execute({
+            at: new Date(),
+            batchSize: config.conversationReplies.batchSize
+          });
+          lastReplySweepAt = new Date().toISOString();
+
+          if (result.claimed > 0) {
+            logger.info("conversation replies sent", {
+              claimed: result.claimed,
+              sent: result.sent,
+              retried: result.retried,
+              failed: result.failed
+            });
+          }
+        } catch (error) {
+          logger.error("conversation reply batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextReplySweepAt = Date.now() + config.conversationReplies.pollIntervalMs;
         }
       }
 

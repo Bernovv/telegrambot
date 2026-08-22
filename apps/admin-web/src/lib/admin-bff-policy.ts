@@ -58,7 +58,10 @@ export function isAllowedAdminApiPath(
       || path === "broadcasts/audience";
   }
   if (method === "POST") {
-    return path === "events"
+    // Ответ менеджера в конкретный диалог. Путь узкий намеренно: писать можно только в
+    // существующий разговор, а не «человеку» — бот первым написать всё равно не может.
+    return /^conversations\/[0-9a-f-]{36}\/messages$/i.test(path)
+      || path === "events"
       || path === "broadcasts"
       || path === "broadcast-images"
       || path === "outreach/campaigns"

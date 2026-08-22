@@ -6573,3 +6573,117 @@ a.person-channel:hover {
     max-width: 92%;
   }
 }
+
+/* Поле ответа. Канал выбирается диалогом, а не галочкой: писать можно только туда, где
+   разговор уже начался — бот первым написать не может. */
+.conversation-composer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+  gap: 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.conversation-composer-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.conversation-composer-channel {
+  padding: 4px 10px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.conversation-composer-channel-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.conversation-composer-text {
+  width: 100%;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.conversation-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.conversation-composer-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.conversation-composer-send {
+  padding: 7px 16px;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.conversation-composer-send:disabled {
+  background: var(--line-strong);
+  cursor: not-allowed;
+}
+
+/* Перехват чужого диалога — вопрос, а не отказ: двое менеджеров, отвечающих одному
+   человеку одновременно, дают ему два разных ответа на один вопрос. */
+.conversation-composer-takeover {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.conversation-composer-takeover button {
+  padding: 4px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.conversation-composer-error {
+  margin: 0;
+  color: var(--danger, #b3261e);
+  font-size: 12px;
+}
+
+.conversation-queued {
+  display: flex;
+  align-items: center;
+  margin: 5px 0 0;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}

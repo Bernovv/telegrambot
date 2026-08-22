@@ -25,6 +25,7 @@ import {
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
   AdminConversationsService,
+  SendConversationReplyService,
   ConversationLog,
   CreateOrderService,
   DeactivateAdminEventOfferService,
@@ -96,6 +97,7 @@ import {
   createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
   createAdminConversationsPersistence,
+  createConversationReplyPersistence,
   createConversationPersistence,
   createOrderSalesPersistence,
   createTelegramPurchaseFlowPersistence,
@@ -296,10 +298,27 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       : undefined;
     // Переписка. Своя служба и своё право: карточка человека и содержание его личных
     // разговоров — разные вещи, и открывать их одним ключом не обязательно.
+    //
+    // Чтение и ответ — две службы за одной ручкой: у них разные права и разное поведение
+    // при отказе, но панели удобнее один адрес.
     const adminConversations = adminAuth
-      ? new AdminConversationsService(
-          createAdminConversationsPersistence(pool).repository
-        )
+      ? (() => {
+          const reading = new AdminConversationsService(
+            createAdminConversationsPersistence(pool).repository
+          );
+          const reply = new SendConversationReplyService(
+            createConversationReplyPersistence(pool).repository,
+            idGenerator
+          );
+          return {
+            getPersonConversations: (
+              input: Parameters<AdminConversationsService["getPersonConversations"]>[0]
+            ) => reading.getPersonConversations(input),
+            sendReply: (
+              input: Parameters<SendConversationReplyService["execute"]>[0]
+            ) => reply.execute(input)
+          };
+        })()
       : undefined;
     const adminOutreach = adminAuth
       ? new AdminOutreachService(

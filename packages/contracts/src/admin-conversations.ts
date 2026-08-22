@@ -90,3 +90,14 @@ export interface AdminPersonConversations {
   /** Есть что показать дальше — панель дозапрашивает по `before`. */
   readonly hasMore: boolean;
 }
+
+/**
+ * Чем кончилась попытка ответить.
+ *
+ * `assigned_to_other` — не ошибка, а развилка: диалог ведёт коллега, и решение перехватить
+ * его принимает человек. Поэтому имя коллеги приходит обычным ответом, а не текстом ошибки:
+ * панели нужно спросить внятно, а через ошибку структура не проходит.
+ */
+export type ConversationReplyResult =
+  | { readonly status: "queued"; readonly messageId: string }
+  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string };
