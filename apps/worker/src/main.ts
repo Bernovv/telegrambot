@@ -208,7 +208,9 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   const attachmentsConfig = config.conversationAttachments;
   const downloadAttachments = attachmentsConfig.enabled
     ? new DownloadConversationAttachmentsBatchService(
-      createAttachmentDownloadPersistence(pool).repository,
+      // Только вложения бота: файлы аккаунта компании забирает его собственный процесс,
+      // потому что идентификатор такого файла живёт внутри сессии TDLib.
+      createAttachmentDownloadPersistence(pool, "bot").repository,
       {
         ...(config.telegramNotifications.enabled
           ? {

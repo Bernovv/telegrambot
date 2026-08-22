@@ -23,6 +23,7 @@ export interface ConversationRecorder {
 
 export type {
   AttachmentKind,
+  ConversationParticipant,
   IncomingAttachment,
   IncomingConversationMessage,
   OutgoingConversationMessage,

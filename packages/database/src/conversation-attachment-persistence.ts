@@ -1,5 +1,6 @@
 import type {
   AttachmentDownloadRepository,
+  ConversationTransport,
   PendingAttachment
 } from "@ticket-platform/application";
 import type { SqlConnectionPool } from "./postgres.js";
@@ -26,10 +27,20 @@ interface PendingRow {
  * Канал берётся из диалога: у вложения его нет и быть не должно — вложение принадлежит
  * реплике, а реплика уже знает, где она сказана. Хранить канал третий раз значило бы
  * завести третье место, где он может разойтись с остальными.
+ *
+ * **Очередь разделена по транспорту**, и это не украшение. У бота файл забирают по ссылке
+ * Bot API, и делает это воркер. У аккаунта компании идентификатор файла — число, живущее
+ * внутри сессии TDLib, и забрать его может только процесс, у которого эта сессия открыта.
+ * Общая очередь означала бы, что воркер честно пробует скачать файл аккаунта пять раз,
+ * каждый раз мимо, и через час помечает его несбывшимся — а файл при этом жив и лежит
+ * в двух шагах.
  */
 export class PostgresAttachmentDownloadRepository
 implements AttachmentDownloadRepository {
-  constructor(private readonly pool: SqlConnectionPool) {}
+  constructor(
+    private readonly pool: SqlConnectionPool,
+    private readonly transport: ConversationTransport
+  ) {}
 
   async claimPending(input: {
     readonly batchSize: number;
@@ -45,7 +56,12 @@ implements AttachmentDownloadRepository {
         `with claimed as (
            select attachment.id
              from public.conversation_attachments attachment
+             join public.conversation_messages message
+               on message.id = attachment.message_id
+             join public.conversations conversation
+               on conversation.id = message.conversation_id
             where attachment.download_status = 'pending'
+              and conversation.transport = $4::text
               and (attachment.next_attempt_at is null
                    or attachment.next_attempt_at <= $2::timestamptz)
             order by attachment.next_attempt_at nulls first, attachment.created_at
@@ -67,7 +83,7 @@ implements AttachmentDownloadRepository {
            from leased
            join public.conversation_messages message on message.id = leased.message_id
            join public.conversations conversation on conversation.id = message.conversation_id`,
-        [input.batchSize, input.at, LEASE_SECONDS]
+        [input.batchSize, input.at, LEASE_SECONDS, this.transport]
       );
       return result.rows.map((row) => ({
         id: row.id,
@@ -146,6 +162,9 @@ implements AttachmentDownloadRepository {
   }
 }
 
-export function createAttachmentDownloadPersistence(pool: SqlConnectionPool) {
-  return { repository: new PostgresAttachmentDownloadRepository(pool) } as const;
+export function createAttachmentDownloadPersistence(
+  pool: SqlConnectionPool,
+  transport: ConversationTransport
+) {
+  return { repository: new PostgresAttachmentDownloadRepository(pool, transport) } as const;
 }

@@ -297,7 +297,7 @@ export interface ConversationAttachmentsConfig {
   readonly downloadTimeoutMs: number;
 }
 
-function loadConversationAttachmentsConfig(
+export function loadConversationAttachmentsConfig(
   env: NodeJS.ProcessEnv
 ): ConversationAttachmentsConfig {
   const directory = (env.CONVERSATION_FILES_DIR ?? "").trim();

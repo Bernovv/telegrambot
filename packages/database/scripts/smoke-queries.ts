@@ -575,7 +575,24 @@ async function main(): Promise<void> {
   // Очередь скачивания вложений. Отбор здесь — не обычный select: одним запросом идут
   // блокировка с пропуском занятых, аренда строки и join до канала через две таблицы.
   // Ровно такой запрос Postgres и отвергает целиком, если в нём ошибиться колонкой.
-  const attachments = createAttachmentDownloadPersistence(pool).repository;
+  const accountAttachments = createAttachmentDownloadPersistence(pool, "account").repository;
+  await check("attachments claimPending (аккаунт)", async () => {
+    // Тот же запрос с другим транспортом. Проверка дешёвая, а смысл в ней есть: очередь
+    // аккаунта читает отдельный процесс, и её молчание выглядит точно так же, как пустая
+    // очередь, — то есть никак.
+    const claimed = await accountAttachments.claimPending({ batchSize: 5, at: now });
+    console.log(`        вложений аккаунта в очереди: ${String(claimed.length)}`);
+    for (const attachment of claimed) {
+      await accountAttachments.markAttemptFailed({
+        attachmentId: attachment.id,
+        reason: "смоук",
+        at: now,
+        retryAt: now
+      });
+    }
+  });
+
+  const attachments = createAttachmentDownloadPersistence(pool, "bot").repository;
   await check("attachments claimPending", async () => {
     const claimed = await attachments.claimPending({ batchSize: 5, at: now });
     console.log(`        вложений в очереди: ${String(claimed.length)}`);
