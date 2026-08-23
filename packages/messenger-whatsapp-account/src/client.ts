@@ -3,6 +3,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   downloadMediaMessage,
+  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
   type AnyMessageContent,
@@ -49,6 +50,9 @@ export type WhatsAppStateHandler = (
   reason: string | null
 ) => void;
 
+/** Куда клиент рассказывает о себе, когда его просят говорить вслух. */
+export type WhatsAppDebugSink = (message: string) => void;
+
 export interface WhatsAppAccountClient extends WhatsAppSocket {
   /** Поднимает соединение и держит его: обрыв — это повтор, а не конец работы. */
   start(): Promise<void>;
@@ -80,14 +84,19 @@ export interface WhatsAppAccountClient extends WhatsAppSocket {
 }
 
 export function createWhatsAppAccountClient(
-  options: WhatsAppAccountClientOptions
+  options: WhatsAppAccountClientOptions,
+  /**
+   * Куда сливать подробности протокола. Задают только при разборе неполадок: библиотека
+   * разговорчива до неприличия, и в обычной работе её поток заглушает наш журнал.
+   */
+  debug: WhatsAppDebugSink | null = null
 ): WhatsAppAccountClient {
   const agent = options.proxyUrl === null
     ? undefined
     : new SocksProxyAgent(remoteDnsProxy(options.proxyUrl));
   const messageHandlers: WhatsAppMessageHandler[] = [];
   const stateHandlers: WhatsAppStateHandler[] = [];
-  const logger = silentLogger();
+  const logger = debug === null ? silentLogger() : debugLogger(debug);
 
   const pairingHandlers: (() => void)[] = [];
 
@@ -115,10 +124,36 @@ export function createWhatsAppAccountClient(
     }
   }
 
+  /**
+   * Версия их веб-клиента, за которую мы себя выдаём.
+   *
+   * Встроенная в библиотеку устаревает: WhatsApp закрывает соединение старым версиям прямо
+   * на рукопожатии, и снаружи это выглядит как «связь оборвалась без причины». Поэтому
+   * сначала спрашиваем актуальную — **через тот же прокси**, иначе запрос уйдёт напрямую и
+   * умрёт. Не ответили — работаем на встроенной: канал, который не поднимается из-за
+   * недоступного справочника версий, хуже канала на версии постарше.
+   */
+  async function currentVersion(): Promise<[number, number, number] | null> {
+    try {
+      const fetched = await fetchLatestBaileysVersion(
+        agent === undefined ? {} : { httpsAgent: agent, httpAgent: agent, proxy: false }
+      );
+      debug?.(`версия протокола: ${fetched.version.join(".")}`
+        + `${fetched.isLatest ? "" : " (не самая свежая)"}`);
+
+      return fetched.version;
+    } catch (error) {
+      debug?.(`версию протокола узнать не удалось (${describe(error)}), берём встроенную`);
+
+      return null;
+    }
+  }
+
   async function open(): Promise<void> {
     const auth = await useMultiFileAuthState(options.sessionDir);
     const saveCreds = auth.saveCreds;
     registered = auth.state.creds.registered === true;
+    const version = await currentVersion();
 
     const created = makeWASocket({
       auth: {
@@ -130,6 +165,7 @@ export function createWhatsAppAccountClient(
       logger,
       // Как аккаунт подписан в списке устройств у владельца номера.
       browser: Browsers.ubuntu(options.deviceName),
+      ...(version === null ? {} : { version }),
       ...(agent === undefined ? {} : { agent, fetchAgent: agent }),
       defaultQueryTimeoutMs: options.requestTimeoutMs,
       // Мы не читатель, а собеседник: отмечать себя «в сети» значит забрать уведомления с
@@ -211,7 +247,8 @@ export function createWhatsAppAccountClient(
     const wait = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]
       ?? 60_000;
     attempt += 1;
-    announce("closed", `связь оборвалась (${describe(error)}), повтор через ${
+    announce("closed", `связь оборвалась (${describe(error)}${
+      status === null ? "" : `, код ${String(status)}`}), повтор через ${
       String(Math.round(wait / 1000))} с`);
     await delay(wait);
     if (closing) {
@@ -416,6 +453,44 @@ interface BaileysLogger {
  * узлы протокола. Наш журнал ведёт приложение, и состояние канала оно узнаёт из `onState`,
  * а не из чужого потока отладки.
  */
+/**
+ * Журнал библиотеки — наружу, когда разбираются с неполадкой.
+ *
+ * Уровень `trace` намеренно: интересное здесь как раз в нём — узлы протокола, из-за которых
+ * сервер закрывает соединение. Читать это в обычной работе невозможно, а в разборе только
+ * оно и помогает.
+ */
+function debugLogger(sink: WhatsAppDebugSink): BaileysLogger {
+  const write = (level: string) => (obj: unknown, msg?: string): void => {
+    const text = msg ?? "";
+    const detail = obj === undefined || obj === null || obj === "" ? "" : ` ${safeJson(obj)}`;
+    sink(`[${level}] ${text}${detail}`);
+  };
+  const logger: BaileysLogger = {
+    level: "trace",
+    child: () => logger,
+    trace: write("trace"),
+    debug: write("debug"),
+    info: write("info"),
+    warn: write("warn"),
+    error: write("error")
+  };
+
+  return logger;
+}
+
+function safeJson(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === "bigint" ? String(item) : item)?.slice(0, 2_000) ?? "";
+  } catch {
+    return String(value);
+  }
+}
+
 function silentLogger(): BaileysLogger {
   const noop = (): void => undefined;
   const logger: BaileysLogger = {

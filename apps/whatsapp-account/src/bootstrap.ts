@@ -40,7 +40,14 @@ export function requireAccountConfig(): EnabledWhatsAppAccountConfig {
  * бы напечатать «связи нет» раньше, чем она появится. `ready` — вошли; `logged_out` —
  * привязки нет или её отозвали, и это не ошибка для скрипта входа, а его рабочий случай.
  */
-export async function openAccount(): Promise<OpenedWhatsAppAccount> {
+export async function openAccount(
+  /**
+   * Куда печатать подробности протокола. Включается переменной `WHATSAPP_ACCOUNT_DEBUG=1`
+   * и нужна ровно тогда, когда соединение рвётся без внятной причины: настоящая причина
+   * лежит в узлах протокола, а наружу от них доходит только «Connection Closed».
+   */
+  debug: ((message: string) => void) | null = defaultDebugSink()
+): Promise<OpenedWhatsAppAccount> {
   const config = requireAccountConfig();
   const client = createWhatsAppAccountClient({
     sessionDir: config.sessionDir,
@@ -48,11 +55,21 @@ export async function openAccount(): Promise<OpenedWhatsAppAccount> {
     deviceName: config.deviceName,
     proxyUrl: config.proxyUrl,
     requestTimeoutMs: config.requestTimeoutMs
-  });
+  }, debug);
 
   await client.start();
 
   return { client, config };
+}
+
+function defaultDebugSink(): ((message: string) => void) | null {
+  if ((process.env.WHATSAPP_ACCOUNT_DEBUG ?? "") !== "1") {
+    return null;
+  }
+
+  return (message: string) => {
+    process.stderr.write(`${message}\n`);
+  };
 }
 
 /**
@@ -91,22 +108,23 @@ export async function waitForState(
 export async function waitForPairingReady(
   client: WhatsAppAccountClient,
   timeoutMs: number
-): Promise<boolean> {
+): Promise<{ readonly ready: boolean; readonly reason: string | null }> {
   return await new Promise((resolve) => {
     const timer = setTimeout(() => {
-      resolve(false);
+      resolve({ ready: false, reason: "ответа от WhatsApp не было" });
     }, timeoutMs);
     timer.unref();
 
     client.onPairingReady(() => {
       clearTimeout(timer);
-      resolve(true);
+      resolve({ ready: true, reason: null });
     });
-    // Соединение может кончиться, так и не дойдя до предложения: чаще всего это прокси.
-    client.onState((state) => {
+    // Соединение может кончиться, так и не дойдя до предложения. Причину обязательно наружу:
+    // без неё «не получилось» одинаково выглядит и при мёртвом прокси, и при отказе сервера.
+    client.onState((state, reason) => {
       if (state === "closed" || state === "logged_out") {
         clearTimeout(timer);
-        resolve(false);
+        resolve({ ready: false, reason });
       }
     });
   });

@@ -36,6 +36,12 @@ async function main(): Promise<void> {
 
   const { client } = await openAccount();
   try {
+    // Состояние вслух: привязка идёт минуту-другую, и всё это время человек у терминала
+    // должен видеть, что происходит, а не гадать, живо ли ещё соединение.
+    client.onState((state, reason) => {
+      console.log(`  · ${describeState(state)}${reason === null ? "" : `: ${reason}`}`);
+    });
+
     if (client.isRegistered()) {
       const state = await waitForState(client, ["ready", "logged_out"], CONNECT_TIMEOUT_MS);
       console.log(`\nПривязка уже есть: ${describeState(state.state)}.`);
@@ -55,14 +61,18 @@ async function main(): Promise<void> {
     // до него рукопожатие ещё идёт, и запрос кода падает с «Connection Closed» — так и
     // случилось при первой попытке.
     console.log("\nСоединяемся с WhatsApp через прокси…");
-    if (!await waitForPairingReady(client, CONNECT_TIMEOUT_MS)) {
+    const pairing = await waitForPairingReady(client, CONNECT_TIMEOUT_MS);
+    if (!pairing.ready) {
       throw new Error(
-        "Соединение не дошло до привязки. Почти всегда это прокси — проверьте, что он"
-        + " пускает до WhatsApp:\n"
-        + "  curl -x <WHATSAPP_ACCOUNT_PROXY> -o /dev/null -sS -w '%{http_code}\\n'"
-        + " https://web.whatsapp.com\n"
-        + "Ответ 200 или 302 — прокси в порядке, и дело в другом; ошибка или тишина —"
-        + " дело в нём. Подробности в docs/runbooks/whatsapp-account.md."
+        `Соединение не дошло до привязки${pairing.reason === null ? "" : `: ${pairing.reason}`}.`
+        + "\n\nЧто посмотреть по порядку:"
+        + "\n  1. Прокси пускает до WhatsApp:"
+        + "\n     curl -x <WHATSAPP_ACCOUNT_PROXY> -o /dev/null -sS -w '%{http_code}\\n'"
+        + " https://web.whatsapp.com"
+        + "\n  2. Подробности протокола — там видно, на чём именно сервер закрывает связь:"
+        + "\n     WHATSAPP_ACCOUNT_DEBUG=1 pnpm wa:login"
+        + "\n  3. Имя устройства латиницей: WHATSAPP_ACCOUNT_DEVICE_NAME=Chrome в .env."
+        + " Кириллица в имени — известный подозреваемый, проверяется одной правкой."
       );
     }
 
