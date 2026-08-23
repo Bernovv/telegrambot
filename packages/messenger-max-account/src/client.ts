@@ -40,6 +40,21 @@ export type MaxAccountState =
   /** Вход отвергнут: токен просрочен, отозван или аккаунт ограничен. Само не починится. */
   | "unauthorized";
 
+export interface MaxAccountLogin {
+  readonly token: string;
+  readonly profile: MaxAccountProfile | null;
+}
+
+/** Заявка на привязку устройства: что показать человеку и по чему спрашивать ответ. */
+export interface MaxQrRequest {
+  /** Ссылка, которую человек считывает камерой в приложении MAX. */
+  readonly link: string;
+  readonly trackId: string;
+  /** Когда попытка протухнет. Обычно две минуты. */
+  readonly expiresAt: number;
+  readonly pollIntervalMs: number;
+}
+
 export interface MaxAccountProfile {
   readonly userId: string;
   /** Как его вернул MAX — без плюса. */
@@ -162,18 +177,79 @@ export class MaxAccountClient {
   async submitCode(
     codeToken: string,
     code: string
-  ): Promise<{ readonly token: string; readonly profile: MaxAccountProfile | null }> {
+  ): Promise<MaxAccountLogin> {
     const frame = await this.invoke(MaxOpcode.auth, {
       token: codeToken,
       verifyCode: code,
       authTokenType: "CHECK_CODE"
     });
+
+    return this.acceptLogin(frame, "MAX принял код");
+  }
+
+  /**
+   * Привязка устройства по QR — второй способ войти, и сегодня единственный работающий.
+   *
+   * Вход по коду их антифрод от нашего клиента не принимает: на первый же запрос он
+   * отвечает требованием капчи, то есть отказывается считать нас настоящим клиентом.
+   * Здесь разрешение даёт человек — тот, у кого уже есть вошедшее устройство: он видит в
+   * приложении, какое устройство просится, и подтверждает его сам.
+   *
+   * Возвращает ссылку, которую нужно показать этому человеку кодом, и номер попытки, по
+   * которому дальше спрашивают, подтвердил он или нет.
+   */
+  async requestQr(): Promise<MaxQrRequest> {
+    const frame = await this.invoke(MaxOpcode.getQr, {});
+    const payload = frame.payload ?? {};
+    const link = payload["qrLink"];
+    const trackId = payload["trackId"];
+    if (typeof link !== "string" || link === "" || typeof trackId !== "string") {
+      throw new Error("MAX не дал ссылку для привязки устройства");
+    }
+
+    return {
+      link,
+      trackId,
+      expiresAt: numberOf(payload["expiresAt"]) ?? Date.now() + 120_000,
+      pollIntervalMs: numberOf(payload["pollingInterval"]) ?? 2_000
+    };
+  }
+
+  /** Подтвердил ли человек привязку. Ответ «ещё нет» — это не ошибка, а ожидание. */
+  async qrConfirmed(trackId: string): Promise<boolean> {
+    const frame = await this.invoke(MaxOpcode.getQrStatus, { trackId });
+    const status = frame.payload?.["status"];
+
+    return isRecord(status) && status["loginAvailable"] === true;
+  }
+
+  /** Забрать постоянный токен после подтверждения. */
+  async confirmQr(trackId: string): Promise<MaxAccountLogin> {
+    const frame = await this.invoke(MaxOpcode.loginByQr, { trackId });
+
+    return this.acceptLogin(frame, "MAX подтвердил привязку");
+  }
+
+  /**
+   * Разбор ответа на вход. Один на оба способа: и код, и QR отвечают одинаково.
+   *
+   * Отдельно ловится двухфакторный пароль: MAX в этом случае присылает не токен, а
+   * требование пароля. Молча вернуть «нет токена» здесь нельзя — человек будет искать
+   * поломку там, где её нет.
+   */
+  private acceptLogin(frame: MaxInboundFrame, what: string): MaxAccountLogin {
     const attributes = frame.payload?.["tokenAttrs"];
     const login = isRecord(attributes) ? attributes["LOGIN"] : undefined;
     const token = isRecord(login) ? login["token"] : undefined;
     if (typeof token !== "string" || token === "") {
+      if (isRecord(frame.payload?.["passwordChallenge"])) {
+        throw new Error(
+          `${what}, но требует пароль входа. Привязка по QR работает только без него:`
+          + " выключите пароль в настройках MAX и повторите."
+        );
+      }
       throw new Error(
-        "MAX принял код, но не прислал постоянный токен."
+        `${what}, но не прислал постоянный токен.`
         + " Скорее всего, у них поменялся ответ — смотреть тело в журнале."
       );
     }
@@ -439,6 +515,10 @@ function profileOf(value: unknown): MaxAccountProfile | null {
       : "",
     displayName: typeof displayName === "string" ? displayName : null
   };
+}
+
+function numberOf(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
