@@ -6,6 +6,8 @@
  * и когда её только предстоит завести кодом привязки. Пустой каталог это не ошибка, а
  * состояние «ещё не входили».
  */
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { loadWhatsAppAccountConfig } from "@ticket-platform/config";
 import type { WhatsAppAccountConfig } from "@ticket-platform/config";
 import {
@@ -108,26 +110,52 @@ export async function waitForState(
 export async function waitForPairingReady(
   client: WhatsAppAccountClient,
   timeoutMs: number
-): Promise<{ readonly ready: boolean; readonly reason: string | null }> {
+): Promise<PairingAttempt> {
   return await new Promise((resolve) => {
     const timer = setTimeout(() => {
-      resolve({ ready: false, reason: "ответа от WhatsApp не было" });
+      resolve({ ready: false, state: "closed", reason: "ответа от WhatsApp не было" });
     }, timeoutMs);
     timer.unref();
 
     client.onPairingReady(() => {
       clearTimeout(timer);
-      resolve({ ready: true, reason: null });
+      resolve({ ready: true, state: "connecting", reason: null });
     });
-    // Соединение может кончиться, так и не дойдя до предложения. Причину обязательно наружу:
-    // без неё «не получилось» одинаково выглядит и при мёртвом прокси, и при отказе сервера.
+    // Соединение может кончиться, так и не дойдя до предложения. Состояние и причину
+    // обязательно наружу: отвергнутая сессия лечится не тем, чем мёртвый прокси, а снаружи
+    // и то и другое выглядит одинаковым «не получилось».
     client.onState((state, reason) => {
       if (state === "closed" || state === "logged_out") {
         clearTimeout(timer);
-        resolve({ ready: false, reason });
+        resolve({ ready: false, state, reason });
       }
     });
   });
+}
+
+export interface PairingAttempt {
+  readonly ready: boolean;
+  readonly state: WhatsAppConnectionState;
+  readonly reason: string | null;
+}
+
+/**
+ * Стереть сессию, оставив сам каталог.
+ *
+ * Каталог не трогаем намеренно: у него права `700` и владелец `root`, выставленные руками
+ * при установке. Пересоздать его — значит однажды получить каталог с правами по умолчанию,
+ * то есть ключи от всей переписки, открытые на чтение кому попало.
+ *
+ * Возвращает, сколько файлов убрано: ноль означает, что каталог и так был пуст, и причина
+ * отказа не в сессии.
+ */
+export async function resetSession(sessionDir: string): Promise<number> {
+  const entries = await readdir(sessionDir);
+  for (const entry of entries) {
+    await rm(join(sessionDir, entry), { recursive: true, force: true });
+  }
+
+  return entries.length;
 }
 
 /** Человеческое название состояния — для журнала и для вывода скриптов. */

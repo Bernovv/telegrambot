@@ -239,7 +239,7 @@ export function createWhatsAppAccountClient(
 
     const status = statusCodeOf(error);
     if (status === DisconnectReason.loggedOut) {
-      announce("logged_out", "аккаунт отвязан — нужен новый вход по коду");
+      announce("logged_out", "сервер счёл сессию недействительной (401)");
 
       return;
     }
