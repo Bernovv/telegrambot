@@ -14,8 +14,9 @@
  * - **Забирает вложения сам.** У бота файл тянет воркер по ссылке Bot API; здесь
  *   идентификатор файла — число внутри сессии TDLib, и достать его может только тот, у
  *   кого эта сессия открыта.
- *
- * Чего пока не делает: не отправляет. Ответ из панели по этому каналу — следующий шаг.
+ * - **Отправляет ответы менеджеров** — те, что написаны в панели в ветку этого канала.
+ * - **Ищет людей в Telegram по номеру телефона.** Единственный способ узнать, есть ли у
+ *   номера аккаунт, — спросить живым клиентом, а живой клиент здесь только один.
  */
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,22 +24,26 @@ import { v7 as uuidv7 } from "uuid";
 import {
   ConversationLog,
   DownloadConversationAttachmentsBatchService,
+  ResolveTelegramPhoneLookupsBatchService,
   SendConversationRepliesBatchService
 } from "@ticket-platform/application";
 import type { IdGenerator } from "@ticket-platform/application";
 import {
   loadAppConfig,
   loadConversationAttachmentsConfig,
-  loadConversationRepliesConfig
+  loadConversationRepliesConfig,
+  loadTelegramPhoneLookupConfig
 } from "@ticket-platform/config";
 import {
   createConversationPersistence,
   createAttachmentDownloadPersistence,
   createConversationReplyQueue,
-  createNodePostgresPool
+  createNodePostgresPool,
+  createTelegramPhoneLookupQueue
 } from "@ticket-platform/database";
 import {
   createTdlibAttachmentSource,
+  createTdlibPhoneLookup,
   createTdlibReplySender,
   incomingPrivateMessage,
   participantOf,
@@ -149,6 +154,26 @@ async function main(): Promise<void> {
     attachments.enabled ? new FileSystemAttachmentReader(attachments.directory) : null
   );
 
+  /**
+   * Поиск людей в Telegram по номеру телефона.
+   *
+   * Здесь же, а не в воркере, по той же причине, что и отправка: спросить Telegram может
+   * только тот, у кого открыта сессия. Панель кладёт просьбу в очередь, этот проход её
+   * разбирает и, найдя человека, заводит ему ветку переписки — ту, в которую менеджер и
+   * напишет первым.
+   */
+  const lookupOptions = loadTelegramPhoneLookupConfig(process.env);
+  const lookups = new ResolveTelegramPhoneLookupsBatchService(
+    createTelegramPhoneLookupQueue(pool).queue,
+    createTdlibPhoneLookup(client),
+    ids,
+    {
+      maxAttempts: lookupOptions.maxAttempts,
+      retryDelayMs: lookupOptions.retryDelayMs,
+      pauseBetweenMs: lookupOptions.pauseBetweenMs
+    }
+  );
+
   client.on("update", (update) => {
     const incoming = incomingPrivateMessage(update);
     if (incoming === null) {
@@ -198,9 +223,12 @@ async function main(): Promise<void> {
   await reportConnection(client);
   logger.info("listening", { proxy: config.proxy === null ? "none" : config.proxy.kind });
 
-  // Два прохода с разной частотой: ответ менеджера человек ждёт прямо сейчас, а вложение
-  // нужно к моменту, когда диалог откроют. Отсюда отдельные сроки, а не общий такт.
+  // Три прохода с разной частотой. Ответ менеджера человек ждёт прямо сейчас; поиска по
+  // номеру менеджер ждёт у открытой карточки, но торопиться с ним нельзя — за спешку тут
+  // платит аккаунт; вложение нужно к моменту, когда диалог откроют. Отсюда отдельные
+  // сроки, а не общий такт.
   let nextAttachmentSweepAt = 0;
+  let nextLookupSweepAt = 0;
   while (!stopping.now) {
     try {
       const sent = await replies.execute({
@@ -219,6 +247,29 @@ async function main(): Promise<void> {
       logger.error("reply sweep failed", {
         errorMessage: error instanceof Error ? error.message : String(error)
       });
+    }
+
+    if (Date.now() >= nextLookupSweepAt) {
+      try {
+        const resolved = await lookups.execute({
+          at: new Date(),
+          batchSize: lookupOptions.batchSize
+        });
+        if (resolved.claimed > 0) {
+          logger.info("phone lookups resolved", {
+            claimed: resolved.claimed,
+            found: resolved.found,
+            notFound: resolved.notFound,
+            retried: resolved.retried,
+            failed: resolved.failed
+          });
+        }
+      } catch (error) {
+        logger.error("phone lookup sweep failed", {
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      }
+      nextLookupSweepAt = Date.now() + lookupOptions.pollIntervalMs;
     }
 
     if (downloads !== null && Date.now() >= nextAttachmentSweepAt) {

@@ -49,4 +49,5 @@ export * from "./site-registration-persistence.js";
 export * from "./admin-conversation-persistence.js";
 export * from "./conversation-attachment-persistence.js";
 export * from "./conversation-persistence.js";
+export * from "./telegram-phone-lookup-persistence.js";
 export * from "./zvonobot-persistence.js";

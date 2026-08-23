@@ -15,7 +15,11 @@ import {
   statusLabel,
   taskTypeLabel
 } from "@/lib/outreach-labels";
-import { AdminApiError, updateOutreachContactStage } from "@/lib/admin-api";
+import {
+  AdminApiError,
+  requestOutreachTelegramLookup,
+  updateOutreachContactStage
+} from "@/lib/admin-api";
 import {
   OutreachNextStepDialog,
   type OutreachNextStepValue
@@ -41,6 +45,7 @@ import {
   MessageSquare,
   Phone,
   PhoneCall,
+  Search,
   Send,
   Trash2
 } from "lucide-react";
@@ -65,6 +70,10 @@ import { PersonQuestionnaireDialog } from "@/components/person-questionnaire-dia
  * убрано во вкладки: это история, её смотрят изредка, а места она занимала столько же,
  * сколько задачи.
  */
+
+/** Как часто перечитываем карточку, пока ждём ответа Telegram, и сколько раз подряд. */
+const POLL_INTERVAL_MS = 3_000;
+const POLL_LIMIT = 20;
 
 const PHONE_STATUS_LABELS: Record<string, string> = {
   unknown: "не знаем",
@@ -515,6 +524,7 @@ export function PersonBody({
                 ? activeCampaigns(person)[0] ?? null
                 : null}
               onTouch={onTouch}
+              onReload={onReload}
             />
             <PersonFieldsCard
               person={person}
@@ -697,14 +707,174 @@ export function PersonChannels({
   );
 }
 
+/**
+ * Поиск человека в Telegram по номеру телефона.
+ *
+ * Раньше это делали руками и в другом окне: отправляли номер себе в чат, зажимали его и
+ * смотрели, предложит ли Telegram написать. Кнопка делает ровно то же самое — другого
+ * способа узнать, есть ли у номера аккаунт, не существует ни у нас, ни у кого-либо ещё.
+ *
+ * Исходов у поиска три, и один из них честно объясняет сразу две причины: Telegram
+ * отвечает «нет такого» и когда аккаунта нет, и когда человек закрылся настройкой «кто
+ * может найти меня по номеру». Различить их нельзя, и выбирать одну из двух наугад —
+ * значит врать менеджеру про человека.
+ *
+ * Ответ приходит не сразу: спрашивает Telegram отдельный процесс. Поэтому пока ждём,
+ * карточка сама перечитывается — иначе менеджер сидел бы перед «спрашиваем» и обновлял
+ * страницу руками.
+ */
+function PersonTelegramLookup({
+  person,
+  onReload
+}: {
+  readonly person: OutreachPersonCard;
+  readonly onReload: (() => Promise<void>) | null;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const lookup = person.telegramLookup;
+  // Ответ, снятый по другому номеру, — это ответ про другого человека. Показывать его
+  // как знание про этого нельзя, поэтому он приравнен к «ещё не искали».
+  const answer = lookup !== null && !lookup.isStale ? lookup : null;
+  const waiting = answer?.state === "queued";
+
+  // Пока Telegram не ответил, перечитываем карточку. Раз в три секунды: ответ обычно
+  // приходит за один-два, а пустой опрос стоит одного запроса к своей же базе.
+  //
+  // С потолком в минуту, и это не мелочь. Строка остаётся `queued` не только пока её
+  // разбирают, но и когда разбирать её некому — процесс аккаунта лежит. Без потолка
+  // открытая карточка молотила бы запросами до конца рабочего дня.
+  const [polls, setPolls] = useState(0);
+  const stalled = polls >= POLL_LIMIT;
+
+  useEffect(() => {
+    if (!waiting || !onReload || stalled) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setPolls((value) => value + 1);
+      void onReload();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [waiting, onReload, stalled]);
+
+  // Ник известен и мы ни разу не искали — значит, дотянуться до человека уже есть чем, и
+  // тратить на него запрос аккаунта незачем. Если поиск когда-то был, ответ показываем:
+  // он про то, можно ли писать из панели, а ник про это ничего не говорит.
+  if (person.telegramUsername !== null && answer === null) {
+    return null;
+  }
+
+  async function search() {
+    setBusy(true);
+    setError(null);
+    try {
+      setPolls(0);
+      const result = await requestOutreachTelegramLookup(person.contactId);
+      if (result.status === "noPhone") {
+        setError("Телефона в карточке нет — искать не по чему.");
+      }
+      await onReload?.();
+    } catch (caught) {
+      setError(caught instanceof AdminApiError ? caught.message : "Не получилось спросить");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="person-contact person-telegram-lookup">
+      <Search size={16} />
+      <dt>Поиск в Telegram</dt>
+      <dd>
+        {answer === null ? (
+          <>
+            {person.phone === null ? (
+              <span className="muted">телефона не знаем — искать не по чему</span>
+            ) : (
+              <button
+                type="button"
+                className="inline-link"
+                disabled={busy}
+                onClick={() => void search()}
+              >
+                Найти по номеру {person.phone}
+              </button>
+            )}
+          </>
+        ) : null}
+
+        {answer?.state === "queued" ? (
+          stalled ? (
+            <span className="muted">
+              ответа нет больше минуты — похоже, аккаунт компании сейчас не на связи
+            </span>
+          ) : (
+            <span className="muted">спрашиваем Telegram…</span>
+          )
+        ) : null}
+
+        {answer?.state === "found" ? (
+          <>
+            <span className="person-lookup-found">нашли — можно писать</span>
+            {answer.conversationId ? (
+              <span className="muted"> · ветка во вкладке «Переписка»</span>
+            ) : null}
+          </>
+        ) : null}
+
+        {answer?.state === "notFound" ? (
+          <>
+            <span>Telegram не нашёл этот номер</span>
+            <span className="muted">
+              {" "}· либо аккаунта нет, либо человек закрылся настройкой «кто может найти
+              меня по номеру». Telegram отвечает на это одинаково, различить нельзя
+            </span>
+            <button
+              type="button"
+              className="inline-link person-lookup-retry"
+              disabled={busy}
+              onClick={() => void search()}
+            >
+              Спросить ещё раз
+            </button>
+          </>
+        ) : null}
+
+        {answer?.state === "failed" ? (
+          <>
+            <span>до Telegram не дозвонились</span>
+            {answer.failureReason ? (
+              <span className="muted"> · {answer.failureReason}</span>
+            ) : null}
+            <button
+              type="button"
+              className="inline-link person-lookup-retry"
+              disabled={busy}
+              onClick={() => void search()}
+            >
+              Попробовать снова
+            </button>
+          </>
+        ) : null}
+
+        {error ? <p className="form-error">{error}</p> : null}
+      </dd>
+    </div>
+  );
+}
+
 export function PersonContactsCard({
   person,
   campaign,
-  onTouch
+  onTouch,
+  onReload
 }: {
   readonly person: OutreachPersonCard;
   readonly campaign: OutreachPersonCampaign | null;
   readonly onTouch: PersonTouchHandler | null;
+  /** Перечитать карточку: ответ Telegram про номер приходит не в тот же запрос. */
+  readonly onReload: (() => Promise<void>) | null;
 }) {
   const [showAll, setShowAll] = useState(false);
   const hidden = [
@@ -742,6 +912,7 @@ export function PersonContactsCard({
             ) : <span className="muted">не знаем</span>}
           </dd>
         </div>
+        <PersonTelegramLookup person={person} onReload={onReload} />
         {person.maxIdentifier || showAll ? (
           <div className="person-contact">
             <MessageSquare size={16} />

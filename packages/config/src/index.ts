@@ -472,6 +472,68 @@ export function loadConversationRepliesConfig(
   };
 }
 
+/**
+ * Поиск людей в Telegram по номеру телефона.
+ *
+ * Настройки те же по смыслу, что у отправки ответов, а значения — заметно осторожнее, и
+ * это главное здесь. Ответы уходят людям, которые нам написали; поиск спрашивает про тех,
+ * кто про нас не знает, а частые вопросы про чужие номера Telegram считает разведкой.
+ * Расплачивается за это аккаунт компании — тот самый, через который идёт вся переписка.
+ *
+ * Отсюда пачка по одному запросу за проход и пауза в пять секунд: даже когда менеджеры
+ * нажали кнопку разом на десятке карточек, Telegram увидит редкие одиночные вопросы.
+ */
+export interface TelegramPhoneLookupConfig {
+  readonly batchSize: number;
+  readonly pollIntervalMs: number;
+  readonly pauseBetweenMs: number;
+  readonly maxAttempts: number;
+  readonly retryDelayMs: number;
+}
+
+export function loadTelegramPhoneLookupConfig(
+  env: NodeJS.ProcessEnv
+): TelegramPhoneLookupConfig {
+  return {
+    batchSize: parseBoundedInteger(
+      env.TELEGRAM_PHONE_LOOKUP_BATCH_SIZE ?? "3",
+      "TELEGRAM_PHONE_LOOKUP_BATCH_SIZE",
+      1,
+      20
+    ),
+    // Менеджер ждёт ответа у открытой карточки, поэтому проход частый. Стоит он одного
+    // запроса к своей базе, а не к Telegram: по пустой очереди наружу никто не ходит.
+    pollIntervalMs: parseBoundedInteger(
+      env.TELEGRAM_PHONE_LOOKUP_POLL_INTERVAL_MS ?? "10000",
+      "TELEGRAM_PHONE_LOOKUP_POLL_INTERVAL_MS",
+      5_000,
+      600_000
+    ),
+    pauseBetweenMs: parseBoundedInteger(
+      env.TELEGRAM_PHONE_LOOKUP_PAUSE_MS ?? "5000",
+      "TELEGRAM_PHONE_LOOKUP_PAUSE_MS",
+      0,
+      600_000
+    ),
+    // Три попытки: повторяем только сетевые отказы, а «нет такого номера» — это ответ, а
+    // не сбой, и повторять его незачем.
+    maxAttempts: parseBoundedInteger(
+      env.TELEGRAM_PHONE_LOOKUP_MAX_ATTEMPTS ?? "3",
+      "TELEGRAM_PHONE_LOOKUP_MAX_ATTEMPTS",
+      1,
+      20
+    ),
+    // Пять минут. Отказ здесь почти всегда означает лимит, а лимиты Telegram снимает не
+    // секундами; названный им самим срок всё равно старше этого числа.
+    retryDelayMs: parseBoundedInteger(
+      env.TELEGRAM_PHONE_LOOKUP_RETRY_DELAY_MS ?? "300000",
+      "TELEGRAM_PHONE_LOOKUP_RETRY_DELAY_MS",
+      1_000,
+      3_600_000
+    )
+  };
+}
+
 export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   const appEnv = parseAppEnvironment(env.APP_ENV ?? "local");
 

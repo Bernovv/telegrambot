@@ -48,6 +48,7 @@ import type {
   StartOutreachImportRequest,
   OutreachManager,
   OutreachPersonCard,
+  RequestTelegramLookupResult,
   OutreachPersonUpdateResult,
   UpdateOutreachPersonRequest,
   OutreachPersonFilter,
@@ -996,6 +997,22 @@ export function getOutreachPerson(
   return requestAdminApi(
     `outreach/base/${encodeURIComponent(contactId)}`,
     signal
+  );
+}
+
+/**
+ * Попросить аккаунт компании поискать человека в Telegram по телефону.
+ *
+ * Ответ — расписка о принятой просьбе, а не исход поиска: спрашивает Telegram отдельный
+ * процесс, и результат появится в карточке через несколько секунд.
+ */
+export function requestOutreachTelegramLookup(
+  contactId: string
+): Promise<RequestTelegramLookupResult> {
+  return requestAdminMutation(
+    `outreach/base/${encodeURIComponent(contactId)}/telegram-lookup`,
+    "POST",
+    {}
   );
 }
 

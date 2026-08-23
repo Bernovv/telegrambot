@@ -33,6 +33,8 @@ import type {
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
+  OutreachPersonTelegramLookup,
+  RequestTelegramLookupResult,
   OutreachParticipationAnswer,
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
@@ -215,6 +217,60 @@ interface PersonCardRow {
   readonly created_by_name: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
+}
+
+interface TelegramLookupRow {
+  readonly status: "queued" | "found" | "not_found" | "failed";
+  readonly phone_e164: string;
+  readonly telegram_user_id: string | null;
+  readonly is_stale: boolean;
+  readonly conversation_id: string | null;
+  readonly requested_at: Date | string;
+  readonly checked_at: Date | string | null;
+  readonly failure_reason: string | null;
+}
+
+/**
+ * Ответ Telegram по номеру вместе с веткой переписки, которая из него выросла.
+ *
+ * Ветка ищется по идентификатору человека, а не хранится ссылкой: диалог могли завести и
+ * раньше — человек написал аккаунту сам, а карточку тогда не опознали. Ссылка в этом случае
+ * указывала бы на второй, пустой диалог, а переписка лежала бы в первом.
+ */
+const TELEGRAM_LOOKUP_SELECT = `select
+     lookup.status,
+     lookup.phone_e164,
+     lookup.telegram_user_id,
+     lookup.requested_at,
+     lookup.checked_at,
+     lookup.failure_reason,
+     (lookup.phone_e164 is distinct from contact.phone_e164) as is_stale,
+     conversation.id as conversation_id
+   from public.telegram_phone_lookups lookup
+   join public.outreach_contacts contact on contact.id = lookup.contact_id
+   left join public.conversations conversation
+     on conversation.channel = 'telegram'
+    and conversation.transport = 'account'
+    and conversation.external_chat_id = lookup.telegram_user_id
+  where lookup.contact_id = $1::uuid
+  limit 1`;
+
+function mapTelegramLookup(
+  row: TelegramLookupRow | undefined
+): OutreachPersonTelegramLookup | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    state: row.status === "not_found" ? "notFound" : row.status,
+    phone: row.phone_e164,
+    isStale: row.is_stale,
+    conversationId: row.conversation_id,
+    requestedAt: toIso(row.requested_at),
+    checkedAt: nullableIso(row.checked_at),
+    failureReason: row.failure_reason
+  };
 }
 
 interface TaskRuleRow {
@@ -1858,6 +1914,14 @@ implements AdminOutreachRepository {
           answersByParticipant.get(participation.participant_id) ?? []
         ));
 
+      // Искали ли человека в Telegram по телефону. Отдельным запросом, а не join к
+      // карточке: строки у большинства людей нет вовсе, а join ради пустоты платится на
+      // каждом открытии карточки.
+      const telegramLookup = await connection.query<TelegramLookupRow>(
+        TELEGRAM_LOOKUP_SELECT,
+        [contactId]
+      );
+
       return {
         contactId: contact.contact_id,
         displayName: contact.display_name,
@@ -1965,8 +2029,77 @@ implements AdminOutreachRepository {
           status: row.status,
           consentAt: toIso(row.consent_at),
           createdAt: toIso(row.created_at)
-        }))
+        })),
+        telegramLookup: mapTelegramLookup(telegramLookup.rows[0])
       };
+    });
+  }
+
+  /**
+   * Попросить аккаунт компании поискать человека в Telegram по его телефону.
+   *
+   * Сам поиск здесь не происходит и произойти не может: спросить Telegram умеет только
+   * процесс с открытой сессией TDLib. Панель кладёт просьбу, он её разбирает.
+   *
+   * Повторно ищем не всегда. Уже найденного искать заново незачем — идентификатор не
+   * протухает, а лишний вопрос про чужой номер аккаунту дорог. Исключение — телефон в
+   * карточке с тех пор поправили: тогда прежний ответ относится к другому человеку.
+   */
+  requestTelegramLookup(input: {
+    readonly contactId: string;
+    readonly lookupId: string;
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }): Promise<RequestTelegramLookupResult | null> {
+    return this.write(async (connection) => {
+      const contact = await connection.query<{ readonly phone_e164: string | null }>(
+        `select phone_e164 from public.outreach_contacts where id = $1::uuid`,
+        [input.contactId]
+      );
+      const phone = contact.rows[0]?.phone_e164;
+      if (phone === undefined) {
+        return null;
+      }
+
+      const existing = await connection.query<TelegramLookupRow>(
+        TELEGRAM_LOOKUP_SELECT,
+        [input.contactId]
+      );
+      const previous = mapTelegramLookup(existing.rows[0]);
+
+      if (phone === null) {
+        return { status: "noPhone", lookup: previous } as const;
+      }
+      if (previous !== null && previous.state === "found" && !previous.isStale) {
+        return { status: "alreadyFound", lookup: previous } as const;
+      }
+
+      await connection.query(
+        `insert into public.telegram_phone_lookups (
+           id, contact_id, phone_e164, requested_by_admin_id, requested_at,
+           created_at, updated_at
+         ) values ($1::uuid, $2::uuid, $3::text, $4::uuid, $5::timestamptz,
+                   $5::timestamptz, $5::timestamptz)
+         on conflict (contact_id) do update
+            set phone_e164 = excluded.phone_e164,
+                status = 'queued',
+                telegram_user_id = null,
+                attempts = 0,
+                next_attempt_at = null,
+                failure_reason = null,
+                checked_at = null,
+                requested_by_admin_id = excluded.requested_by_admin_id,
+                requested_at = excluded.requested_at,
+                updated_at = excluded.updated_at`,
+        [input.lookupId, input.contactId, phone, input.actorAdminId, input.now]
+      );
+
+      const saved = await connection.query<TelegramLookupRow>(
+        TELEGRAM_LOOKUP_SELECT,
+        [input.contactId]
+      );
+
+      return { status: "queued", lookup: mapTelegramLookup(saved.rows[0]) } as const;
     });
   }
 

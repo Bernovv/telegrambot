@@ -507,6 +507,42 @@ export interface OutreachPersonBotProfile {
   readonly touchpoints: readonly OutreachPersonTouchpoint[];
 }
 
+/**
+ * Ответ Telegram на вопрос «есть ли аккаунт у этого номера».
+ *
+ * Состояний четыре, и одно из них честно означает два разных случая. `notFound` — это и
+ * «у номера нет Telegram», и «Telegram есть, но человек закрылся настройкой „кто может
+ * найти меня по номеру“». Telegram отвечает на оба одинаково нарочно: различай он их,
+ * по ответам можно было бы перебирать номера и составлять список тех, у кого аккаунт есть.
+ * Панель поэтому пишет обе причины, а не выбирает одну наугад.
+ */
+export type OutreachTelegramLookupState = "queued" | "found" | "notFound" | "failed";
+
+export interface OutreachPersonTelegramLookup {
+  readonly state: OutreachTelegramLookupState;
+  /** Номер, по которому спрашивали. */
+  readonly phone: string;
+  /** Телефон карточки с тех пор поправили: ответ относится к чужому номеру. */
+  readonly isStale: boolean;
+  /**
+   * Ветка переписки с этим человеком через аккаунт компании. Есть только у найденного —
+   * она и есть то, ради чего искали: место, куда менеджер пишет.
+   */
+  readonly conversationId: string | null;
+  readonly requestedAt: string;
+  readonly checkedAt: string | null;
+  /** Чем именно ответил Telegram, когда до него не дошло. Видит менеджер. */
+  readonly failureReason: string | null;
+}
+
+/** Чем кончилась просьба поискать. `alreadyFound` — искать заново незачем, всё уже есть. */
+export type RequestTelegramLookupStatus = "queued" | "alreadyFound" | "noPhone";
+
+export interface RequestTelegramLookupResult {
+  readonly status: RequestTelegramLookupStatus;
+  readonly lookup: OutreachPersonTelegramLookup | null;
+}
+
 export interface OutreachPersonCard {
   readonly contactId: string;
   readonly displayName: string | null;
@@ -556,6 +592,10 @@ export interface OutreachPersonCard {
   readonly paidTotalKopecks: string;
   readonly consents: readonly OutreachPersonConsent[];
   readonly siteRegistrations: readonly OutreachPersonSiteRegistration[];
+  /**
+   * Искали ли этого человека в Telegram по телефону и чем это кончилось. Пусто — не искали.
+   */
+  readonly telegramLookup: OutreachPersonTelegramLookup | null;
 }
 
 /**

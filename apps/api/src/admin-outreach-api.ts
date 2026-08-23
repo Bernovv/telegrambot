@@ -322,6 +322,7 @@ export type AdminOutreachHandler = Pick<
   | "getContact"
   | "listPeople"
   | "getPerson"
+  | "requestTelegramLookup"
   | "updatePerson"
   | "setPersonField"
   | "listTaskRules"
@@ -617,6 +618,35 @@ export class AdminOutreachController {
       throw outreachNotFound();
     }
     return person;
+  }
+
+  /**
+   * Поискать человека в Telegram по телефону.
+   *
+   * Ответ ручки — не результат поиска, а расписка о том, что просьба принята: спросить
+   * Telegram может только процесс аккаунта компании, и делает он это через несколько
+   * секунд. Панель узнаёт исход, перечитав карточку.
+   */
+  @Post("base/:id/telegram-lookup")
+  @RequireAdminPermission("outreach.write")
+  async requestTelegramLookup(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const contactId = parse(uuid, id);
+    const result = await executeOutreach(() =>
+      this.handler.requestTelegramLookup({
+        actor: requireActor(request),
+        contactId,
+        now: new Date()
+      })
+    );
+    if (!result) {
+      throw outreachNotFound();
+    }
+    // «Телефона нет» отдаём обычным ответом, а не ошибкой: это не поломка, а состояние
+    // карточки, и панели надо показать его словами, а не красной плашкой.
+    return result;
   }
 
   @Patch("base/:id")

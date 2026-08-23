@@ -1352,6 +1352,7 @@ function repository(
     async listBaseContacts() { return []; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async requestTelegramLookup() { return null; },
     async setPersonFieldValue() { return true; },
     async getTaskGuard() { return { requireOpenTask: false, hasOpenTask: false }; },
     async listTaskRules() { return []; },
@@ -1554,7 +1555,8 @@ function personCard() {
     orders: [],
     paidTotalKopecks: "0",
     consents: [],
-    siteRegistrations: []
+    siteRegistrations: [],
+    telegramLookup: null
   };
 }
 

@@ -4699,6 +4699,22 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+/* Поиск в Telegram по номеру. Строка длиннее соседних: у ответа «не нашли» две причины
+   сразу, и укоротить объяснение до плашки значит выбрать одну из них наугад. */
+.person-telegram-lookup dd {
+  line-height: 1.45;
+}
+
+.person-lookup-found {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.person-lookup-retry {
+  display: block;
+  margin-top: 4px;
+}
+
 /* Служебные поля идут без значка — иконка там ничего бы не добавила. */
 .person-contact-plain {
   grid-template-columns: minmax(0, 1fr);

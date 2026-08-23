@@ -414,6 +414,7 @@ function handler(
     async getContact() { return null; },
     async listPeople() { return { items: [], total: 0, page: 1, limit: 50 }; },
     async getPerson() { return null; },
+    async requestTelegramLookup() { return null; },
     async importPeople() {
       return {
         received: 0,

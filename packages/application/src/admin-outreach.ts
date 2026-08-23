@@ -30,6 +30,7 @@ import type {
   RetryOutreachImportRowResult,
   OutreachManager,
   OutreachPersonCard,
+  RequestTelegramLookupResult,
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
   UpdateOutreachPersonRequest,
@@ -271,6 +272,18 @@ export interface AdminOutreachRepository {
     contactId: string,
     viewerAdminId: string
   ): Promise<OutreachPersonCard | null>;
+  /**
+   * Просьба поискать человека в Telegram по его телефону. `null` — карточки нет.
+   *
+   * Именно просьба: поиск выполняет процесс аккаунта компании, у которого открыта сессия
+   * Telegram, и ответ появится в карточке через несколько секунд, а не в этом вызове.
+   */
+  requestTelegramLookup(input: {
+    readonly contactId: string;
+    readonly lookupId: string;
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }): Promise<RequestTelegramLookupResult | null>;
   updatePerson(input: {
     readonly contactId: string;
     readonly fields: NormalizedOutreachImportRow;
@@ -1205,6 +1218,31 @@ export class AdminOutreachService {
     requirePermission(input.actor, "outreach.read");
     requireUuid(input.contactId);
     return this.repository.getPerson(input.contactId, input.actor.adminId);
+  }
+
+  /**
+   * Поискать человека в Telegram по номеру телефона.
+   *
+   * Право то же, что у правки карточки: поиск дописывает человеку признак, которого у нас
+   * не было, и заводит ветку переписки. Читатель базы такого делать не должен.
+   *
+   * Ответ приходит не отсюда. Здесь просьба только ложится в очередь — спросить Telegram
+   * может лишь процесс с открытой сессией аккаунта, и панель узнает исход, перечитав
+   * карточку через несколько секунд.
+   */
+  requestTelegramLookup(input: {
+    readonly actor: AdminRequestActor;
+    readonly contactId: string;
+    readonly now: Date;
+  }): Promise<RequestTelegramLookupResult | null> {
+    requirePermission(input.actor, "outreach.write");
+    requireUuid(input.contactId);
+    return this.repository.requestTelegramLookup({
+      contactId: input.contactId,
+      lookupId: this.idGenerator.newId(),
+      actorAdminId: input.actor.adminId,
+      now: input.now
+    });
   }
 
   async updatePerson(input: {

@@ -314,5 +314,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823230000_whatsapp_conversation_channel",
     description: "Allow WhatsApp as a conversation channel; ticket sales stay on the two bots",
     destructive: false
+  },
+  {
+    id: "20260824090000_telegram_phone_lookups",
+    description: "Ask Telegram whether a phone number has an account, one manager click at a time",
+    destructive: false
   }
 ];
