@@ -22,12 +22,13 @@ import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 const PAGE_SIZE = 50;
 
 /**
- * Отборы намеренно взаимоисключающие и их шесть. Набор галочек даёт больше сочетаний, но
+ * Отборы намеренно взаимоисключающие и их семь. Набор галочек даёт больше сочетаний, но
  * каждое из них надо держать в голове, а вопросы к базе на деле звучат по одному за раз:
- * «у кого нет телефона», «кого нет ни в одной кампании».
+ * «у кого нет телефона», «кого нет ни в одной кампании», «кто написал нам сам».
  */
 const FILTERS: readonly { readonly value: OutreachPersonFilter; readonly label: string }[] = [
   { value: "all", label: "Все" },
+  { value: "wrote_in_messenger", label: "Написали нам" },
   { value: "without_phone", label: "Без телефона" },
   { value: "without_name", label: "Без имени" },
   { value: "without_campaign", label: "Не в кампаниях" },
@@ -283,6 +284,8 @@ export default function OutreachBasePage() {
                   <th>Мессенджеры</th>
                   <th>Почта</th>
                   <th>Кампании</th>
+                  {/* Считается и по касаниям в кампании, и по входящим сообщениям: вопрос
+                      у менеджера один — когда про человека в последний раз было слышно. */}
                   <th>Последний контакт</th>
                   <th><span className="sr-only">Открыть</span></th>
                 </tr>
