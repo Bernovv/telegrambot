@@ -62,6 +62,19 @@ export interface WhatsAppAccountClient extends WhatsAppSocket {
    * ещё надо чем-то нарисовать и с чего-то отсканировать.
    */
   requestPairingCode(): Promise<string>;
+  /**
+   * Сервер прислал предложение привязаться — значит рукопожатие прошло и код спрашивать
+   * можно.
+   *
+   * Раньше этого момента `requestPairingCode` падает с «Connection Closed»: сокет открыт,
+   * но разговора с сервером ещё не было, и спрашивать некого. Событие приходит и когда
+   * привязку ждут по QR, и когда по коду: это одно и то же предложение, просто показать
+   * его можно двумя способами.
+   *
+   * Обработчик, поставленный после того как сигнал уже был, вызывается сразу: иначе всё
+   * зависит от того, кто успел первым — соединение или скрипт.
+   */
+  onPairingReady(handler: () => void): void;
   /** Вошли ли уже. `false` — сессии нет, нужен код привязки. */
   isRegistered(): boolean;
 }
@@ -74,27 +87,43 @@ export function createWhatsAppAccountClient(
   const stateHandlers: WhatsAppStateHandler[] = [];
   const logger = silentLogger();
 
+  const pairingHandlers: (() => void)[] = [];
+
   let socket: WASocket | null = null;
   let registered = false;
   let closing = false;
   let attempt = 0;
+  let state: WhatsAppConnectionState = "connecting";
+  let stateReason: string | null = null;
+  let pairingReady = false;
 
-  function announce(state: WhatsAppConnectionState, reason: string | null): void {
+  /**
+   * Сообщить о состоянии — и запомнить его.
+   *
+   * Память здесь не для удобства. Соединение поднимается событиями, и обработчик, который
+   * поставили на полсекунды позже, чем случилось событие, не узнает о нём никогда: скрипт
+   * будет ждать «на связи» у уже подключённого канала, пока не кончится срок. Поэтому
+   * состояние хранится, а `onState` доигрывает его новому обработчику сразу.
+   */
+  function announce(next: WhatsAppConnectionState, reason: string | null): void {
+    state = next;
+    stateReason = reason;
     for (const handler of stateHandlers) {
-      handler(state, reason);
+      handler(next, reason);
     }
   }
 
   async function open(): Promise<void> {
-    const { state, saveCreds } = await useMultiFileAuthState(options.sessionDir);
-    registered = state.creds.registered === true;
+    const auth = await useMultiFileAuthState(options.sessionDir);
+    const saveCreds = auth.saveCreds;
+    registered = auth.state.creds.registered === true;
 
     const created = makeWASocket({
       auth: {
-        creds: state.creds,
+        creds: auth.state.creds,
         // Ключей у сигнального протокола много, и читаются они пачками на каждое
         // сообщение. Без кэша это сотни обращений к диску в секунду на оживлённом чате.
-        keys: makeCacheableSignalKeyStore(state.keys, logger)
+        keys: makeCacheableSignalKeyStore(auth.state.keys, logger)
       },
       logger,
       // Как аккаунт подписан в списке устройств у владельца номера.
@@ -119,6 +148,12 @@ export function createWhatsAppAccountClient(
     });
 
     created.ev.on("connection.update", (update) => {
+      if (typeof update.qr === "string" && update.qr !== "") {
+        pairingReady = true;
+        for (const handler of pairingHandlers) {
+          handler();
+        }
+      }
       if (update.connection === "connecting") {
         announce("connecting", null);
       }
@@ -213,6 +248,14 @@ export function createWhatsAppAccountClient(
 
     onState(handler) {
       stateHandlers.push(handler);
+      handler(state, stateReason);
+    },
+
+    onPairingReady(handler) {
+      pairingHandlers.push(handler);
+      if (pairingReady) {
+        handler();
+      }
     },
 
     isRegistered() {

@@ -81,6 +81,37 @@ export async function waitForState(
   });
 }
 
+/**
+ * Ждёт предложения привязаться — момента, когда код можно спрашивать.
+ *
+ * Отдельно от состояния соединения, потому что это не состояние: сокет к этому времени уже
+ * «соединяемся», и по нему не отличить «идёт рукопожатие» от «сервер готов». Спросить код
+ * раньше — получить `Connection Closed`, что и происходило.
+ */
+export async function waitForPairingReady(
+  client: WhatsAppAccountClient,
+  timeoutMs: number
+): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(false);
+    }, timeoutMs);
+    timer.unref();
+
+    client.onPairingReady(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    // Соединение может кончиться, так и не дойдя до предложения: чаще всего это прокси.
+    client.onState((state) => {
+      if (state === "closed" || state === "logged_out") {
+        clearTimeout(timer);
+        resolve(false);
+      }
+    });
+  });
+}
+
 /** Человеческое название состояния — для журнала и для вывода скриптов. */
 export function describeState(state: WhatsAppConnectionState): string {
   switch (state) {

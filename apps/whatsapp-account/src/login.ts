@@ -15,7 +15,13 @@
  * MAX: там лежат сигнальные ключи, они меняются после каждого сообщения, и **каталог надо
  * резервировать** — его потеря означает новую привязку с телефоном в руках.
  */
-import { describeState, openAccount, requireAccountConfig, waitForState } from "./bootstrap.js";
+import {
+  describeState,
+  openAccount,
+  requireAccountConfig,
+  waitForPairingReady,
+  waitForState
+} from "./bootstrap.js";
 
 /** Сколько ждать соединения, прежде чем признать, что дело в прокси. */
 const CONNECT_TIMEOUT_MS = 60_000;
@@ -45,13 +51,18 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Код запрашивается после того, как соединение поднялось: до этого запрашивать нечего,
-    // и ошибка выглядела бы как отказ WhatsApp, а не как неподнявшийся прокси.
-    const connected = await waitForState(client, ["connecting"], CONNECT_TIMEOUT_MS);
-    if (connected.state !== "connecting") {
+    // Ждём, пока сервер сам предложит привязаться. Именно этот момент, а не «сокет открыт»:
+    // до него рукопожатие ещё идёт, и запрос кода падает с «Connection Closed» — так и
+    // случилось при первой попытке.
+    console.log("\nСоединяемся с WhatsApp через прокси…");
+    if (!await waitForPairingReady(client, CONNECT_TIMEOUT_MS)) {
       throw new Error(
-        `Соединиться не удалось: ${connected.reason ?? "нет ответа"}.`
-        + " Первым делом проверьте прокси: curl -x <WHATSAPP_ACCOUNT_PROXY> https://api.ipify.org"
+        "Соединение не дошло до привязки. Почти всегда это прокси — проверьте, что он"
+        + " пускает до WhatsApp:\n"
+        + "  curl -x <WHATSAPP_ACCOUNT_PROXY> -o /dev/null -sS -w '%{http_code}\\n'"
+        + " https://web.whatsapp.com\n"
+        + "Ответ 200 или 302 — прокси в порядке, и дело в другом; ошибка или тишина —"
+        + " дело в нём. Подробности в docs/runbooks/whatsapp-account.md."
       );
     }
 
