@@ -1,5 +1,5 @@
 import type { ScenarioPresentationModel } from "@ticket-platform/contracts";
-import type { MessengerChannel } from "@ticket-platform/domain";
+import type { ConversationChannel, MessengerChannel } from "@ticket-platform/domain";
 import type { IdGenerator } from "./identity.js";
 import type {
   BroadcastMessage,
@@ -42,7 +42,7 @@ export type ConversationTransport = "bot" | "account";
  */
 export interface ConversationQueueScope {
   readonly transport: ConversationTransport;
-  readonly channels: readonly MessengerChannel[];
+  readonly channels: readonly ConversationChannel[];
 }
 
 /** Кто написал реплику. `bot` — сценарий, `manager` — живой человек из панели. */
@@ -84,7 +84,7 @@ export interface ConversationParticipant {
 }
 
 export interface IncomingConversationMessage {
-  readonly channel: MessengerChannel;
+  readonly channel: ConversationChannel;
   readonly transport: ConversationTransport;
   /** Чат у мессенджера. У бота совпадает с идентификатором человека. */
   readonly externalChatId: string;
@@ -104,7 +104,7 @@ export interface IncomingConversationMessage {
 }
 
 export interface OutgoingConversationMessage {
-  readonly channel: MessengerChannel;
+  readonly channel: ConversationChannel;
   readonly transport: ConversationTransport;
   readonly externalChatId: string;
   /** Кому пишем. Нужен, чтобы завести диалог, если его ещё не было. */
@@ -155,7 +155,7 @@ export interface ConversationRepository {
 export type ConversationLogFailureSink = (
   error: unknown,
   context: {
-    readonly channel: MessengerChannel;
+    readonly channel: ConversationChannel;
     readonly direction: "inbound" | "outbound";
     readonly externalChatId: string;
   }
@@ -218,6 +218,13 @@ export class ConversationLog {
 /** Откуда человек попал в базу — видно в карточке и в отборе по источнику. */
 export const CONVERSATION_CONTACT_SOURCE = "Написал в мессенджер";
 
+/** Чем опознаётся человек, впервые написавший нам в мессенджер. */
+export interface ConversationContactIdentifier {
+  readonly telegramUsername: string | null;
+  readonly maxIdentifier: string | null;
+  readonly phoneE164: string | null;
+}
+
 /**
  * Опознаватель для карточки, заводимой по входящему сообщению.
  *
@@ -228,19 +235,52 @@ export const CONVERSATION_CONTACT_SOURCE = "Написал в мессендже
  * В Telegram числовой идентификатор в карточку не пишем: колонка там называется «ник», её
  * читают глазами и по ней ищут, а число в ней — мусор, который никому ничего не скажет.
  * Такой диалог подождёт: ник или телефон появятся, и он привяжется вместе со всей историей.
+ *
+ * **В WhatsApp опознаватель — сам телефон**, и это лучший из трёх: по нему разговор
+ * склеивается с заявкой с сайта, с импортом и со звонком без всякой ручной работы. Номер
+ * приезжает адресом вида `79001234567@s.whatsapp.net`, то есть уже в международном виде и
+ * без плюса — отсюда единственное преобразование ниже.
  */
 export function conversationContactIdentifier(
-  channel: MessengerChannel,
+  channel: ConversationChannel,
   participant: ConversationParticipant
-): { readonly telegramUsername: string | null; readonly maxIdentifier: string | null } {
+): ConversationContactIdentifier {
   const username = (participant.username ?? "").trim().replace(/^@/, "");
   if (channel === "telegram") {
-    return { telegramUsername: username === "" ? null : username, maxIdentifier: null };
+    return {
+      telegramUsername: username === "" ? null : username,
+      maxIdentifier: null,
+      phoneE164: null
+    };
+  }
+  if (channel === "whatsapp") {
+    return {
+      telegramUsername: null,
+      maxIdentifier: null,
+      phoneE164: conversationPhoneE164(participant.externalUserId)
+    };
   }
   return {
     telegramUsername: null,
-    maxIdentifier: username === "" ? participant.externalUserId : username
+    maxIdentifier: username === "" ? participant.externalUserId : username,
+    phoneE164: null
   };
+}
+
+/**
+ * Номер из адреса WhatsApp в тот вид, в каком телефоны лежат в базе.
+ *
+ * Проверка та же, что стоит ограничением на колонке `phone_e164`, и она здесь не ради
+ * аккуратности. У WhatsApp есть второй вид адреса — «скрытый идентификатор» вместо номера,
+ * который платформа выдаёт, когда человек прячет телефон. Внешне это те же цифры, и приняв
+ * их за номер, мы завели бы карточку с телефоном, по которому никто не живёт, — а потом
+ * склеили бы с ней чужого человека. Не похоже на номер — значит, опознавателя нет, и
+ * разговор подождёт непривязанным. Так уже устроен Telegram без ника.
+ */
+function conversationPhoneE164(externalUserId: string): string | null {
+  const digits = externalUserId.trim();
+
+  return /^[1-9][0-9]{7,14}$/.test(digits) ? `+${digits}` : null;
 }
 
 /**

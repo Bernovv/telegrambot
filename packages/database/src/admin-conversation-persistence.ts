@@ -8,6 +8,7 @@ import type {
   AdminConversationThread,
   AdminPersonConversations
 } from "@ticket-platform/contracts";
+import type { ConversationChannel } from "@ticket-platform/domain";
 import type {
   AdminConversationsRepository,
   AttachmentFileRepository,
@@ -307,7 +308,7 @@ implements ConversationReplyRepository, ConversationFileReplyRepository {
         const found = await connection.query<{
           readonly id: string;
           readonly contact_id: string | null;
-          readonly channel: "telegram" | "max";
+          readonly channel: ConversationChannel;
           readonly transport: ConversationTransport;
           readonly assigned_admin_id: string | null;
           readonly assigned_admin_name: string | null;

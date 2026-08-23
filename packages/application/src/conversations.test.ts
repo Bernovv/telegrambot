@@ -159,7 +159,7 @@ describe("conversationContactIdentifier", () => {
   it("в Telegram берёт ник и отбрасывает собачку", () => {
     assert.deepEqual(
       conversationContactIdentifier("telegram", { ...sender, username: "@NadinKa88" }),
-      { telegramUsername: "NadinKa88", maxIdentifier: null }
+      { telegramUsername: "NadinKa88", maxIdentifier: null, phoneE164: null }
     );
   });
 
@@ -168,14 +168,39 @@ describe("conversationContactIdentifier", () => {
     // Такой диалог подождёт: появится ник или телефон — привяжется вместе с историей.
     assert.deepEqual(
       conversationContactIdentifier("telegram", { ...sender, username: null }),
-      { telegramUsername: null, maxIdentifier: null }
+      { telegramUsername: null, maxIdentifier: null, phoneE164: null }
     );
   });
 
   it("в MAX без ника берёт числовой идентификатор: он там единственное, что есть", () => {
     assert.deepEqual(
       conversationContactIdentifier("max", { ...sender, username: null }),
-      { telegramUsername: null, maxIdentifier: "123456789" }
+      { telegramUsername: null, maxIdentifier: "123456789", phoneE164: null }
+    );
+  });
+
+  it("в WhatsApp опознаватель — телефон, и он приезжает без плюса", () => {
+    assert.deepEqual(
+      conversationContactIdentifier("whatsapp", {
+        externalUserId: "79001234567",
+        username: null,
+        displayName: "Надежда"
+      }),
+      { telegramUsername: null, maxIdentifier: null, phoneE164: "+79001234567" }
+    );
+  });
+
+  it("в WhatsApp скрытый идентификатор за телефон не принимается", () => {
+    // Так выглядит адрес человека, спрятавшего номер: те же цифры, но их слишком много.
+    // Принять их за телефон значит завести карточку с номером, по которому никто не живёт,
+    // и однажды склеить с ней постороннего.
+    assert.deepEqual(
+      conversationContactIdentifier("whatsapp", {
+        externalUserId: "112233445566778899",
+        username: null,
+        displayName: null
+      }),
+      { telegramUsername: null, maxIdentifier: null, phoneE164: null }
     );
   });
 });

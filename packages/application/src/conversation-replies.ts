@@ -1,4 +1,4 @@
-import type { MessengerChannel } from "@ticket-platform/domain";
+import type { ConversationChannel } from "@ticket-platform/domain";
 import type { AttachmentKind } from "./conversations.js";
 
 /**
@@ -20,7 +20,7 @@ import type { AttachmentKind } from "./conversations.js";
 
 export interface QueuedReply {
   readonly messageId: string;
-  readonly channel: MessengerChannel;
+  readonly channel: ConversationChannel;
   /** Чат у мессенджера: у бота совпадает с идентификатором человека. */
   readonly externalChatId: string;
   readonly body: string;
@@ -110,7 +110,7 @@ export interface SendRepliesResult {
 export class SendConversationRepliesBatchService {
   constructor(
     private readonly repository: ConversationReplyQueueRepository,
-    private readonly senders: Partial<Record<MessengerChannel, ConversationReplySender>>,
+    private readonly senders: Partial<Record<ConversationChannel, ConversationReplySender>>,
     private readonly options: SendRepliesOptions = DEFAULT_REPLY_SEND_OPTIONS,
     /** Пауза вынесена наружу ради тестов: ждать по-настоящему им незачем. */
     private readonly pause: (ms: number) => Promise<void> = defaultPause,

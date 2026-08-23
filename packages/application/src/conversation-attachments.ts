@@ -1,4 +1,4 @@
-import type { MessengerChannel } from "@ticket-platform/domain";
+import type { ConversationChannel } from "@ticket-platform/domain";
 import type { AttachmentKind } from "./conversations.js";
 
 /**
@@ -18,12 +18,22 @@ import type { AttachmentKind } from "./conversations.js";
 /** Строка очереди скачивания: что забирать и откуда. */
 export interface PendingAttachment {
   readonly id: string;
-  readonly channel: MessengerChannel;
+  readonly channel: ConversationChannel;
   readonly kind: AttachmentKind;
   readonly fileName: string | null;
   readonly mimeType: string | null;
   /** Идентификатор файла у мессенджера. Пусто — забирать нечего. */
   readonly externalFileId: string | null;
+  /**
+   * Обновление целиком, как его прислал мессенджер, — то самое, что записано при приёме.
+   *
+   * Нужно оно одному каналу, зато нужно по-настоящему. У Telegram и MAX файл забирается по
+   * идентификатору, и его хватает. У WhatsApp файл зашифрован ключом самого сообщения: без
+   * ключа, пути и контрольных сумм скачать его нельзя, а вместе они не помещаются ни в один
+   * идентификатор. Хранить их отдельной колонкой не нужно — они уже лежат в `payload`
+   * реплики, ровно для этого он и сохраняется целиком.
+   */
+  readonly payload: unknown;
   readonly attempts: number;
 }
 
@@ -120,7 +130,7 @@ export interface DownloadAttachmentsResult {
 export class DownloadConversationAttachmentsBatchService {
   constructor(
     private readonly repository: AttachmentDownloadRepository,
-    private readonly sources: Partial<Record<MessengerChannel, AttachmentSource>>,
+    private readonly sources: Partial<Record<ConversationChannel, AttachmentSource>>,
     private readonly storage: AttachmentStorage,
     private readonly options: DownloadAttachmentsOptions = DEFAULT_ATTACHMENT_DOWNLOAD_OPTIONS
   ) {}

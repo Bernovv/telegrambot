@@ -10,6 +10,7 @@ import { formatDateTime } from "@/lib/format";
 import { conversationAcceptsReply } from "@ticket-platform/contracts/admin-conversations";
 import type {
   AdminConversationAttachment,
+  AdminConversationChannel,
   AdminConversationMessage,
   AdminConversationThread,
   AdminPersonConversations
@@ -18,6 +19,7 @@ import {
   AlertTriangle,
   Bot,
   Clock,
+  MessageCircle,
   MessageSquare,
   Paperclip,
   Search,
@@ -401,7 +403,7 @@ function ReplyComposer({
 }
 
 function ThreadChip({ thread }: { readonly thread: AdminConversationThread }) {
-  const Icon = thread.channel === "telegram" ? Send : MessageSquare;
+  const Icon = threadIcon(thread.channel);
   return (
     <span
       className={`conversation-thread${thread.status === "closed" ? " conversation-thread-closed" : ""}`}
@@ -560,8 +562,24 @@ function attachmentName(attachment: AdminConversationAttachment): string {
   }
 }
 
-function channelName(channel: "telegram" | "max"): string {
-  return channel === "telegram" ? "Telegram" : "MAX";
+/**
+ * Значок канала. У WhatsApp свой — иначе он неотличим от MAX, а перепутать их дорого:
+ * это разные собеседники и разные номера.
+ */
+function threadIcon(channel: AdminConversationChannel) {
+  if (channel === "telegram") {
+    return Send;
+  }
+
+  return channel === "whatsapp" ? MessageCircle : MessageSquare;
+}
+
+function channelName(channel: AdminConversationChannel): string {
+  if (channel === "telegram") {
+    return "Telegram";
+  }
+
+  return channel === "whatsapp" ? "WhatsApp" : "MAX";
 }
 
 /**

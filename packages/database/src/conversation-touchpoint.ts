@@ -1,3 +1,4 @@
+import type { ConversationChannel } from "@ticket-platform/domain";
 import type { SqlExecutor } from "./postgres.js";
 
 /** Строка выборки по идентификатору — та же форма, что и в соседних запросах. */
@@ -7,7 +8,7 @@ interface IdRow {
 
 interface TouchpointInput {
   readonly contactId: string | null;
-  readonly channel: "telegram" | "max";
+  readonly channel: ConversationChannel;
   readonly actorAdminId: string | null;
   readonly result: "answered" | "sent";
   readonly note: string | null;

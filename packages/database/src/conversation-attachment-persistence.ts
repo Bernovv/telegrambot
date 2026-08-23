@@ -18,6 +18,7 @@ interface PendingRow {
   readonly file_name: string | null;
   readonly mime_type: string | null;
   readonly external_file_id: string | null;
+  readonly payload: unknown;
   readonly download_attempts: number;
 }
 
@@ -80,7 +81,7 @@ implements AttachmentDownloadRepository {
          )
          select leased.id, conversation.channel, leased.kind,
                 leased.file_name, leased.mime_type,
-                leased.external_file_id, leased.download_attempts
+                leased.external_file_id, message.payload, leased.download_attempts
            from leased
            join public.conversation_messages message on message.id = leased.message_id
            join public.conversations conversation on conversation.id = message.conversation_id`,
@@ -93,6 +94,7 @@ implements AttachmentDownloadRepository {
         fileName: row.file_name,
         mimeType: row.mime_type,
         externalFileId: row.external_file_id,
+        payload: row.payload,
         attempts: row.download_attempts
       }));
     } finally {

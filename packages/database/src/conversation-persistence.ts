@@ -4,6 +4,7 @@ import type {
   RecordOutgoingMessageInput,
   RecordedConversationMessage
 } from "@ticket-platform/application";
+import type { ConversationChannel } from "@ticket-platform/domain";
 import {
   CONVERSATION_CONTACT_SOURCE,
   conversationContactIdentifier
@@ -266,7 +267,7 @@ export class PostgresConversationRepository implements ConversationRepository {
 interface EnsureConversationInput {
   readonly conversationId: string;
   readonly contactId: string;
-  readonly channel: "telegram" | "max";
+  readonly channel: ConversationChannel;
   readonly transport: "bot" | "account";
   readonly externalChatId: string;
   readonly participant: {
@@ -418,20 +419,17 @@ async function resolveConversationContact(
   });
   const telegramNormalized = identifier.telegramUsername?.toLowerCase() ?? null;
   const maxNormalized = identifier.maxIdentifier?.toLowerCase() ?? null;
-  if (telegramNormalized === null && maxNormalized === null) {
+  const phoneE164 = identifier.phoneE164;
+  if (telegramNormalized === null && maxNormalized === null && phoneE164 === null) {
     return null;
   }
 
-  const byHandle = await connection.query<IdRow>(
-    `select coalesce(merged_into_contact_id, id) as id
-       from public.outreach_contacts
-      where ($1::text is not null and telegram_username_normalized = $1::text)
-         or ($2::text is not null and max_identifier_normalized = $2::text)
-      order by created_at
-      limit 1`,
-    [telegramNormalized, maxNormalized]
+  const existing = await findContactByIdentifier(
+    connection,
+    telegramNormalized,
+    maxNormalized,
+    phoneE164
   );
-  const existing = byHandle.rows[0]?.id;
   if (existing) {
     return existing;
   }
@@ -442,9 +440,11 @@ async function resolveConversationContact(
        id, linked_user_id, display_name,
        telegram_username, telegram_username_normalized,
        max_identifier, max_identifier_normalized,
+       phone_e164,
        source, created_by_admin_id
      ) values (
-       $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::uuid
+       $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text,
+       $9::text, $10::uuid
      )
      on conflict do nothing
      returning id`,
@@ -456,6 +456,7 @@ async function resolveConversationContact(
       telegramNormalized,
       identifier.maxIdentifier,
       maxNormalized,
+      phoneE164,
       CONVERSATION_CONTACT_SOURCE,
       MESSENGER_SYSTEM_ADMIN_ID
     ]
@@ -465,16 +466,45 @@ async function resolveConversationContact(
     return insertedId;
   }
 
-  const race = await connection.query<IdRow>(
+  return await findContactByIdentifier(
+    connection,
+    telegramNormalized,
+    maxNormalized,
+    phoneE164
+  );
+}
+
+/**
+ * Тот же поиск до вставки и после неё.
+ *
+ * Второй раз он нужен из-за гонки: два сообщения подряд — обычное дело, и карточку мог
+ * завести соседний запрос между нашим поиском и нашей вставкой. `on conflict do nothing`
+ * тогда не вернёт ничего, и без повторного поиска диалог остался бы непривязанным при живой
+ * карточке.
+ *
+ * **Телефон в этом поиске — самый сильный признак**, и приехать он может только из WhatsApp:
+ * там адрес человека и есть его номер. Отсюда же главная выгода канала — разговор сам
+ * находит карточку, заведённую заявкой с сайта, импортом или звонком, безо всякой склейки
+ * руками. Уникальный индекс на `phone_e164` гарантирует, что найдётся не больше одной.
+ */
+async function findContactByIdentifier(
+  connection: SqlExecutor,
+  telegramNormalized: string | null,
+  maxNormalized: string | null,
+  phoneE164: string | null
+): Promise<string | null> {
+  const found = await connection.query<IdRow>(
     `select coalesce(merged_into_contact_id, id) as id
        from public.outreach_contacts
       where ($1::text is not null and telegram_username_normalized = $1::text)
          or ($2::text is not null and max_identifier_normalized = $2::text)
+         or ($3::text is not null and phone_e164 = $3::text)
       order by created_at
       limit 1`,
-    [telegramNormalized, maxNormalized]
+    [telegramNormalized, maxNormalized, phoneE164]
   );
-  return race.rows[0]?.id ?? null;
+
+  return found.rows[0]?.id ?? null;
 }
 
 /**

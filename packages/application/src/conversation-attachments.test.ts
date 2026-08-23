@@ -20,6 +20,7 @@ function pending(overrides: Partial<PendingAttachment> = {}): PendingAttachment 
     fileName: null,
     mimeType: "audio/ogg",
     externalFileId: "AgAD-voice",
+    payload: null,
     attempts: 0,
     ...overrides
   };

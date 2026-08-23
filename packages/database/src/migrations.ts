@@ -309,5 +309,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260823210000_conversation_reply_tasks",
     description: "Open a task for the responsible manager whenever a customer writes",
     destructive: false
+  },
+  {
+    id: "20260823230000_whatsapp_conversation_channel",
+    description: "Allow WhatsApp as a conversation channel; ticket sales stay on the two bots",
+    destructive: false
   }
 ];

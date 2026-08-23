@@ -9,7 +9,13 @@
  * и свой чат, и отвечать придётся в конкретный, а не «в ленту».
  */
 
-export type AdminConversationChannel = "telegram" | "max";
+import type { ConversationChannel } from "./telegram.js";
+
+/**
+ * Канал ветки в панели. Тот же перечень, что у переписки в целом: панель показывает всё, где
+ * с человеком разговаривают, — включая WhatsApp, где билетов не продают.
+ */
+export type AdminConversationChannel = ConversationChannel;
 
 /** Бот или аккаунт компании. Для человека это два разных собеседника. */
 export type AdminConversationTransport = "bot" | "account";
