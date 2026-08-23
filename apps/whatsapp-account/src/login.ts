@@ -1,21 +1,26 @@
 /**
  * Разовая привязка аккаунта компании в WhatsApp.
  *
- *   pnpm wa:login            — получить код и ввести его на телефоне
+ *   pnpm wa:login            — код из восьми символов, вводится на телефоне
+ *   pnpm wa:login --qr       — то же самое картинкой: код сканируют камерой
  *   pnpm wa:login --reset    — стереть сессию и привязаться заново, с нуля
  *
  * Запускается руками и **на том же сервере**, где канал будет работать: сессия привязывается
  * к тому адресу, с которого её открыли, и вход с ноутбука с последующей работой из
  * Амстердама — лишний повод для их антифрода приглядеться к аккаунту.
  *
- * Кодом, а не QR. WhatsApp умеет оба способа, но QR пришлось бы рисовать в терминале и
- * сканировать с экрана по ssh; код из восьми символов вводится на телефоне и работает
- * одинаково откуда угодно.
+ * Способа два, и это одно и то же предложение сервера, показанное по-разному. По умолчанию
+ * код: его диктуют по телефону, и он не зависит от того, видно ли терминал глазами. Если
+ * код не принимается — `--qr`, штатный путь WhatsApp, тот самый, которым привязывают
+ * веб-версию. Ровно так же пришлось поступить с MAX, где вход по коду их антифрод отверг
+ * вовсе.
  *
  * Сессия остаётся в каталоге `WHATSAPP_ACCOUNT_SESSION_DIR`. Это не строка в `.env`, как у
  * MAX: там лежат сигнальные ключи, они меняются после каждого сообщения, и **каталог надо
  * резервировать** — его потеря означает новую привязку с телефоном в руках.
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type {
   WhatsAppAccountClient,
   WhatsAppConnectionState
@@ -28,6 +33,8 @@ import {
   waitForPairingReady,
   waitForState
 } from "./bootstrap.js";
+
+const run = promisify(execFile);
 
 /** Сколько ждать соединения, прежде чем признать, что дело в прокси. */
 const CONNECT_TIMEOUT_MS = 60_000;
@@ -83,19 +90,23 @@ async function main(): Promise<void> {
       throw new Error(refusalHelp(pairing.reason));
     }
 
-    await pair(client);
+    await pair(client, pairing.qr, process.argv.includes("--qr"));
   } finally {
     await client.close();
   }
 }
 
-/** Привязка: код на экран, подтверждение на телефоне, ожидание. */
-async function pair(client: WhatsAppAccountClient): Promise<void> {
-  const code = await client.requestPairingCode();
-  console.log(`\nКод привязки: ${format(code)}`);
-  console.log("\nНа телефоне с этим номером:");
-  console.log("  WhatsApp → Настройки → Связанные устройства → Привязка устройства");
-  console.log("  → «Привязать по номеру телефона» → ввести код.");
+/** Привязка: предложение на экран, подтверждение на телефоне, ожидание. */
+async function pair(
+  client: WhatsAppAccountClient,
+  qr: string | null,
+  byQr: boolean
+): Promise<void> {
+  if (byQr) {
+    await showQr(qr);
+  } else {
+    await showCode(client);
+  }
   console.log("\nЖдём подтверждения…");
 
   const linked = await waitForState(client, ["ready", "logged_out"], PAIRING_WINDOW_MS);
@@ -153,12 +164,56 @@ function refusalHelp(reason: string | null): string {
     + "\n  2. Подробности протокола — там видно, на чём именно сервер закрывает связь:"
     + "\n     WHATSAPP_ACCOUNT_DEBUG=1 pnpm wa:login"
     + "\n  3. Имя устройства латиницей: WHATSAPP_ACCOUNT_DEVICE_NAME=Chrome в .env."
-    + " Кириллица в имени — известный подозреваемый, проверяется одной правкой.";
+    + " Кириллица в имени — известный подозреваемый, проверяется одной правкой."
+    + "\n  4. Привязка картинкой вместо кода: pnpm wa:login --qr.";
 }
 
-/** Код читают с экрана и набирают на телефоне: половинками ошибиться труднее. */
-function format(code: string): string {
-  return code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+/**
+ * Код из восьми символов.
+ *
+ * Печатается сплошняком и отдельной строкой по буквам. Дефис посередине, который тут был
+ * раньше, читался легче — и ровно поэтому его набирали вместе с кодом, а поле на телефоне
+ * его не принимает.
+ */
+async function showCode(client: WhatsAppAccountClient): Promise<void> {
+  const code = await client.requestPairingCode();
+  console.log(`\nКод привязки: ${code}`);
+  console.log(`  по буквам:   ${[...code].join(" ")}`);
+  console.log("\nНа телефоне с этим номером:");
+  console.log("  WhatsApp → Настройки → Связанные устройства → Привязка устройства");
+  console.log("  → «Привязать по номеру телефона» → ввести код.");
+  console.log("\nВводить восемь символов подряд, без пробелов и дефисов.");
+}
+
+/**
+ * То же предложение картинкой.
+ *
+ * Штатный путь WhatsApp: так привязывают веб-версию, и через него проходит всё, что
+ * проходит вообще. Код при этом не запрашивается — предложение уже есть, оно пришло с
+ * сервера само.
+ */
+async function showQr(qr: string | null): Promise<void> {
+  if (qr === null) {
+    throw new Error("Предложение привязаться не пришло — показывать нечего.");
+  }
+  console.log("");
+  console.log(await renderQr(qr));
+  console.log("На телефоне с этим номером:");
+  console.log("  WhatsApp → Настройки → Связанные устройства → Привязка устройства");
+  console.log("  → навести камеру на код выше.");
+  console.log("\nКод живёт около двадцати секунд, потом сервер присылает новый —");
+  console.log("не успели, запустите вход заново.");
+}
+
+/** Код в терминал. Рисует `qrencode`; нет его — так и говорим, это не повод падать. */
+async function renderQr(text: string): Promise<string> {
+  try {
+    const { stdout } = await run("qrencode", ["-t", "ANSIUTF8", "-o", "-", text]);
+
+    return stdout;
+  } catch {
+    return "  (нарисовать код нечем — поставьте qrencode: apt install -y qrencode)";
+  }
 }
 
 main().catch((error: unknown) => {

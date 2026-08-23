@@ -78,7 +78,7 @@ export interface WhatsAppAccountClient extends WhatsAppSocket {
    * Обработчик, поставленный после того как сигнал уже был, вызывается сразу: иначе всё
    * зависит от того, кто успел первым — соединение или скрипт.
    */
-  onPairingReady(handler: () => void): void;
+  onPairingReady(handler: (qr: string) => void): void;
   /** Вошли ли уже. `false` — сессии нет, нужен код привязки. */
   isRegistered(): boolean;
 }
@@ -98,7 +98,7 @@ export function createWhatsAppAccountClient(
   const stateHandlers: WhatsAppStateHandler[] = [];
   const logger = debug === null ? silentLogger() : debugLogger(debug);
 
-  const pairingHandlers: (() => void)[] = [];
+  const pairingHandlers: ((qr: string) => void)[] = [];
 
   let socket: WASocket | null = null;
   let registered = false;
@@ -106,7 +106,13 @@ export function createWhatsAppAccountClient(
   let attempt = 0;
   let state: WhatsAppConnectionState = "connecting";
   let stateReason: string | null = null;
-  let pairingReady = false;
+  /**
+   * Последнее предложение привязаться. Оно же — содержимое QR: сервер присылает одну и ту
+   * же строку, а показать её можно двумя способами, кодом или картинкой.
+   *
+   * Обновляется каждые двадцать секунд: старое предложение к этому времени протухает.
+   */
+  let pairingOffer: string | null = null;
 
   /**
    * Сообщить о состоянии — и запомнить его.
@@ -187,9 +193,9 @@ export function createWhatsAppAccountClient(
 
     created.ev.on("connection.update", (update) => {
       if (typeof update.qr === "string" && update.qr !== "") {
-        pairingReady = true;
+        pairingOffer = update.qr;
         for (const handler of pairingHandlers) {
-          handler();
+          handler(update.qr);
         }
       }
       if (update.connection === "connecting") {
@@ -292,8 +298,8 @@ export function createWhatsAppAccountClient(
 
     onPairingReady(handler) {
       pairingHandlers.push(handler);
-      if (pairingReady) {
-        handler();
+      if (pairingOffer !== null) {
+        handler(pairingOffer);
       }
     },
 

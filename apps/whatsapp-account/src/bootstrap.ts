@@ -113,13 +113,13 @@ export async function waitForPairingReady(
 ): Promise<PairingAttempt> {
   return await new Promise((resolve) => {
     const timer = setTimeout(() => {
-      resolve({ ready: false, state: "closed", reason: "ответа от WhatsApp не было" });
+      resolve({ ready: false, state: "closed", reason: "ответа от WhatsApp не было", qr: null });
     }, timeoutMs);
     timer.unref();
 
-    client.onPairingReady(() => {
+    client.onPairingReady((qr) => {
       clearTimeout(timer);
-      resolve({ ready: true, state: "connecting", reason: null });
+      resolve({ ready: true, state: "connecting", reason: null, qr });
     });
     // Соединение может кончиться, так и не дойдя до предложения. Состояние и причину
     // обязательно наружу: отвергнутая сессия лечится не тем, чем мёртвый прокси, а снаружи
@@ -127,7 +127,7 @@ export async function waitForPairingReady(
     client.onState((state, reason) => {
       if (state === "closed" || state === "logged_out") {
         clearTimeout(timer);
-        resolve({ ready: false, state, reason });
+        resolve({ ready: false, state, reason, qr: null });
       }
     });
   });
@@ -137,6 +137,8 @@ export interface PairingAttempt {
   readonly ready: boolean;
   readonly state: WhatsAppConnectionState;
   readonly reason: string | null;
+  /** Предложение привязаться, оно же содержимое QR. Есть только при `ready`. */
+  readonly qr: string | null;
 }
 
 /**
