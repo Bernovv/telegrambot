@@ -82,7 +82,9 @@ export interface WhatsAppAccountClient extends WhatsAppSocket {
 export function createWhatsAppAccountClient(
   options: WhatsAppAccountClientOptions
 ): WhatsAppAccountClient {
-  const agent = options.proxyUrl === null ? undefined : new SocksProxyAgent(options.proxyUrl);
+  const agent = options.proxyUrl === null
+    ? undefined
+    : new SocksProxyAgent(remoteDnsProxy(options.proxyUrl));
   const messageHandlers: WhatsAppMessageHandler[] = [];
   const stateHandlers: WhatsAppStateHandler[] = [];
   const logger = silentLogger();
@@ -353,6 +355,24 @@ function mediaContentOf(input: WhatsAppFileToSend): AnyMessageContent {
   }
 
   return { document: bytes, mimetype, fileName: input.fileName, ...caption };
+}
+
+/**
+ * Имя сайта разрешает прокси, а не мы.
+ *
+ * У SOCKS это разница между схемами: `socks5://` — «я сам узнаю адрес и попрошу прокси
+ * соединиться с ним», `socks5h://` — «узнай адрес сам». Для Telegram через TDLib разницы
+ * не было, и в его переменной буква `h` не нужна; здесь она решает.
+ *
+ * Причина местная: домены WhatsApp исключены из национальной системы доменных имён, и на
+ * этом сервере их имена не разрешаются или разрешаются не туда. Соединение при этом умирает
+ * молча — выглядит как неработающий прокси при живом прокси.
+ *
+ * Схема поэтому не спрашивается у настроек, а ставится здесь. Строку в `.env` однажды
+ * перепишут целиком, и канал не должен от этого зависеть.
+ */
+function remoteDnsProxy(url: string): string {
+  return url.replace(/^socks5:\/\//i, "socks5h://");
 }
 
 function statusCodeOf(error: unknown): number | null {
