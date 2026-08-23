@@ -101,44 +101,54 @@ export async function waitForState(
 }
 
 /**
- * Ждёт предложения привязаться — момента, когда код можно спрашивать.
+ * Чем кончилась попытка подняться. Три исхода, и все три — рабочие ответы:
  *
- * Отдельно от состояния соединения, потому что это не состояние: сокет к этому времени уже
- * «соединяемся», и по нему не отличить «идёт рукопожатие» от «сервер готов». Спросить код
- * раньше — получить `Connection Closed`, что и происходило.
+ * - `linked` — сессия уже привязана и на связи, делать нечего;
+ * - `pairing` — сервер предлагает привязаться, и это предложение у нас на руках;
+ * - `failed` — не дошли ни до того, ни до другого.
+ *
+ * Спрашивать «привязаны ли» у самих настроек до соединения оказалось нельзя: после привязки
+ * картинкой WhatsApp не помечает сессию как зарегистрированную, и рабочий аккаунт выглядит
+ * как непривязанный. Достоверно отвечает только соединение.
  */
-export async function waitForPairingReady(
+export type ConnectOutcome =
+  | { readonly kind: "linked" }
+  | { readonly kind: "pairing"; readonly qr: string }
+  | {
+      readonly kind: "failed";
+      readonly state: WhatsAppConnectionState;
+      readonly reason: string | null;
+    };
+
+export async function waitForOutcome(
   client: WhatsAppAccountClient,
   timeoutMs: number
-): Promise<PairingAttempt> {
+): Promise<ConnectOutcome> {
   return await new Promise((resolve) => {
     const timer = setTimeout(() => {
-      resolve({ ready: false, state: "closed", reason: "ответа от WhatsApp не было", qr: null });
+      resolve({ kind: "failed", state: "closed", reason: "ответа от WhatsApp не было" });
     }, timeoutMs);
     timer.unref();
 
     client.onPairingReady((qr) => {
       clearTimeout(timer);
-      resolve({ ready: true, state: "connecting", reason: null, qr });
+      resolve({ kind: "pairing", qr });
     });
-    // Соединение может кончиться, так и не дойдя до предложения. Состояние и причину
-    // обязательно наружу: отвергнутая сессия лечится не тем, чем мёртвый прокси, а снаружи
-    // и то и другое выглядит одинаковым «не получилось».
     client.onState((state, reason) => {
+      if (state === "ready") {
+        clearTimeout(timer);
+        resolve({ kind: "linked" });
+
+        return;
+      }
+      // Обрыв и отказ обязаны различаться наружу: отвергнутая сессия лечится не тем, чем
+      // мёртвый прокси, а «не получилось» у них одинаковое.
       if (state === "closed" || state === "logged_out") {
         clearTimeout(timer);
-        resolve({ ready: false, state, reason, qr: null });
+        resolve({ kind: "failed", state, reason });
       }
     });
   });
-}
-
-export interface PairingAttempt {
-  readonly ready: boolean;
-  readonly state: WhatsAppConnectionState;
-  readonly reason: string | null;
-  /** Предложение привязаться, оно же содержимое QR. Есть только при `ready`. */
-  readonly qr: string | null;
 }
 
 /**

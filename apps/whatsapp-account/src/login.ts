@@ -30,7 +30,7 @@ import {
   openAccount,
   requireAccountConfig,
   resetSession,
-  waitForPairingReady,
+  waitForOutcome,
   waitForState
 } from "./bootstrap.js";
 
@@ -57,23 +57,17 @@ async function main(): Promise<void> {
   try {
     client.onState(printState);
 
-    if (client.isRegistered()) {
-      await describeExistingSession(client);
-
-      return;
-    }
-
-    // Ждём, пока сервер сам предложит привязаться. Именно этот момент, а не «сокет открыт»:
-    // до него рукопожатие ещё идёт, и запрос кода падает с «Connection Closed».
+    // Что делать — решает соединение, а не настройки. «Привязаны ли» до соединения знать
+    // нельзя: после привязки картинкой WhatsApp не помечает сессию зарегистрированной, и
+    // рабочий аккаунт выглядит непривязанным. Именно на этом скрипт однажды стал ждать
+    // предложения привязаться у уже привязанного аккаунта.
     console.log("\nСоединяемся с WhatsApp через прокси…");
-    let pairing = await waitForPairingReady(client, CONNECT_TIMEOUT_MS);
+    let outcome = await waitForOutcome(client, CONNECT_TIMEOUT_MS);
 
-    // Отказ «сессия недействительна» на непривязанном аккаунте означает ровно одно: в
-    // каталоге лежат ключи от прошлой неудачной попытки, и WhatsApp их больше не признаёт.
-    // Терять там нечего — привязка так и не состоялась, — поэтому стираем и пробуем ещё раз
-    // с чистой личностью. Спрашивать об этом человека незачем: другого выхода всё равно нет,
-    // а на второй попытке он уже будет с телефоном в руках.
-    if (!pairing.ready && pairing.state === "logged_out") {
+    // Отказ «сессия недействительна» означает ровно одно: в каталоге лежат ключи от прошлой
+    // неудачной попытки, и WhatsApp их больше не признаёт. Терять там нечего — привязка так
+    // и не состоялась, — поэтому стираем и пробуем ещё раз с чистой личностью.
+    if (outcome.kind === "failed" && outcome.state === "logged_out") {
       console.log(
         "\nWhatsApp отверг сессию из каталога — она осталась от прошлой попытки."
         + " Стираем и соединяемся с чистой."
@@ -83,14 +77,19 @@ async function main(): Promise<void> {
 
       client = (await openAccount()).client;
       client.onState(printState);
-      pairing = await waitForPairingReady(client, CONNECT_TIMEOUT_MS);
+      outcome = await waitForOutcome(client, CONNECT_TIMEOUT_MS);
     }
 
-    if (!pairing.ready) {
-      throw new Error(refusalHelp(pairing.reason));
+    if (outcome.kind === "failed") {
+      throw new Error(refusalHelp(outcome.reason));
+    }
+    if (outcome.kind === "linked") {
+      describeExistingSession(client);
+
+      return;
     }
 
-    await pair(client, pairing.qr, process.argv.includes("--qr"));
+    await pair(client, outcome.qr, process.argv.includes("--qr"));
   } finally {
     await client.close();
   }
@@ -99,7 +98,7 @@ async function main(): Promise<void> {
 /** Привязка: предложение на экран, подтверждение на телефоне, ожидание. */
 async function pair(
   client: WhatsAppAccountClient,
-  qr: string | null,
+  qr: string,
   byQr: boolean
 ): Promise<void> {
   if (byQr) {
@@ -133,22 +132,12 @@ async function pair(
   );
 }
 
-async function describeExistingSession(client: WhatsAppAccountClient): Promise<void> {
-  const state = await waitForState(client, ["ready", "logged_out"], CONNECT_TIMEOUT_MS);
-  console.log(`\nПривязка уже есть: ${describeState(state.state)}.`);
+function describeExistingSession(client: WhatsAppAccountClient): void {
   const self = client.self();
-  if (self !== null) {
-    console.log(`  номер: +${self.phone}`);
-  }
-  if (state.state === "ready") {
-    console.log("\nЧтобы привязать другой номер: pnpm wa:login --reset.");
-
-    return;
-  }
-  console.log(
-    "\nСессия больше не годится — устройство отвязали со стороны телефона либо её отверг"
-    + " WhatsApp. Привязаться заново: pnpm wa:login --reset."
-  );
+  console.log("\nПривязка уже есть, аккаунт на связи — делать ничего не нужно.");
+  console.log(`  номер: +${self?.phone ?? "неизвестен"}`);
+  console.log(`  адрес: ${self?.jid ?? "неизвестен"}`);
+  console.log("\nЧтобы привязать другой номер: pnpm wa:login --reset.");
 }
 
 function printState(state: WhatsAppConnectionState, reason: string | null): void {
@@ -192,10 +181,7 @@ async function showCode(client: WhatsAppAccountClient): Promise<void> {
  * проходит вообще. Код при этом не запрашивается — предложение уже есть, оно пришло с
  * сервера само.
  */
-async function showQr(qr: string | null): Promise<void> {
-  if (qr === null) {
-    throw new Error("Предложение привязаться не пришло — показывать нечего.");
-  }
+async function showQr(qr: string): Promise<void> {
   console.log("");
   console.log(await renderQr(qr));
   console.log("На телефоне с этим номером:");

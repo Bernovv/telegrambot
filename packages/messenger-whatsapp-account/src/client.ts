@@ -158,7 +158,12 @@ export function createWhatsAppAccountClient(
   async function open(): Promise<void> {
     const auth = await useMultiFileAuthState(options.sessionDir);
     const saveCreds = auth.saveCreds;
-    registered = auth.state.creds.registered === true;
+    // Привязка узнаётся по тому, знает ли WhatsApp, кто мы. Поле `registered` для этого не
+    // годится: его выставляет только вход по коду, а после привязки картинкой оно остаётся
+    // ложным — сессия при этом рабочая. Ровно на этом скрипт входа однажды решил, что
+    // привязки нет, и стал ждать предложения, которого уже не будет.
+    registered = auth.state.creds.registered === true
+      || typeof auth.state.creds.me?.id === "string";
     const version = await currentVersion();
 
     const created = makeWASocket({

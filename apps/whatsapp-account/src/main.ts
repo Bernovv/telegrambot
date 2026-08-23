@@ -42,7 +42,7 @@ import {
   toIncomingMessage
 } from "@ticket-platform/messenger-whatsapp-account";
 import { createLogger } from "@ticket-platform/observability";
-import { describeState, openAccount, waitForState } from "./bootstrap.js";
+import { describeState, openAccount, waitForOutcome } from "./bootstrap.js";
 import {
   FileSystemAttachmentReader,
   FileSystemAttachmentStorage
@@ -70,11 +70,19 @@ async function main(): Promise<void> {
     logger.error(message, { state, ...(reason === null ? {} : { reason }) });
   });
 
-  const started = await waitForState(client, ["ready", "logged_out"], STARTUP_TIMEOUT_MS);
-  if (started.state !== "ready") {
+  const started = await waitForOutcome(client, STARTUP_TIMEOUT_MS);
+  if (started.kind === "pairing") {
+    // Отдельный случай, а не «связи нет»: связь как раз есть, а привязки нет. Разница
+    // существенная — второе чинится человеком с телефоном, и pm2 может перезапускать
+    // процесс хоть сто раз, легче не станет.
     throw new Error(
-      `Канал WhatsApp не поднялся: ${describeState(started.state)}`
-      + `${started.reason === null ? "" : ` (${started.reason})`}.`
+      "Канал WhatsApp не привязан: WhatsApp предлагает привязать устройство."
+      + " Привязать: pnpm wa:login на этом сервере, с телефоном под рукой."
+    );
+  }
+  if (started.kind === "failed") {
+    throw new Error(
+      `Канал WhatsApp не поднялся${started.reason === null ? "" : `: ${started.reason}`}.`
       + " Что делать — в docs/runbooks/whatsapp-account.md"
     );
   }
