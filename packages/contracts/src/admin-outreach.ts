@@ -308,6 +308,7 @@ extends OutreachCampaignContactSummary {
  */
 export const OUTREACH_PERSON_FILTERS = [
   "all",
+  "wrote_in_messenger",
   "without_phone",
   "without_name",
   "without_campaign",
@@ -330,6 +331,11 @@ export interface OutreachPerson {
   readonly isOwn: boolean;
   /** В скольких кампаниях состоит сейчас — без тех, откуда его убрали. */
   readonly campaignCount: number;
+  /**
+   * Когда с человеком последний раз что-то происходило: касание в кампании или его же
+   * сообщение в мессенджере. Одно поле на оба события намеренно — вопрос у менеджера
+   * один: «когда про него в последний раз было слышно».
+   */
   readonly lastActivityAt: string | null;
   readonly archivedAt: string | null;
   readonly createdAt: string;

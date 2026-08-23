@@ -1490,7 +1490,7 @@ implements AdminOutreachRepository {
            contact.archived_at,
            contact.created_at,
            membership.campaign_count,
-           membership.last_activity_at,
+           greatest(membership.last_activity_at, wrote.last_inbound_at) as last_activity_at,
            count(*) over()::text as total_count
          from public.outreach_contacts contact
          left join lateral (
@@ -1500,12 +1500,21 @@ implements AdminOutreachRepository {
            from public.outreach_campaign_contacts member
            where member.contact_id = contact.id
          ) membership on true
+         -- Когда человек последний раз написал нам сам. Без этого тот, кто пишет прямо
+         -- сейчас, оказывается в конце списка — за всеми, у кого есть касания в кампаниях,
+         -- то есть за тысячами импортированных. Найти его тогда можно только запросом к базе.
+         left join lateral (
+           select max(conversation.last_inbound_at) as last_inbound_at
+           from public.conversations conversation
+           where conversation.contact_id = contact.id
+         ) wrote on true
          where
            -- Архивные видно только в своём фильтре: иначе убранный контакт продолжает
            -- мозолить глаза в общем списке и убирать его было незачем.
            (case when $2::text = 'archived'
                  then contact.archived_at is not null
                  else contact.archived_at is null end)
+           and ($2::text <> 'wrote_in_messenger' or wrote.last_inbound_at is not null)
            and ($2::text <> 'without_phone' or contact.phone_e164 is null)
            and ($2::text <> 'without_name' or contact.display_name is null)
            and ($2::text <> 'without_campaign' or coalesce(membership.campaign_count::bigint, 0) = 0)
@@ -1518,7 +1527,9 @@ implements AdminOutreachRepository {
              or coalesce(contact.email_normalized, '') ilike $1 escape '\\'
            ))
          order by
-           membership.last_activity_at desc nulls last,
+           -- greatest в Postgres пропускает пустые значения, поэтому одного выражения
+           -- хватает на оба случая: есть только касание, есть только сообщение, есть оба.
+           greatest(membership.last_activity_at, wrote.last_inbound_at) desc nulls last,
            contact.created_at desc,
            contact.id desc
          limit $3 offset $4`,

@@ -62,6 +62,14 @@ test("кадр без отправителя пропускается: чело�
   assert.equal(incomingMessage(frame({ sender: null }), SELF), null);
 });
 
+// Как MAX помечает свои уведомления, мы знать не можем: протокол не документирован.
+// Отбор по типу кадра однажды уже съел сообщение клиента молча.
+test("тип кадра на приём не влияет: важен только код операции", () => {
+  const asRequest: MaxInboundFrame = { ...frame(), cmd: 0 };
+
+  assert.equal(incomingMessage(asRequest, SELF)?.senderUserId, "42");
+});
+
 test("чужой код операции пропускается", () => {
   // Набор текста — тоже событие, и в переписке ему делать нечего.
   const typing: MaxInboundFrame = {

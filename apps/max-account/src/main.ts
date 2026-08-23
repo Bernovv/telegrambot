@@ -42,6 +42,7 @@ import {
   createMaxAccountReplySender,
   incomingMessage,
   MaxChatDirectory,
+  MaxOpcode,
   participantOf,
   toIncomingMessage,
   type MaxInboundFrame
@@ -52,6 +53,8 @@ import {
   FileSystemAttachmentReader,
   FileSystemAttachmentStorage
 } from "./conversation-file-storage.js";
+
+const MAX_MESSAGE_OPCODE = MaxOpcode.notifyMessage;
 
 async function main(): Promise<void> {
   const app = loadAppConfig(process.env);
@@ -144,8 +147,28 @@ async function main(): Promise<void> {
   );
 
   client.onEvent((frame: MaxInboundFrame) => {
+    // Трассировка по флагу: обычным днём это поток в сотни строк, а в день разбирательства
+    // единственный способ увидеть, что вообще присылает MAX. Включается MAX_ACCOUNT_TRACE=1
+    // и снимается перезапуском — выкладка для этого не нужна.
+    if (config.trace) {
+      logger.info("frame", {
+        opcode: frame.opcode,
+        cmd: frame.cmd,
+        keys: Object.keys(frame.payload ?? {}).join(",")
+      });
+    }
+
     const incoming = incomingMessage(frame, selfUserId);
     if (incoming === null) {
+      // Сообщение, которое приехало и не прошло разбор, — это потерянная реплика клиента.
+      // Молчать о ней нельзя: снаружи это неотличимо от «никто не писал».
+      if (frame.opcode === MAX_MESSAGE_OPCODE) {
+        logger.info("message frame not taken", {
+          cmd: frame.cmd,
+          keys: Object.keys(frame.payload ?? {}).join(",")
+        });
+      }
+
       return;
     }
 
