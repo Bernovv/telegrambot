@@ -1,4 +1,4 @@
-import { MaxOpcode } from "./protocol.js";
+import { MaxAccountError, MaxOpcode } from "./protocol.js";
 import type { MaxInboundFrame } from "./protocol.js";
 
 /**
@@ -15,6 +15,9 @@ import type { MaxInboundFrame } from "./protocol.js";
 
 /** Потолок кэша. Дальше вытесняется самое старое: процесс живёт месяцами. */
 const CACHE_LIMIT = 5_000;
+
+/** Как MAX отвечает на номер, за которым никого нет. Формулировка их, включая грамматику. */
+const NOT_FOUND = /cannot found contact|contact not found/i;
 
 export type MaxChatKind = "dialog" | "group" | "channel" | "unknown";
 
@@ -84,11 +87,22 @@ export class MaxChatDirectory {
    * встанет «написать первым» из панели.
    */
   async findByPhone(phone: string): Promise<Readonly<Record<string, unknown>> | null> {
-    const frame = await this.client.invoke(MaxOpcode.contactInfoByPhone, {
-      phone: phone.replace(/^\+/, "")
-    });
+    try {
+      const frame = await this.client.invoke(MaxOpcode.contactInfoByPhone, {
+        phone: phone.replace(/^\+/, "")
+      });
 
-    return recordOf(frame.payload?.["contact"]) ?? firstOf(frame, "contacts");
+      return recordOf(frame.payload?.["contact"]) ?? firstOf(frame, "contacts");
+    } catch (error) {
+      // «Не нашлось» MAX сообщает отказом, а не пустым ответом. Для нас это обычный
+      // ответ: у человека может не быть MAX или он закрыт настройками приватности.
+      // Пропускать это наверх ошибкой значит превращать нормальный исход в поломку —
+      // а на этом вызове потом встанет «написать первым», где такой ответ штатный.
+      if (error instanceof MaxAccountError && NOT_FOUND.test(error.message)) {
+        return null;
+      }
+      throw error;
+    }
   }
 }
 
