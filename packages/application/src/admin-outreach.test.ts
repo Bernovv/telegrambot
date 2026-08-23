@@ -1588,7 +1588,8 @@ function personCard() {
     paidTotalKopecks: "0",
     consents: [],
     siteRegistrations: [],
-    channelLookups: []
+    channelLookups: [],
+    attribution: null
   };
 }
 

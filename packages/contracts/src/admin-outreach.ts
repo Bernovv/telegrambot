@@ -576,6 +576,24 @@ export interface RequestChannelLookupResult {
  * Пусто у канала значит «не проверяли»: строки в очереди нет вовсе. Это не то же самое,
  * что `notFound`, и путать их нельзя — во втором случае мы спросили и получили ответ.
  */
+/**
+ * Откуда человек пришёл — метка первого касания.
+ *
+ * Первого, а не последнего: вопрос, на который отвечает отчёт, — «что привело человека».
+ * Строка без единой метки означает «пришёл сам, без рекламы», и это тоже ответ.
+ */
+export interface OutreachContactAttribution {
+  readonly utmSource: string | null;
+  readonly utmMedium: string | null;
+  readonly utmCampaign: string | null;
+  readonly utmContent: string | null;
+  readonly utmTerm: string | null;
+  readonly landingPage: string | null;
+  readonly referrerHost: string | null;
+  readonly firstSeenAt: string | null;
+  readonly recordedAt: string;
+}
+
 export interface OutreachPersonReach {
   readonly telegram: OutreachChannelLookupState | null;
   readonly max: OutreachChannelLookupState | null;
@@ -635,6 +653,8 @@ export interface OutreachPersonCard {
    * Искали ли этого человека в Telegram по телефону и чем это кончилось. Пусто — не искали.
    */
   readonly channelLookups: readonly OutreachChannelLookup[];
+  /** Метка первого касания. Пусто — человек появился до того, как мы их научились ловить. */
+  readonly attribution: OutreachContactAttribution | null;
 }
 
 /**

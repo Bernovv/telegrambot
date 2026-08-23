@@ -1,4 +1,5 @@
 import type {
+  SiteRegistrationAttribution,
   SiteRegistrationResponse,
   SiteRegistrationStatus
 } from "@ticket-platform/contracts";
@@ -34,6 +35,23 @@ export interface SiteRegistrationEvent {
   readonly startsAt: Date;
 }
 
+/**
+ * Метки первого касания, приведённые к виду для базы.
+ *
+ * Всё уже обрезано по длине и пустые строки превращены в `null`: «пусто» и «пустая строка»
+ * в отчёте выглядели бы двумя разными источниками, и один из них назывался бы никак.
+ */
+export interface SiteRegistrationAttributionInput {
+  readonly utmSource: string | null;
+  readonly utmMedium: string | null;
+  readonly utmCampaign: string | null;
+  readonly utmContent: string | null;
+  readonly utmTerm: string | null;
+  readonly landingPage: string | null;
+  readonly referrerHost: string | null;
+  readonly firstSeenAt: Date | null;
+}
+
 export interface CreateSiteParticipantInput {
   readonly registrationId: string;
   readonly participantId: string;
@@ -46,6 +64,8 @@ export interface CreateSiteParticipantInput {
   readonly createdByAdminId: string;
   /** Куда положить карточку и когда по ней звонить. Пусто — воронки направления нет. */
   readonly enrollment: SiteRegistrationEnrollment | null;
+  /** Откуда человек пришёл. Пусто — заявка без рекламы, и это тоже ответ. */
+  readonly attribution: SiteRegistrationAttributionInput | null;
 }
 
 /**
@@ -97,6 +117,7 @@ export interface RecordSiteRegistrationInput {
   readonly consentAt: Date;
   readonly page: string;
   readonly status: "duplicate" | "unassigned";
+  readonly attribution: SiteRegistrationAttributionInput | null;
 }
 
 export interface SiteRegistrationRepository {
@@ -147,6 +168,7 @@ export class RegisterFromSiteService {
     readonly phone: string;
     readonly consent: boolean;
     readonly page?: string;
+    readonly attribution?: SiteRegistrationAttribution;
     readonly now: Date;
   }): Promise<SiteRegistrationResponse> {
     const name = normalizeName(input.name);
@@ -156,6 +178,7 @@ export class RegisterFromSiteService {
     }
 
     const page = (input.page ?? "").trim().slice(0, 200);
+    const attribution = normalizeAttribution(input.attribution);
     const registrationId = this.idGenerator.newId();
     const event = await this.repository.findRegistrationEvent({
       slugPrefix: this.options.eventSlugPrefix,
@@ -174,7 +197,8 @@ export class RegisterFromSiteService {
           phoneE164,
           consentAt: input.now,
           page,
-          status: "unassigned"
+          status: "unassigned",
+          attribution
         });
         await this.outboxWriter.append(
           submittedEvent(registrationId, this.idGenerator.newId(), input.now)
@@ -201,7 +225,8 @@ export class RegisterFromSiteService {
           phoneE164,
           consentAt: input.now,
           page,
-          status: "duplicate"
+          status: "duplicate",
+          attribution
         });
       });
       return response("already_registered", event.title, event.startsAt);
@@ -222,7 +247,8 @@ export class RegisterFromSiteService {
         consentAt: input.now,
         page,
         createdByAdminId: this.options.systemAdminId,
-        enrollment
+        enrollment,
+        attribution
       });
       await this.outboxWriter.append(
         submittedEvent(registrationId, this.idGenerator.newId(), input.now)
@@ -319,5 +345,46 @@ function submittedEvent(
     schemaVersion: 1,
     payload: { registrationId },
     occurredAt
+  };
+}
+
+/**
+ * Метки из браузера — в вид, пригодный для базы.
+ *
+ * Обрезаем по длине и приравниваем пустую строку к отсутствию: иначе в отчёте появился бы
+ * источник с пустым именем, и было бы непонятно, это «прямой заход» или «реклама, у которой
+ * метку забыли проставить». Ни одна метка не обязательна: строка без единой из них означает
+ * «пришёл сам», и это ответ, а не пробел.
+ */
+function normalizeAttribution(
+  input: SiteRegistrationAttribution | undefined
+): SiteRegistrationAttributionInput | null {
+  if (input === undefined) {
+    return null;
+  }
+
+  const value = (raw: string | undefined, limit: number): string | null => {
+    const trimmed = (raw ?? "").trim().slice(0, limit);
+
+    return trimmed === "" ? null : trimmed;
+  };
+
+  const firstSeenAt = input.firstSeenAt === undefined
+    ? null
+    : new Date(input.firstSeenAt);
+
+  return {
+    utmSource: value(input.utmSource, 100),
+    utmMedium: value(input.utmMedium, 100),
+    utmCampaign: value(input.utmCampaign, 200),
+    utmContent: value(input.utmContent, 200),
+    utmTerm: value(input.utmTerm, 200),
+    landingPage: value(input.landingPage, 200),
+    referrerHost: value(input.referrerHost, 200),
+    // Часы браузера бывают какими угодно. Явно неверную дату отбрасываем: пустое поле
+    // честнее, чем первое касание в 1970 году.
+    firstSeenAt: firstSeenAt !== null && Number.isFinite(firstSeenAt.getTime())
+      ? firstSeenAt
+      : null
   };
 }

@@ -37,6 +37,13 @@ export class PostgresAdminEventReportRepository implements EventReportRepository
       // Ключи те же, что строит вкладка «Участники»: `manual:<id>` у заведённого руками и
       // `order:<id>` у оплаченного заказа. Строка, которой здесь не нашлось, в отчёте
       // попадёт в «источник не указан» — и это честно: про неё мы правда ничего не знаем.
+      //
+      // Источник берётся из метки первого касания, а если её нет — из текстового поля
+      // карточки. Порядок именно такой: метка приехала с рекламы и означает то, что
+      // написано, а поле карточки заполняли руками и импортом, и у большинства в нём
+      // «amoCRM export 2026-07-30». Пока меток нет ни у кого, отчёт выглядит как раньше;
+      // по мере того как люди приходят с лендинга, он начинает отвечать на вопрос
+      // «что приводит людей», а не «когда мы их выгрузили».
       const result = await connection.query<AttributionRow>(
         `with called as (
            select distinct activity.contact_id
@@ -45,11 +52,13 @@ export class PostgresAdminEventReportRepository implements EventReportRepository
            where activity.occurred_at < event.starts_at
          )
          select 'manual:' || participant.id as key,
-                contact.source as contact_source,
+                coalesce(attribution.utm_source, contact.source) as contact_source,
                 (called.contact_id is not null) as contacted_before
            from public.event_participants participant
            left join public.outreach_contacts contact
              on contact.id = participant.outreach_contact_id
+           left join public.contact_attributions attribution
+             on attribution.contact_id = participant.outreach_contact_id
            left join called on called.contact_id = participant.outreach_contact_id
           where participant.event_id = $1::uuid
             and participant.deleted_at is null
@@ -57,11 +66,13 @@ export class PostgresAdminEventReportRepository implements EventReportRepository
          -- Покупателя бота узнаём по привязке контакта к пользователю: своей строки в
          -- участниках у него нет, а метка источника у человека та же самая.
          select 'order:' || orders.id as key,
-                contact.source as contact_source,
+                coalesce(attribution.utm_source, contact.source) as contact_source,
                 (called.contact_id is not null) as contacted_before
            from public.orders orders
            left join public.outreach_contacts contact
              on contact.linked_user_id = orders.user_id
+           left join public.contact_attributions attribution
+             on attribution.contact_id = contact.id
            left join called on called.contact_id = contact.id
           where orders.event_id = $1::uuid
             and orders.status = 'paid'

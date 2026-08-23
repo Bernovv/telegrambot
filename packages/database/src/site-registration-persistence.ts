@@ -1,6 +1,7 @@
 import type {
   CreateSiteParticipantInput,
   RecordSiteRegistrationInput,
+  SiteRegistrationAttributionInput,
   SiteRegistrationCampaign,
   SiteRegistrationEvent,
   SiteRegistrationRepository
@@ -202,10 +203,12 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
     await this.session.query(
       `insert into public.site_registrations (
          id, event_id, participant_id, display_name, phone_e164,
-         consent_at, page, status
+         consent_at, page, status,
+         utm_source, utm_medium, utm_campaign, utm_content, utm_term
        ) values (
          $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text,
-         $6::timestamptz, $7::text, 'registered'
+         $6::timestamptz, $7::text, 'registered',
+         $8::text, $9::text, $10::text, $11::text, $12::text
        )`,
       [
         input.registrationId,
@@ -214,12 +217,20 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
         input.name,
         input.phoneE164,
         input.consentAt,
-        input.page
+        input.page,
+        input.attribution?.utmSource ?? null,
+        input.attribution?.utmMedium ?? null,
+        input.attribution?.utmCampaign ?? null,
+        input.attribution?.utmContent ?? null,
+        input.attribution?.utmTerm ?? null
       ]
     );
 
     // Контакта может не быть: он заводится по опознавателю, а у заявки с сайта его роль
     // играет телефон. Без него класть в воронку нечего.
+    if (contactId !== null) {
+      await writeAttribution(this.session, contactId, input.attribution);
+    }
     if (input.enrollment && contactId !== null) {
       await this.enroll(contactId, input.enrollment);
     }
@@ -295,10 +306,12 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
     await this.session.query(
       `insert into public.site_registrations (
          id, event_id, participant_id, display_name, phone_e164,
-         consent_at, page, status
+         consent_at, page, status,
+         utm_source, utm_medium, utm_campaign, utm_content, utm_term
        ) values (
          $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text,
-         $6::timestamptz, $7::text, $8::text
+         $6::timestamptz, $7::text, $8::text,
+         $9::text, $10::text, $11::text, $12::text, $13::text
        )`,
       [
         input.registrationId,
@@ -308,7 +321,12 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
         input.phoneE164,
         input.consentAt,
         input.page,
-        input.status
+        input.status,
+        input.attribution?.utmSource ?? null,
+        input.attribution?.utmMedium ?? null,
+        input.attribution?.utmCampaign ?? null,
+        input.attribution?.utmContent ?? null,
+        input.attribution?.utmTerm ?? null
       ]
     );
   }
@@ -322,6 +340,49 @@ export function createSiteRegistrationPersistence(pool: SqlConnectionPool) {
     outboxWriter: new PostgresOutboxWriter(session),
     unitOfWork: new PostgresUnitOfWork(pool, session)
   } as const;
+}
+
+
+/**
+ * Метка первого касания у карточки человека.
+ *
+ * `do nothing` при повторе — это и есть «первое касание»: человек, пришедший второй раз по
+ * другой рекламе, остаётся за тем источником, который привёл его впервые. Переписывать
+ * значило бы отвечать на другой вопрос — «по какой ссылке он пришёл в последний раз», — а
+ * в отчёте по рекламе нужен первый.
+ *
+ * Строка заводится и без единой метки: «пришёл сам, без рекламы» — это ответ, и отличать
+ * его от «мы не знаем» полезно.
+ */
+async function writeAttribution(
+  session: TransactionSession,
+  contactId: string,
+  attribution: SiteRegistrationAttributionInput | null
+): Promise<void> {
+  if (attribution === null) {
+    return;
+  }
+  await session.query(
+    `insert into public.contact_attributions (
+       contact_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+       landing_page, referrer_host, first_seen_at
+     ) values (
+       $1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text,
+       $7::text, $8::text, $9::timestamptz
+     )
+     on conflict (contact_id) do nothing`,
+    [
+      contactId,
+      attribution.utmSource,
+      attribution.utmMedium,
+      attribution.utmCampaign,
+      attribution.utmContent,
+      attribution.utmTerm,
+      attribution.landingPage,
+      attribution.referrerHost,
+      attribution.firstSeenAt
+    ]
+  );
 }
 
 /** Примечание участника: откуда он взялся. Видно прямо в списке, без похода в заявки. */

@@ -11,6 +11,26 @@ export interface SiteRegistrationRequest {
   readonly consent: boolean;
   /** Страница, с которой пришла заявка. Нужна, когда форм станет больше одной. */
   readonly page?: string;
+  /**
+   * Метки первого касания, которые лендинг запомнил при заходе по рекламе.
+   *
+   * Их приносит браузер, а не наш сервер, поэтому доверия к ним ровно столько же, сколько
+   * к имени и телефону из той же формы: длину режем, ничего не выполняем, в отчёте
+   * показываем как есть. Пусто — человек пришёл без рекламы, и это тоже ответ.
+   */
+  readonly attribution?: SiteRegistrationAttribution;
+}
+
+export interface SiteRegistrationAttribution {
+  readonly utmSource?: string;
+  readonly utmMedium?: string;
+  readonly utmCampaign?: string;
+  readonly utmContent?: string;
+  readonly utmTerm?: string;
+  readonly landingPage?: string;
+  readonly referrerHost?: string;
+  /** Когда человек впервые попал на лендинг, по часам его браузера. */
+  readonly firstSeenAt?: string;
 }
 
 export type SiteRegistrationStatus =

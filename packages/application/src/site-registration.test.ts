@@ -19,6 +19,52 @@ const EVENT = {
 };
 
 describe("RegisterFromSiteService", () => {
+  it("уносит метку рекламы в заявку и в карточку", async () => {
+    // Вся реклама ведёт на лендинг, и метка существует только там. Не донеся её сюда,
+    // отчёт по источникам не появится вообще: задним числом её взять неоткуда.
+    const state = repositoryState();
+    const service = createService(state.repository, []);
+
+    await service.execute({
+      name: "Мария",
+      phone: "8 999 123-45-67",
+      consent: true,
+      page: "sreda",
+      attribution: {
+        utmSource: " yandex ",
+        utmMedium: "cpc",
+        utmCampaign: "picnic-poisk",
+        firstSeenAt: "2026-08-18T09:00:00.000Z"
+      },
+      now: NOW
+    });
+
+    const created = state.created[0];
+    assert.equal(created?.attribution?.utmSource, "yandex");
+    assert.equal(created?.attribution?.utmCampaign, "picnic-poisk");
+    assert.equal(
+      created?.attribution?.firstSeenAt?.toISOString(),
+      "2026-08-18T09:00:00.000Z"
+    );
+    // Незаполненные метки — это не пустые строки: пустой источник в отчёте выглядел бы
+    // отдельным каналом с именем «никак».
+    assert.equal(created?.attribution?.utmContent, null);
+  });
+
+  it("без метки заявка уходит как раньше", async () => {
+    const state = repositoryState();
+    const service = createService(state.repository, []);
+
+    await service.execute({
+      name: "Мария",
+      phone: "8 999 123-45-67",
+      consent: true,
+      now: NOW
+    });
+
+    assert.equal(state.created[0]?.attribution, null);
+  });
+
   it("заводит участника ближайшей встречи и одно событие для организаторов", async () => {
     const state = repositoryState();
     const appended: DomainEvent[] = [];

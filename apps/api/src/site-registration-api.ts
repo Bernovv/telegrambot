@@ -31,11 +31,30 @@ export interface SiteRegistrationHandler {
   }): Promise<SiteRegistrationResponse>;
 }
 
+/**
+ * Метки первого касания с лендинга.
+ *
+ * Всё необязательно и всё режется по длине: это данные из браузера, и относимся мы к ним
+ * так же, как к имени и телефону из той же формы. Незнакомые поля отбрасываются — схема
+ * без `passthrough`.
+ */
+const attributionSchema = z.object({
+  utmSource: z.string().max(100).optional(),
+  utmMedium: z.string().max(100).optional(),
+  utmCampaign: z.string().max(200).optional(),
+  utmContent: z.string().max(200).optional(),
+  utmTerm: z.string().max(200).optional(),
+  landingPage: z.string().max(200).optional(),
+  referrerHost: z.string().max(200).optional(),
+  firstSeenAt: z.string().datetime({ offset: true }).optional()
+});
+
 const requestSchema = z.object({
   name: z.string().min(1).max(300),
   phone: z.string().min(1).max(32),
   consent: z.boolean(),
-  page: z.string().max(200).optional()
+  page: z.string().max(200).optional(),
+  attribution: attributionSchema.optional()
 });
 
 /**
@@ -139,6 +158,9 @@ export class SiteRegistrationService {
         phone: parsed.data.phone,
         consent: parsed.data.consent,
         ...(parsed.data.page === undefined ? {} : { page: parsed.data.page }),
+        ...(parsed.data.attribution === undefined
+          ? {}
+          : { attribution: parsed.data.attribution }),
         now
       });
       this.logger.info("site registration accepted", { status: result.status });

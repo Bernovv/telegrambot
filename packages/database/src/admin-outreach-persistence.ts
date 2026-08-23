@@ -35,6 +35,7 @@ import type {
   OutreachPersonCard,
   OutreachChannelLookup,
   OutreachChannelLookupState,
+  OutreachContactAttribution,
   RequestChannelLookupResult,
   OutreachParticipationAnswer,
   OutreachPersonConflict,
@@ -1952,6 +1953,15 @@ implements AdminOutreachRepository {
       // Искали ли человека в Telegram по телефону. Отдельным запросом, а не join к
       // карточке: строки у большинства людей нет вовсе, а join ради пустоты платится на
       // каждом открытии карточки.
+      // Откуда человек пришёл. Отдельным запросом, а не полем карточки: метка — это факт
+      // о приходе, и она не меняется вместе с именем и телефоном.
+      const attribution = await connection.query<AttributionRow>(
+        `select utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+                landing_page, referrer_host, first_seen_at, recorded_at
+           from public.contact_attributions
+          where contact_id = $1::uuid`,
+        [contactId]
+      );
       const channelLookups = await connection.query<ChannelLookupRow>(
         CHANNEL_LOOKUP_SELECT,
         [contactId]
@@ -2065,7 +2075,8 @@ implements AdminOutreachRepository {
           consentAt: toIso(row.consent_at),
           createdAt: toIso(row.created_at)
         })),
-        channelLookups: channelLookups.rows.map(mapChannelLookup)
+        channelLookups: channelLookups.rows.map(mapChannelLookup),
+        attribution: mapAttribution(attribution.rows[0])
       };
     });
   }
@@ -4286,6 +4297,38 @@ async function enrolWonParticipant(
       input.now
     ]
   );
+}
+
+interface AttributionRow {
+  readonly utm_source: string | null;
+  readonly utm_medium: string | null;
+  readonly utm_campaign: string | null;
+  readonly utm_content: string | null;
+  readonly utm_term: string | null;
+  readonly landing_page: string | null;
+  readonly referrer_host: string | null;
+  readonly first_seen_at: Date | string | null;
+  readonly recorded_at: Date | string;
+}
+
+function mapAttribution(
+  row: AttributionRow | undefined
+): OutreachContactAttribution | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    utmSource: row.utm_source,
+    utmMedium: row.utm_medium,
+    utmCampaign: row.utm_campaign,
+    utmContent: row.utm_content,
+    utmTerm: row.utm_term,
+    landingPage: row.landing_page,
+    referrerHost: row.referrer_host,
+    firstSeenAt: nullableIso(row.first_seen_at),
+    recordedAt: toIso(row.recorded_at)
+  };
 }
 
 function mapPerson(row: PersonRow): OutreachPerson {

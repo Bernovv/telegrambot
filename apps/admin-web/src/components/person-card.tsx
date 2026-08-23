@@ -42,6 +42,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock,
+  Compass,
   ExternalLink,
   Mail,
   MessageCircle,
@@ -851,6 +852,47 @@ function PersonChannelLookups({
   );
 }
 
+/**
+ * Откуда человек пришёл.
+ *
+ * Метка первого касания: с какой рекламы он попал на лендинг, когда это было и с какой
+ * страницы оставил заявку. Показывается только когда метка есть — у всех, кто появился в
+ * базе до августа 2026, её нет и быть не может, и строка «не знаем» у шести тысяч человек
+ * была бы просто шумом.
+ *
+ * Пустые метки при существующей строке означают «пришёл сам, без рекламы» — это ответ, а
+ * не пробел, и он написан словами.
+ */
+function PersonAttribution({ person }: { readonly person: OutreachPersonCard }) {
+  const mark = person.attribution;
+  if (mark === null) {
+    return null;
+  }
+
+  const parts = [mark.utmSource, mark.utmMedium, mark.utmCampaign]
+    .filter((value): value is string => value !== null && value !== "");
+
+  return (
+    <div className="person-contact">
+      <Compass size={16} />
+      <dt>Откуда пришёл</dt>
+      <dd>
+        {parts.length === 0 ? (
+          <span>сам, без рекламы</span>
+        ) : (
+          <span>{parts.join(" · ")}</span>
+        )}
+        {mark.firstSeenAt ? (
+          <span className="muted"> · впервые {formatCompactDate(mark.firstSeenAt)}</span>
+        ) : null}
+        {mark.landingPage ? (
+          <span className="muted"> · {mark.landingPage}</span>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
 export function PersonContactsCard({
   person,
   campaign,
@@ -900,6 +942,7 @@ export function PersonContactsCard({
           </dd>
         </div>
         <PersonChannelLookups person={person} onReload={onReload} />
+        <PersonAttribution person={person} />
         {person.maxIdentifier || showAll ? (
           <div className="person-contact">
             <MessageSquare size={16} />
