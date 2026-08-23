@@ -479,64 +479,74 @@ export function loadConversationRepliesConfig(
 }
 
 /**
- * Поиск людей в Telegram по номеру телефона.
+ * Проверка «есть ли человек в мессенджере» — по номеру телефона.
  *
- * Настройки те же по смыслу, что у отправки ответов, а значения — заметно осторожнее, и
- * это главное здесь. Ответы уходят людям, которые нам написали; поиск спрашивает про тех,
- * кто про нас не знает, а частые вопросы про чужие номера Telegram считает разведкой.
+ * Настройки те же по смыслу, что у отправки ответов, а значения заметно осторожнее, и это
+ * главное здесь. Ответы уходят людям, которые нам написали; проверка спрашивает про тех,
+ * кто про нас не знает, а частые вопросы про чужие номера мессенджеры считают разведкой.
  * Расплачивается за это аккаунт компании — тот самый, через который идёт вся переписка.
  *
- * Отсюда пачка по одному запросу за проход и пауза в пять секунд: даже когда менеджеры
- * нажали кнопку разом на десятке карточек, Telegram увидит редкие одиночные вопросы.
+ * Отсюда пачка в пару запросов за проход, пауза между ними и **потолок на сутки**. Потолок
+ * появился вместе с автоматической проверкой каждого нового человека (решение владельца от
+ * 23.08.2026): пока строку в очередь ставил менеджер руками, длину очереди задавал он сам,
+ * а теперь её задаёт загрузка CSV на полторы тысячи строк.
+ *
+ * Значения общие для трёх каналов и правятся переменными `CHANNEL_LOOKUP_*`. Отдельный
+ * канал можно настроить своей переменной с его именем — `TELEGRAM_LOOKUP_*`, `MAX_LOOKUP_*`,
+ * `WHATSAPP_LOOKUP_*`; она старше общей.
  */
-export interface TelegramPhoneLookupConfig {
+export interface ChannelLookupConfig {
   readonly batchSize: number;
   readonly pollIntervalMs: number;
   readonly pauseBetweenMs: number;
   readonly maxAttempts: number;
   readonly retryDelayMs: number;
+  readonly dailyLimit: number;
 }
 
-export function loadTelegramPhoneLookupConfig(
-  env: NodeJS.ProcessEnv
-): TelegramPhoneLookupConfig {
+export type LookupChannel = "telegram" | "max" | "whatsapp";
+
+export function loadChannelLookupConfig(
+  env: NodeJS.ProcessEnv,
+  channel: LookupChannel
+): ChannelLookupConfig {
+  const prefix = channel.toUpperCase();
+  // Прежнее имя переменной для Telegram: она могла быть выставлена на сервере, и молча
+  // перестать её слушать значит тихо сменить настройку осторожности.
+  const legacy = channel === "telegram" ? "TELEGRAM_PHONE_LOOKUP" : null;
+
+  function read(
+    name: string,
+    fallback: string,
+    min: number,
+    max: number
+  ): number {
+    const own = env[`${prefix}_LOOKUP_${name}`];
+    const shared = env[`CHANNEL_LOOKUP_${name}`];
+    const before = legacy === null ? undefined : env[`${legacy}_${name}`];
+    const value = own ?? before ?? shared ?? fallback;
+
+    return parseBoundedInteger(value, `${prefix}_LOOKUP_${name}`, min, max);
+  }
+
   return {
-    batchSize: parseBoundedInteger(
-      env.TELEGRAM_PHONE_LOOKUP_BATCH_SIZE ?? "3",
-      "TELEGRAM_PHONE_LOOKUP_BATCH_SIZE",
-      1,
-      20
-    ),
+    batchSize: read("BATCH_SIZE", "3", 1, 20),
     // Менеджер ждёт ответа у открытой карточки, поэтому проход частый. Стоит он одного
-    // запроса к своей базе, а не к Telegram: по пустой очереди наружу никто не ходит.
-    pollIntervalMs: parseBoundedInteger(
-      env.TELEGRAM_PHONE_LOOKUP_POLL_INTERVAL_MS ?? "10000",
-      "TELEGRAM_PHONE_LOOKUP_POLL_INTERVAL_MS",
-      5_000,
-      600_000
-    ),
-    pauseBetweenMs: parseBoundedInteger(
-      env.TELEGRAM_PHONE_LOOKUP_PAUSE_MS ?? "5000",
-      "TELEGRAM_PHONE_LOOKUP_PAUSE_MS",
-      0,
-      600_000
-    ),
+    // запроса к своей базе, а не к мессенджеру: по пустой очереди наружу никто не ходит.
+    pollIntervalMs: read("POLL_INTERVAL_MS", "10000", 5_000, 600_000),
+    // Пятнадцать секунд вместо прежних пяти: очередь теперь наполняется сама, и растянуть
+    // её во времени важнее, чем разобрать быстро.
+    pauseBetweenMs: read("PAUSE_MS", "15000", 0, 600_000),
     // Три попытки: повторяем только сетевые отказы, а «нет такого номера» — это ответ, а
     // не сбой, и повторять его незачем.
-    maxAttempts: parseBoundedInteger(
-      env.TELEGRAM_PHONE_LOOKUP_MAX_ATTEMPTS ?? "3",
-      "TELEGRAM_PHONE_LOOKUP_MAX_ATTEMPTS",
-      1,
-      20
-    ),
-    // Пять минут. Отказ здесь почти всегда означает лимит, а лимиты Telegram снимает не
-    // секундами; названный им самим срок всё равно старше этого числа.
-    retryDelayMs: parseBoundedInteger(
-      env.TELEGRAM_PHONE_LOOKUP_RETRY_DELAY_MS ?? "300000",
-      "TELEGRAM_PHONE_LOOKUP_RETRY_DELAY_MS",
-      1_000,
-      3_600_000
-    )
+    maxAttempts: read("MAX_ATTEMPTS", "3", 1, 20),
+    // Пять минут. Отказ здесь почти всегда означает лимит, а лимиты снимаются не
+    // секундами; названный самим мессенджером срок всё равно старше этого числа.
+    retryDelayMs: read("RETRY_DELAY_MS", "300000", 1_000, 3_600_000),
+    // Полтораста проверок в сутки на канал. Число взято с запасом вниз: столько новых
+    // людей в базе за день не появляется даже в горячую неделю, а разовая загрузка списка
+    // растянется на недели — и это правильный исход, а не помеха.
+    dailyLimit: read("DAILY_LIMIT", "150", 1, 5_000)
   };
 }
 

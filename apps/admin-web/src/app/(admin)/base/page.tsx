@@ -12,8 +12,10 @@ import {
 import { formatCompactDate } from "@/lib/format";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
 import {
+  type OutreachChannelLookupState,
   type OutreachPerson,
-  type OutreachPersonFilter
+  type OutreachPersonFilter,
+  type OutreachPersonReach
 } from "@ticket-platform/contracts/admin-outreach";
 import { ArrowRight, Bot, RefreshCw, Search, Upload } from "lucide-react";
 import Link from "next/link";
@@ -28,6 +30,7 @@ const PAGE_SIZE = 50;
  */
 const FILTERS: readonly { readonly value: OutreachPersonFilter; readonly label: string }[] = [
   { value: "all", label: "Все" },
+  { value: "reachable", label: "Кому можно написать" },
   { value: "wrote_in_messenger", label: "Написали нам" },
   { value: "without_phone", label: "Без телефона" },
   { value: "without_name", label: "Без имени" },
@@ -35,6 +38,43 @@ const FILTERS: readonly { readonly value: OutreachPersonFilter; readonly label: 
   { value: "in_bot", label: "В боте" },
   { value: "archived", label: "Архив" }
 ];
+
+/**
+ * Куда до человека дотянемся.
+ *
+ * Три значка вместо трёх слов: колонка узкая, а вопрос к ней быстрый — «этому написать
+ * можно?». Серый значит «не проверяли», и это не то же самое, что «нет»: в первом случае
+ * мы не спрашивали, во втором мессенджер ответил.
+ */
+function ReachCell({ reach }: { readonly reach: OutreachPersonReach }) {
+  const states: readonly (readonly [string, OutreachChannelLookupState | null])[] = [
+    ["TG", reach.telegram],
+    ["MAX", reach.max],
+    ["WA", reach.whatsapp]
+  ];
+
+  return (
+    <span className="reach-cell">
+      {states.map(([label, state]) => (
+        <span
+          key={label}
+          className={`reach-dot reach-dot-${state ?? "unknown"}`}
+          title={REACH_HINTS[state ?? "unknown"]}
+        >
+          {label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const REACH_HINTS: Record<string, string> = {
+  found: "Есть — можно написать первым",
+  notFound: "Нет: либо аккаунта нет, либо человек закрыт настройками приватности",
+  queued: "Спрашиваем",
+  failed: "Не дозвонились до мессенджера — проверим ещё раз",
+  unknown: "Ещё не проверяли"
+};
 
 export default function OutreachBasePage() {
   const [items, setItems] = useState<readonly OutreachPerson[]>([]);
@@ -281,6 +321,9 @@ export default function OutreachBasePage() {
                 <tr>
                   <th>Человек</th>
                   <th>Телефон</th>
+                  {/* Куда дотянемся: ответ самих мессенджеров на наш номер, а не то, что
+                      кто-то когда-то переписал в карточку из старой выгрузки. */}
+                  <th>Каналы</th>
                   <th>Мессенджеры</th>
                   <th>Почта</th>
                   <th>Кампании</th>
@@ -308,6 +351,9 @@ export default function OutreachBasePage() {
                     </td>
                     <td>
                       {person.phone ?? <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      <ReachCell reach={person.reach} />
                     </td>
                     <td>
                       <div className="stacked-cell">

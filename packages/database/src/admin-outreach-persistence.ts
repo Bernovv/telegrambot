@@ -33,8 +33,9 @@ import type {
   OutreachManager,
   OutreachPerson,
   OutreachPersonCard,
-  OutreachPersonTelegramLookup,
-  RequestTelegramLookupResult,
+  OutreachChannelLookup,
+  OutreachChannelLookupState,
+  RequestChannelLookupResult,
   OutreachParticipationAnswer,
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
@@ -190,6 +191,9 @@ interface PersonRow {
   readonly created_at: Date | string;
   readonly campaign_count: string | null;
   readonly last_activity_at: Date | string | null;
+  readonly telegram_state: string | null;
+  readonly max_state: string | null;
+  readonly whatsapp_state: string | null;
   readonly total_count: string;
 }
 
@@ -219,10 +223,12 @@ interface PersonCardRow {
   readonly updated_at: Date | string;
 }
 
-interface TelegramLookupRow {
+interface ChannelLookupRow {
   readonly status: "queued" | "found" | "not_found" | "failed";
   readonly phone_e164: string;
-  readonly telegram_user_id: string | null;
+  readonly channel: OutreachChannelLookup["channel"];
+  readonly external_user_id: string | null;
+  readonly username: string | null;
   readonly is_stale: boolean;
   readonly conversation_id: string | null;
   readonly requested_at: Date | string;
@@ -237,36 +243,34 @@ interface TelegramLookupRow {
  * раньше — человек написал аккаунту сам, а карточку тогда не опознали. Ссылка в этом случае
  * указывала бы на второй, пустой диалог, а переписка лежала бы в первом.
  */
-const TELEGRAM_LOOKUP_SELECT = `select
+const CHANNEL_LOOKUP_SELECT = `select
+     lookup.channel,
      lookup.status,
      lookup.phone_e164,
-     lookup.telegram_user_id,
+     lookup.external_user_id,
+     lookup.username,
      lookup.requested_at,
      lookup.checked_at,
      lookup.failure_reason,
      (lookup.phone_e164 is distinct from contact.phone_e164) as is_stale,
      conversation.id as conversation_id
-   from public.telegram_phone_lookups lookup
+   from public.contact_channel_lookups lookup
    join public.outreach_contacts contact on contact.id = lookup.contact_id
    left join public.conversations conversation
-     on conversation.channel = 'telegram'
+     on conversation.channel = lookup.channel
     and conversation.transport = 'account'
-    and conversation.external_chat_id = lookup.telegram_user_id
+    and conversation.external_chat_id = lookup.external_user_id
   where lookup.contact_id = $1::uuid
-  limit 1`;
+  order by lookup.channel`;
 
-function mapTelegramLookup(
-  row: TelegramLookupRow | undefined
-): OutreachPersonTelegramLookup | null {
-  if (!row) {
-    return null;
-  }
-
+function mapChannelLookup(row: ChannelLookupRow): OutreachChannelLookup {
   return {
+    channel: row.channel,
     state: row.status === "not_found" ? "notFound" : row.status,
     phone: row.phone_e164,
     isStale: row.is_stale,
     conversationId: row.conversation_id,
+    username: row.username,
     requestedAt: toIso(row.requested_at),
     checkedAt: nullableIso(row.checked_at),
     failureReason: row.failure_reason
@@ -1491,6 +1495,9 @@ implements AdminOutreachRepository {
            contact.created_at,
            membership.campaign_count,
            greatest(membership.last_activity_at, wrote.last_inbound_at) as last_activity_at,
+           reach.telegram_state,
+           reach.max_state,
+           reach.whatsapp_state,
            count(*) over()::text as total_count
          from public.outreach_contacts contact
          left join lateral (
@@ -1508,6 +1515,17 @@ implements AdminOutreachRepository {
            from public.conversations conversation
            where conversation.contact_id = contact.id
          ) wrote on true
+         -- Куда до человека дотянемся. Три состояния вытаскиваются одним проходом по
+         -- строкам очереди: три отдельных подзапроса стоили бы трёх проходов на строку
+         -- списка, а список рисуют по пятьдесят строк за раз.
+         left join lateral (
+           select
+             max(state.status) filter (where state.channel = 'telegram') as telegram_state,
+             max(state.status) filter (where state.channel = 'max') as max_state,
+             max(state.status) filter (where state.channel = 'whatsapp') as whatsapp_state
+           from public.contact_channel_lookups state
+           where state.contact_id = contact.id
+         ) reach on true
          where
            -- Архивные видно только в своём фильтре: иначе убранный контакт продолжает
            -- мозолить глаза в общем списке и убирать его было незачем.
@@ -1519,6 +1537,12 @@ implements AdminOutreachRepository {
            and ($2::text <> 'without_name' or contact.display_name is null)
            and ($2::text <> 'without_campaign' or coalesce(membership.campaign_count::bigint, 0) = 0)
            and ($2::text <> 'in_bot' or contact.linked_user_id is not null)
+           -- «Кому можно написать»: хоть один мессенджер ответил «есть такой». Это не то
+           -- же самое, что «есть ник в карточке»: ник мог быть переписан руками из
+           -- старой выгрузки и не значить ничего.
+           and ($2::text <> 'reachable' or coalesce(reach.telegram_state, '') = 'found'
+                or coalesce(reach.max_state, '') = 'found'
+                or coalesce(reach.whatsapp_state, '') = 'found')
            and ($1::text is null or (
              coalesce(contact.display_name, '') ilike $1 escape '\\'
              or coalesce(contact.phone_e164, '') ilike $1 escape '\\'
@@ -1928,8 +1952,8 @@ implements AdminOutreachRepository {
       // Искали ли человека в Telegram по телефону. Отдельным запросом, а не join к
       // карточке: строки у большинства людей нет вовсе, а join ради пустоты платится на
       // каждом открытии карточки.
-      const telegramLookup = await connection.query<TelegramLookupRow>(
-        TELEGRAM_LOOKUP_SELECT,
+      const channelLookups = await connection.query<ChannelLookupRow>(
+        CHANNEL_LOOKUP_SELECT,
         [contactId]
       );
 
@@ -2041,7 +2065,7 @@ implements AdminOutreachRepository {
           consentAt: toIso(row.consent_at),
           createdAt: toIso(row.created_at)
         })),
-        telegramLookup: mapTelegramLookup(telegramLookup.rows[0])
+        channelLookups: channelLookups.rows.map(mapChannelLookup)
       };
     });
   }
@@ -2056,12 +2080,11 @@ implements AdminOutreachRepository {
    * протухает, а лишний вопрос про чужой номер аккаунту дорог. Исключение — телефон в
    * карточке с тех пор поправили: тогда прежний ответ относится к другому человеку.
    */
-  requestTelegramLookup(input: {
+  requestChannelLookups(input: {
     readonly contactId: string;
-    readonly lookupId: string;
     readonly actorAdminId: string;
     readonly now: Date;
-  }): Promise<RequestTelegramLookupResult | null> {
+  }): Promise<RequestChannelLookupResult | null> {
     return this.write(async (connection) => {
       const contact = await connection.query<{ readonly phone_e164: string | null }>(
         `select phone_e164 from public.outreach_contacts where id = $1::uuid`,
@@ -2072,45 +2095,58 @@ implements AdminOutreachRepository {
         return null;
       }
 
-      const existing = await connection.query<TelegramLookupRow>(
-        TELEGRAM_LOOKUP_SELECT,
+      const before = await connection.query<ChannelLookupRow>(
+        CHANNEL_LOOKUP_SELECT,
         [input.contactId]
       );
-      const previous = mapTelegramLookup(existing.rows[0]);
+      const previous = before.rows.map(mapChannelLookup);
 
       if (phone === null) {
-        return { status: "noPhone", lookup: previous } as const;
-      }
-      if (previous !== null && previous.state === "found" && !previous.isStale) {
-        return { status: "alreadyFound", lookup: previous } as const;
+        return { status: "noPhone", lookups: previous } as const;
       }
 
-      await connection.query(
-        `insert into public.telegram_phone_lookups (
-           id, contact_id, phone_e164, requested_by_admin_id, requested_at,
+      // Заново спрашиваем не всё. Найденного искать второй раз незачем — идентификатор не
+      // протухает, а лишний вопрос про чужой номер аккаунту дорог. Исключение — телефон в
+      // карточке с тех пор поправили: тогда прежний ответ относится к другому человеку.
+      // Условие живёт в `where` самой записи, а не в коде: так три канала проверяются
+      // одним запросом, и «что считается свежим» описано в одном месте.
+      const requeued = await connection.query<{ readonly channel: string }>(
+        `insert into public.contact_channel_lookups (
+           contact_id, channel, phone_e164, requested_by_admin_id, requested_at,
            created_at, updated_at
-         ) values ($1::uuid, $2::uuid, $3::text, $4::uuid, $5::timestamptz,
-                   $5::timestamptz, $5::timestamptz)
-         on conflict (contact_id) do update
+         )
+         select $1::uuid, channel, $2::text, $3::uuid, $4::timestamptz,
+                $4::timestamptz, $4::timestamptz
+           from unnest(array['telegram', 'max', 'whatsapp']) as channel
+         on conflict (contact_id, channel) do update
             set phone_e164 = excluded.phone_e164,
                 status = 'queued',
-                telegram_user_id = null,
+                external_user_id = null,
+                username = null,
                 attempts = 0,
                 next_attempt_at = null,
                 failure_reason = null,
                 checked_at = null,
                 requested_by_admin_id = excluded.requested_by_admin_id,
                 requested_at = excluded.requested_at,
-                updated_at = excluded.updated_at`,
-        [input.lookupId, input.contactId, phone, input.actorAdminId, input.now]
+                updated_at = excluded.updated_at
+          where public.contact_channel_lookups.status <> 'found'
+             or public.contact_channel_lookups.phone_e164
+                is distinct from excluded.phone_e164
+        returning channel`,
+        [input.contactId, phone, input.actorAdminId, input.now]
       );
 
-      const saved = await connection.query<TelegramLookupRow>(
-        TELEGRAM_LOOKUP_SELECT,
+      const saved = await connection.query<ChannelLookupRow>(
+        CHANNEL_LOOKUP_SELECT,
         [input.contactId]
       );
+      const lookups = saved.rows.map(mapChannelLookup);
 
-      return { status: "queued", lookup: mapTelegramLookup(saved.rows[0]) } as const;
+      return {
+        status: requeued.rows.length === 0 ? "alreadyChecked" : "queued",
+        lookups
+      } as const;
     });
   }
 
@@ -4189,8 +4225,27 @@ function mapPerson(row: PersonRow): OutreachPerson {
     campaignCount: Number(row.campaign_count ?? 0),
     lastActivityAt: nullableIso(row.last_activity_at),
     archivedAt: nullableIso(row.archived_at),
-    createdAt: toIso(row.created_at)
+    createdAt: toIso(row.created_at),
+    reach: {
+      telegram: lookupState(row.telegram_state),
+      max: lookupState(row.max_state),
+      whatsapp: lookupState(row.whatsapp_state)
+    }
   };
+}
+
+/**
+ * Состояние проверки для списка.
+ *
+ * Пусто значит «не спрашивали»: строки в очереди нет вовсе. Это не то же самое, что
+ * `notFound`, где мы спросили и получили ответ, — и в списке это два разных значка.
+ */
+function lookupState(value: string | null): OutreachChannelLookupState | null {
+  if (value === null) {
+    return null;
+  }
+
+  return value === "not_found" ? "notFound" : value as OutreachChannelLookupState;
 }
 
 function mapActivity(row: ActivityRow): OutreachActivity {

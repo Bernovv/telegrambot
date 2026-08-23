@@ -309,6 +309,8 @@ extends OutreachCampaignContactSummary {
 export const OUTREACH_PERSON_FILTERS = [
   "all",
   "wrote_in_messenger",
+  /** Хотя бы один мессенджер ответил «есть такой»: этому человеку можно написать первым. */
+  "reachable",
   "without_phone",
   "without_name",
   "without_campaign",
@@ -339,6 +341,8 @@ export interface OutreachPerson {
   readonly lastActivityAt: string | null;
   readonly archivedAt: string | null;
   readonly createdAt: string;
+  /** Куда до человека дотянемся. Считается по ответам мессенджеров, а не по полям карточки. */
+  readonly reach: OutreachPersonReach;
 }
 
 export interface OutreachPersonPage {
@@ -522,10 +526,20 @@ export interface OutreachPersonBotProfile {
  * по ответам можно было бы перебирать номера и составлять список тех, у кого аккаунт есть.
  * Панель поэтому пишет обе причины, а не выбирает одну наугад.
  */
-export type OutreachTelegramLookupState = "queued" | "found" | "notFound" | "failed";
+export type OutreachChannelLookupState = "queued" | "found" | "notFound" | "failed";
 
-export interface OutreachPersonTelegramLookup {
-  readonly state: OutreachTelegramLookupState;
+/** Мессенджеры, у которых спрашиваем про номер. Тот же перечень, что у переписки. */
+export type OutreachLookupChannel = "telegram" | "max" | "whatsapp";
+
+export const OUTREACH_LOOKUP_CHANNELS: readonly OutreachLookupChannel[] = [
+  "telegram",
+  "max",
+  "whatsapp"
+];
+
+export interface OutreachChannelLookup {
+  readonly channel: OutreachLookupChannel;
+  readonly state: OutreachChannelLookupState;
   /** Номер, по которому спрашивали. */
   readonly phone: string;
   /** Телефон карточки с тех пор поправили: ответ относится к чужому номеру. */
@@ -535,18 +549,37 @@ export interface OutreachPersonTelegramLookup {
    * она и есть то, ради чего искали: место, куда менеджер пишет.
    */
   readonly conversationId: string | null;
+  /** Ник, если канал его отдал. У WhatsApp ников нет — там адрес это телефон. */
+  readonly username: string | null;
   readonly requestedAt: string;
   readonly checkedAt: string | null;
-  /** Чем именно ответил Telegram, когда до него не дошло. Видит менеджер. */
+  /** Чем именно ответил мессенджер, когда до него не дошло. Видит менеджер. */
   readonly failureReason: string | null;
 }
 
-/** Чем кончилась просьба поискать. `alreadyFound` — искать заново незачем, всё уже есть. */
-export type RequestTelegramLookupStatus = "queued" | "alreadyFound" | "noPhone";
+/**
+ * Чем кончилась просьба проверить.
+ *
+ * `alreadyChecked` — свежие ответы по всем трём каналам уже есть, тратить на них запросы
+ * живых аккаунтов незачем.
+ */
+export type RequestChannelLookupStatus = "queued" | "alreadyChecked" | "noPhone";
 
-export interface RequestTelegramLookupResult {
-  readonly status: RequestTelegramLookupStatus;
-  readonly lookup: OutreachPersonTelegramLookup | null;
+export interface RequestChannelLookupResult {
+  readonly status: RequestChannelLookupStatus;
+  readonly lookups: readonly OutreachChannelLookup[];
+}
+
+/**
+ * Куда до человека дотянемся — коротко, для списка базы.
+ *
+ * Пусто у канала значит «не проверяли»: строки в очереди нет вовсе. Это не то же самое,
+ * что `notFound`, и путать их нельзя — во втором случае мы спросили и получили ответ.
+ */
+export interface OutreachPersonReach {
+  readonly telegram: OutreachChannelLookupState | null;
+  readonly max: OutreachChannelLookupState | null;
+  readonly whatsapp: OutreachChannelLookupState | null;
 }
 
 export interface OutreachPersonCard {
@@ -601,7 +634,7 @@ export interface OutreachPersonCard {
   /**
    * Искали ли этого человека в Telegram по телефону и чем это кончилось. Пусто — не искали.
    */
-  readonly telegramLookup: OutreachPersonTelegramLookup | null;
+  readonly channelLookups: readonly OutreachChannelLookup[];
 }
 
 /**

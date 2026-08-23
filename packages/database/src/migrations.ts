@@ -324,5 +324,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260825090000_conversation_reads",
     description: "Track how far each manager has read a conversation so the inbox can show unread counts",
     destructive: false
+  },
+  {
+    id: "20260826090000_contact_channel_lookups",
+    description: "Ask Telegram, MAX and WhatsApp whether a contact is reachable, one queue for all three",
+    destructive: false
   }
 ];

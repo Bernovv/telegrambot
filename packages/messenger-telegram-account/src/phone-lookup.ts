@@ -1,4 +1,8 @@
 /// <reference types="@prebuilt-tdlib/types" />
+import type {
+  ChannelLookupOutcome,
+  ChannelLookupPort
+} from "@ticket-platform/application";
 import type { Client } from "tdl";
 import { TDLibError } from "tdl";
 
@@ -17,22 +21,17 @@ import { TDLibError } from "tdl";
  * упёрлись в лимит. Про человека это не говорит ничего, и повторить имеет смысл.
  */
 
-export type TelegramPhoneLookupOutcome =
-  | { readonly kind: "found"; readonly telegramUserId: string }
-  | { readonly kind: "not_found" }
-  | {
-    readonly kind: "failed";
-    readonly reason: string;
-    /**
-     * Через сколько Telegram сам разрешил повторить. Приходит при лимите и означает
-     * буквально «раньше не спрашивай»: попытка раньше срока продлевает запрет.
-     */
-    readonly retryAfterMs: number | null;
-  };
+/**
+ * Исход общий на три канала — он же `ChannelLookupOutcome` в прикладном слое. Свой тип
+ * здесь не заводится намеренно: пакет мессенджера и так зависит от прикладного, а два
+ * одинаковых типа расходятся на первом же новом поле.
+ *
+ * `retryAfterMs` — через сколько Telegram сам разрешил повторить. Приходит при лимите и
+ * означает буквально «раньше не спрашивай»: попытка раньше срока продлевает запрет.
+ */
+export type TelegramPhoneLookupOutcome = ChannelLookupOutcome;
 
-export interface TelegramPhoneLookup {
-  find(phoneE164: string): Promise<TelegramPhoneLookupOutcome>;
-}
+export type TelegramPhoneLookup = ChannelLookupPort;
 
 /** «Too Many Requests: retry after 42» — единственное место, где Telegram называет срок. */
 const FLOOD_WAIT = /retry after (\d+)/i;
@@ -49,7 +48,17 @@ export function createTdlibPhoneLookup(client: Pick<Client, "invoke">): Telegram
           only_local: false
         });
 
-        return { kind: "found", telegramUserId: String(user.id) };
+        const username = user.usernames?.editable_username
+          ?? user.usernames?.active_usernames?.[0]
+          ?? null;
+
+        return {
+          kind: "found",
+          externalUserId: String(user.id),
+          // В Telegram писать можно по тому же идентификатору, по которому нашли.
+          externalChatId: String(user.id),
+          username
+        };
       } catch (error) {
         if (!(error instanceof TDLibError)) {
           throw error;

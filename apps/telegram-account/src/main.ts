@@ -24,7 +24,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   ConversationLog,
   DownloadConversationAttachmentsBatchService,
-  ResolveTelegramPhoneLookupsBatchService,
+  ResolveChannelLookupsBatchService,
   SendConversationRepliesBatchService
 } from "@ticket-platform/application";
 import type { IdGenerator } from "@ticket-platform/application";
@@ -32,14 +32,14 @@ import {
   loadAppConfig,
   loadConversationAttachmentsConfig,
   loadConversationRepliesConfig,
-  loadTelegramPhoneLookupConfig
+  loadChannelLookupConfig
 } from "@ticket-platform/config";
 import {
   createConversationPersistence,
   createAttachmentDownloadPersistence,
   createConversationReplyQueue,
   createNodePostgresPool,
-  createTelegramPhoneLookupQueue
+  createChannelLookupQueue
 } from "@ticket-platform/database";
 import {
   createTdlibAttachmentSource,
@@ -162,15 +162,17 @@ async function main(): Promise<void> {
    * разбирает и, найдя человека, заводит ему ветку переписки — ту, в которую менеджер и
    * напишет первым.
    */
-  const lookupOptions = loadTelegramPhoneLookupConfig(process.env);
-  const lookups = new ResolveTelegramPhoneLookupsBatchService(
-    createTelegramPhoneLookupQueue(pool).queue,
+  const lookupOptions = loadChannelLookupConfig(process.env, "telegram");
+  const lookups = new ResolveChannelLookupsBatchService(
+    "telegram",
+    createChannelLookupQueue(pool).queue,
     createTdlibPhoneLookup(client),
     ids,
     {
       maxAttempts: lookupOptions.maxAttempts,
       retryDelayMs: lookupOptions.retryDelayMs,
-      pauseBetweenMs: lookupOptions.pauseBetweenMs
+      pauseBetweenMs: lookupOptions.pauseBetweenMs,
+      dailyLimit: lookupOptions.dailyLimit
     }
   );
 
@@ -255,13 +257,16 @@ async function main(): Promise<void> {
           at: new Date(),
           batchSize: lookupOptions.batchSize
         });
-        if (resolved.claimed > 0) {
+        if (resolved.claimed > 0 || resolved.throttled) {
           logger.info("phone lookups resolved", {
             claimed: resolved.claimed,
             found: resolved.found,
             notFound: resolved.notFound,
             retried: resolved.retried,
-            failed: resolved.failed
+            failed: resolved.failed,
+            // Упёрлись в суточный потолок — это штатный исход, но знать о нём нужно:
+            // очередь стоит не потому, что сломалась.
+            throttled: resolved.throttled
           });
         }
       } catch (error) {

@@ -30,7 +30,7 @@ import type {
   RetryOutreachImportRowResult,
   OutreachManager,
   OutreachPersonCard,
-  RequestTelegramLookupResult,
+  RequestChannelLookupResult,
   OutreachPersonConflict,
   OutreachPersonUpdateResult,
   UpdateOutreachPersonRequest,
@@ -273,17 +273,16 @@ export interface AdminOutreachRepository {
     viewerAdminId: string
   ): Promise<OutreachPersonCard | null>;
   /**
-   * Просьба поискать человека в Telegram по его телефону. `null` — карточки нет.
+   * Просьба проверить человека во всех трёх мессенджерах. `null` — карточки нет.
    *
-   * Именно просьба: поиск выполняет процесс аккаунта компании, у которого открыта сессия
-   * Telegram, и ответ появится в карточке через несколько секунд, а не в этом вызове.
+   * Именно просьба: спрашивают процессы аккаунтов компании, у которых открыты сессии, и
+   * ответы появятся в карточке через несколько секунд, а не в этом вызове.
    */
-  requestTelegramLookup(input: {
+  requestChannelLookups(input: {
     readonly contactId: string;
-    readonly lookupId: string;
     readonly actorAdminId: string;
     readonly now: Date;
-  }): Promise<RequestTelegramLookupResult | null>;
+  }): Promise<RequestChannelLookupResult | null>;
   updatePerson(input: {
     readonly contactId: string;
     readonly fields: NormalizedOutreachImportRow;
@@ -1226,20 +1225,20 @@ export class AdminOutreachService {
    * Право то же, что у правки карточки: поиск дописывает человеку признак, которого у нас
    * не было, и заводит ветку переписки. Читатель базы такого делать не должен.
    *
-   * Ответ приходит не отсюда. Здесь просьба только ложится в очередь — спросить Telegram
-   * может лишь процесс с открытой сессией аккаунта, и панель узнает исход, перечитав
-   * карточку через несколько секунд.
+   * Ответ приходит не отсюда. Здесь просьба только ложится в очередь — спросить может
+   * лишь процесс с открытой сессией аккаунта, и панель узнает исход, перечитав карточку
+   * через несколько секунд. Просьба менеджера при этом идёт в очереди впереди
+   * автоматических проверок: он ждёт ответа прямо сейчас.
    */
-  requestTelegramLookup(input: {
+  requestChannelLookups(input: {
     readonly actor: AdminRequestActor;
     readonly contactId: string;
     readonly now: Date;
-  }): Promise<RequestTelegramLookupResult | null> {
+  }): Promise<RequestChannelLookupResult | null> {
     requirePermission(input.actor, "outreach.write");
     requireUuid(input.contactId);
-    return this.repository.requestTelegramLookup({
+    return this.repository.requestChannelLookups({
       contactId: input.contactId,
-      lookupId: this.idGenerator.newId(),
       actorAdminId: input.actor.adminId,
       now: input.now
     });

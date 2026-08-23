@@ -322,7 +322,7 @@ export type AdminOutreachHandler = Pick<
   | "getContact"
   | "listPeople"
   | "getPerson"
-  | "requestTelegramLookup"
+  | "requestChannelLookups"
   | "updatePerson"
   | "setPersonField"
   | "listTaskRules"
@@ -621,21 +621,21 @@ export class AdminOutreachController {
   }
 
   /**
-   * Поискать человека в Telegram по телефону.
+   * Проверить, есть ли человек в Telegram, MAX и WhatsApp.
    *
-   * Ответ ручки — не результат поиска, а расписка о том, что просьба принята: спросить
-   * Telegram может только процесс аккаунта компании, и делает он это через несколько
+   * Ответ ручки — не результат проверки, а расписка о том, что просьба принята: спросить
+   * мессенджеры могут только процессы аккаунтов компании, и делают они это через несколько
    * секунд. Панель узнаёт исход, перечитав карточку.
    */
-  @Post("base/:id/telegram-lookup")
+  @Post("base/:id/lookup")
   @RequireAdminPermission("outreach.write")
-  async requestTelegramLookup(
+  async requestChannelLookups(
     @Param("id") id: string,
     @Req() request: AuthenticatedAdminRequest
   ) {
     const contactId = parse(uuid, id);
     const result = await executeOutreach(() =>
-      this.handler.requestTelegramLookup({
+      this.handler.requestChannelLookups({
         actor: requireActor(request),
         contactId,
         now: new Date()

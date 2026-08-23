@@ -4807,7 +4807,7 @@ tbody tr:hover {
 
 /* Поиск в Telegram по номеру. Строка длиннее соседних: у ответа «не нашли» две причины
    сразу, и укоротить объяснение до плашки значит выбрать одну из них наугад. */
-.person-telegram-lookup dd {
+.person-channel-lookups dd {
   line-height: 1.45;
 }
 
@@ -7266,4 +7266,74 @@ a.person-channel:hover {
   .inbox-filters {
     margin-left: 0;
   }
+}
+
+/* ───────────────── Куда дотянемся: Telegram, MAX, WhatsApp ───────────────── */
+
+.reach-cell {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.reach-dot {
+  display: inline-flex;
+  min-width: 32px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.reach-dot-found {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* «Спросили и получили ответ» — зачёркнутый: видно, что знание есть, и оно отрицательное. */
+.reach-dot-notFound {
+  background: var(--surface-muted);
+  color: #a2aba7;
+  text-decoration: line-through;
+}
+
+.reach-dot-queued {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.reach-dot-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* «Не проверяли» — не то же самое, что «нет»: бледное и без зачёркивания. */
+.reach-dot-unknown {
+  background: var(--surface-muted);
+  color: #c0c8c4;
+}
+
+.person-reach {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.person-reach li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.person-reach-channel {
+  min-width: 74px;
+  color: var(--muted);
+  font-weight: 600;
 }

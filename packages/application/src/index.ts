@@ -11,7 +11,7 @@ export function getLivenessSnapshot(service: string, version: string): HealthSna
 
 export * from "./identity.js";
 export * from "./phone.js";
-export * from "./telegram-phone-lookup.js";
+export * from "./channel-lookup.js";
 export * from "./outbox.js";
 export * from "./health.js";
 export * from "./admin-authorization.js";

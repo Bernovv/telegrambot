@@ -50,5 +50,5 @@ export * from "./admin-conversation-persistence.js";
 export * from "./admin-inbox-persistence.js";
 export * from "./conversation-attachment-persistence.js";
 export * from "./conversation-persistence.js";
-export * from "./telegram-phone-lookup-persistence.js";
+export * from "./channel-lookup-persistence.js";
 export * from "./zvonobot-persistence.js";

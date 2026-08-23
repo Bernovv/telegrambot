@@ -21,17 +21,20 @@ import { v7 as uuidv7 } from "uuid";
 import {
   ConversationLog,
   DownloadConversationAttachmentsBatchService,
+  ResolveChannelLookupsBatchService,
   SendConversationRepliesBatchService
 } from "@ticket-platform/application";
 import type { IdGenerator } from "@ticket-platform/application";
 import {
   loadAppConfig,
   loadConversationAttachmentsConfig,
+  loadChannelLookupConfig,
   loadConversationRepliesConfig
 } from "@ticket-platform/config";
 import {
   createAttachmentDownloadPersistence,
   createConversationPersistence,
+  createChannelLookupQueue,
   createConversationReplyQueue,
   createNodePostgresPool
 } from "@ticket-platform/database";
@@ -39,6 +42,7 @@ import {
   createWhatsAppAccountAttachmentSource,
   createWhatsAppAccountReplySender,
   incomingMessage,
+  createWhatsAppPhoneLookup,
   toIncomingMessage
 } from "@ticket-platform/messenger-whatsapp-account";
 import { createLogger } from "@ticket-platform/observability";
@@ -176,6 +180,27 @@ async function main(): Promise<void> {
       });
   });
 
+  /**
+   * Проверка «есть ли человек в этом мессенджере» по номеру телефона.
+   *
+   * Очередь общая на три канала, но каждый процесс берёт только свои строки: спросить
+   * может лишь тот, у кого открыта сессия. Найдя человека, служба заводит ему ветку
+   * переписки — ту, в которую менеджер и напишет первым.
+   */
+  const lookupOptions = loadChannelLookupConfig(process.env, "whatsapp");
+  const lookups = new ResolveChannelLookupsBatchService(
+    "whatsapp",
+    createChannelLookupQueue(pool).queue,
+    createWhatsAppPhoneLookup(client),
+    ids,
+    {
+      maxAttempts: lookupOptions.maxAttempts,
+      retryDelayMs: lookupOptions.retryDelayMs,
+      pauseBetweenMs: lookupOptions.pauseBetweenMs,
+      dailyLimit: lookupOptions.dailyLimit
+    }
+  );
+
   const stopping = { now: false };
   const stop = (signal: string): void => {
     logger.info("shutting down", { signal });
@@ -193,6 +218,7 @@ async function main(): Promise<void> {
   // Два прохода с разной частотой: ответ менеджера человек ждёт прямо сейчас, а вложение
   // нужно к моменту, когда диалог откроют. Отсюда отдельные сроки, а не общий такт.
   let nextAttachmentSweepAt = 0;
+  let nextLookupSweepAt = 0;
   while (!stopping.now) {
     try {
       const sent = await replies.execute({
@@ -233,6 +259,33 @@ async function main(): Promise<void> {
         });
       }
       nextAttachmentSweepAt = Date.now() + attachments.pollIntervalMs;
+    }
+
+
+    if (Date.now() >= nextLookupSweepAt) {
+      try {
+        const resolved = await lookups.execute({
+          at: new Date(),
+          batchSize: lookupOptions.batchSize
+        });
+        if (resolved.claimed > 0 || resolved.throttled) {
+          logger.info("phone lookups resolved", {
+            claimed: resolved.claimed,
+            found: resolved.found,
+            notFound: resolved.notFound,
+            retried: resolved.retried,
+            failed: resolved.failed,
+            // Упёрлись в суточный потолок — это штатный исход, но знать о нём нужно:
+            // очередь стоит не потому, что сломалась.
+            throttled: resolved.throttled
+          });
+        }
+      } catch (error) {
+        logger.error("phone lookup sweep failed", {
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      }
+      nextLookupSweepAt = Date.now() + lookupOptions.pollIntervalMs;
     }
 
     await delay(replyOptions.pollIntervalMs);

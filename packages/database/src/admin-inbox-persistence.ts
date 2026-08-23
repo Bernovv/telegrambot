@@ -40,6 +40,11 @@ import type { SqlConnection, SqlConnectionPool, SqlExecutor } from "./postgres.j
  * **Числа у отборов считаются по всей переписке, а не по странице.** «Непрочитанные 7» на
  * странице из пятидесяти строк обязаны означать семь, иначе цифра врёт при первой же
  * прокрутке.
+ *
+ * **Ветка без единой реплики в список не попадает.** Такие заводятся сами, когда проверка
+ * находит человека в мессенджере: они нужны, чтобы менеджеру было куда написать первым, и
+ * открываются из карточки. В списке диалогов им делать нечего — разговора ещё нет, а на
+ * каждого найденного их появляется по три, и они вытеснили бы настоящие разговоры.
  */
 
 interface InboxRow {
@@ -138,7 +143,8 @@ export class PostgresAdminInboxRepository implements AdminInboxRepository {
               order by message.occurred_at desc, message.id desc
               limit 1
            ) last_message on true
-          where ($2::timestamptz is null
+          where conversation.last_message_at is not null
+            and ($2::timestamptz is null
                  or conversation.last_message_at < $2::timestamptz)
             and ($3::text is null or (
                  coalesce(contact.display_name, '') ilike '%' || $3::text || '%'
@@ -166,7 +172,8 @@ export class PostgresAdminInboxRepository implements AdminInboxRepository {
            from public.conversations conversation
            left join public.conversation_reads reads
              on reads.conversation_id = conversation.id
-            and reads.admin_id = $1::uuid`,
+            and reads.admin_id = $1::uuid
+          where conversation.last_message_at is not null`,
         [query.adminId]
       );
 

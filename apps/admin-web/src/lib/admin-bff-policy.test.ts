@@ -398,12 +398,12 @@ test("forwards the person-level task, notes and site registration routes", () =>
     ),
     true
   );
-  // Поиск в Telegram по номеру. Ручка в api была, а сюда её забыли добавить — панель
-  // отвечала «Route was not found» на собственную же кнопку.
+  // Проверка человека в трёх мессенджерах. Ручка в api была, а сюда её забыли добавить —
+  // панель отвечала «Route was not found» на собственную же кнопку.
   assert.equal(
     isAllowedAdminApiPath(
       "POST",
-      "outreach/base/00000000-0000-4000-8000-000000000101/telegram-lookup"
+      "outreach/base/00000000-0000-4000-8000-000000000101/lookup"
     ),
     true
   );
