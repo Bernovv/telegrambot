@@ -10,13 +10,13 @@ import {
 test("requires the MFA route until the session reaches aal2", () => {
   assert.equal(adminDestinationForAssurance(null), "/mfa");
   assert.equal(adminDestinationForAssurance("aal1"), "/mfa");
-  assert.equal(adminDestinationForAssurance("aal2"), "/users");
+  assert.equal(adminDestinationForAssurance("aal2"), "/tasks");
 });
 
 test("ведёт сразу в панель, когда второй фактор выключен", () => {
-  assert.equal(adminDestinationForAssurance(null, false), "/users");
-  assert.equal(adminDestinationForAssurance("aal1", false), "/users");
-  assert.equal(adminDestinationForAssurance("aal2", false), "/users");
+  assert.equal(adminDestinationForAssurance(null, false), "/tasks");
+  assert.equal(adminDestinationForAssurance("aal1", false), "/tasks");
+  assert.equal(adminDestinationForAssurance("aal2", false), "/tasks");
 });
 
 test("normalizes a bounded six-digit TOTP code", () => {

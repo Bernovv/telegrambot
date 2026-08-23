@@ -128,7 +128,7 @@ export function MfaForm() {
         setError("Код не принят. Проверьте время на устройстве и повторите.");
         return;
       }
-      router.replace("/users");
+      router.replace("/tasks");
       router.refresh();
     } catch {
       setError("Сервис авторизации временно недоступен.");

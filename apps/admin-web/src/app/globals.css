@@ -479,24 +479,120 @@ h2 {
   color: #c7d1cd;
 }
 
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 12px 0;
+  padding: 8px 11px;
+  color: #8fa098;
+  background: #17201c;
+  border: 1px solid #34403b;
+  border-radius: 7px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.sidebar-search:hover {
+  color: #c7d1cd;
+  border-color: #46544e;
+}
+
+.sidebar-search kbd {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid #3d4a44;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
 .sidebar-nav {
   display: grid;
   align-content: start;
-  gap: 4px;
-  padding: 24px 12px;
+  gap: 2px;
+  padding: 14px 12px 24px;
+  overflow-y: auto;
+}
+
+/* Группы меню: работа, настройка и то, что уедет внутрь мероприятия. */
+.nav-group {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding-top: 12px;
+}
+
+.nav-group-fold > .nav-link {
+  display: flex;
 }
 
 .nav-caption {
-  padding: 0 10px 7px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 10px 6px;
   color: #82938b;
   font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
 }
 
+.nav-caption em {
+  color: #6c7c74;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+summary.nav-caption {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.nav-caption::-webkit-details-marker {
+  display: none;
+}
+
+summary.nav-caption::after {
+  margin-left: auto;
+  color: #6c7c74;
+  content: "▾";
+  font-size: 10px;
+}
+
+.nav-group-fold[open] > summary.nav-caption::after {
+  content: "▴";
+}
+
+summary.nav-caption:hover {
+  color: #b7c3be;
+}
+
+/* Счётчик у пункта меню: сколько дел ждёт, не заходя внутрь. */
+.nav-count {
+  min-width: 20px;
+  margin-left: auto;
+  padding: 1px 6px;
+  background: #33403a;
+  border-radius: 9px;
+  color: #c7d1cd;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+}
+
+.nav-count-loud {
+  background: #b4463f;
+  color: #ffffff;
+}
+
 .nav-link {
   display: flex;
-  min-height: 42px;
+  min-height: 38px;
   align-items: center;
   gap: 11px;
   padding: 0 11px;

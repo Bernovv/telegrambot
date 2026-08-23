@@ -2,6 +2,11 @@
 
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
+  listOutreachImports,
+  listOutreachTaskBoard,
+  listSiteRegistrations
+} from "@/lib/admin-api";
+import {
   CalendarClock,
   CalendarDays,
   Contact,
@@ -12,40 +17,96 @@ import {
   Menu,
   PhoneCall,
   ReceiptText,
+  Search,
   ShieldCheck,
-  Sunrise,
   Users,
   UsersRound,
   X
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 /**
- * Пункты меню.
+ * Меню кабинета.
  *
- * Поиска здесь нет намеренно: он же живёт внутри «Базы контактов», а отдельным пунктом
- * дублировал её. Страница `/search` осталась по своему адресу — на неё просто ничего не
- * ведёт.
+ * Разделено на три части, и это не украшение, а порядок работы. **Работа** — то, куда
+ * заходят каждый день. **Настройка** — то, что заводят раз и правят редко. **Пока здесь** —
+ * разделы, которые уезжают внутрь мероприятия по плану пересборки: «Заказы» и «Рассылки» —
+ * в фазе 5, «Заявки с сайта» и «Кампании» — вместе с воронкой.
+ *
+ * Третья группа существует по правилу «пункт меню убирается только после того, как его
+ * работа где-то появилась». Убрать их из меню сейчас означало бы убрать подтверждение
+ * оплаты и рассылки совсем: на эти страницы больше ниоткуда не ведёт.
+ *
+ * Поиска отдельным пунктом нет — он открывается по ⌘K из любого места.
  */
-const NAVIGATION = [
-  { href: "/today", label: "Мой день", icon: Sunrise },
-  { href: "/tasks", label: "Задачи", icon: ListChecks },
-  { href: "/events", label: "Мероприятия", icon: CalendarDays },
-  // Постоянная воронка направления открывается коротким адресом: её идентификатор может
-  // смениться, а пункт меню должен остаться тем же.
-  { href: "/outreach/sreda", label: "Бизнес-среда", icon: CalendarClock },
-  { href: "/registrations", label: "Заявки с сайта", icon: Globe },
-  { href: "/base", label: "База контактов", icon: Contact },
-  { href: "/outreach", label: "Кампании", icon: PhoneCall },
-  { href: "/users", label: "Бот", icon: Users },
-  { href: "/orders", label: "Заказы", icon: ReceiptText },
-  { href: "/broadcasts", label: "Рассылки", icon: Megaphone },
-  // Команда — про кабинет, а не про операции: кто здесь работает и что ему доступно.
-  // Стоит последней по той же причине, по какой в неё редко заходят.
-  { href: "/team", label: "Команда", icon: UsersRound }
-] as const;
+
+interface NavItem {
+  readonly href: string;
+  readonly label: string;
+  readonly icon: typeof ListChecks;
+  /** Какой счётчик показывать рядом. Пусто — не показывать никакого. */
+  readonly badge?: keyof SidebarCounts;
+  /** Красный счётчик значит «просрочено, разберите»; обычный — просто число. */
+  readonly loud?: boolean;
+}
+
+interface NavGroup {
+  readonly caption: string;
+  readonly items: readonly NavItem[];
+  /** Группа сворачивается: в ней временные разделы, и открывать её каждый день не нужно. */
+  readonly collapsible?: boolean;
+  readonly hint?: string;
+}
+
+const NAVIGATION: readonly NavGroup[] = [
+  {
+    caption: "Работа",
+    items: [
+      { href: "/tasks", label: "Задачи", icon: ListChecks, badge: "overdueTasks", loud: true },
+      { href: "/outreach/sreda", label: "Воронка", icon: CalendarClock },
+      { href: "/base", label: "База контактов", icon: Contact, badge: "importRows" }
+    ]
+  },
+  {
+    caption: "Настройка",
+    items: [
+      { href: "/events", label: "Мероприятия", icon: CalendarDays },
+      { href: "/team", label: "Команда", icon: UsersRound },
+      { href: "/users", label: "Бот", icon: Users }
+    ]
+  },
+  {
+    caption: "Пока здесь",
+    hint: "Уедут внутрь мероприятия",
+    collapsible: true,
+    items: [
+      { href: "/orders", label: "Заказы", icon: ReceiptText },
+      { href: "/broadcasts", label: "Рассылки", icon: Megaphone },
+      {
+        href: "/registrations",
+        label: "Заявки с сайта",
+        icon: Globe,
+        badge: "registrations",
+        loud: true
+      },
+      { href: "/outreach", label: "Кампании", icon: PhoneCall }
+    ]
+  }
+];
+
+interface SidebarCounts {
+  readonly overdueTasks: number;
+  readonly registrations: number;
+  readonly importRows: number;
+}
+
+const NO_COUNTS: SidebarCounts = {
+  overdueTasks: 0,
+  registrations: 0,
+  importRows: 0
+};
 
 export function AdminShell({
   identity,
@@ -55,10 +116,81 @@ export function AdminShell({
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const longestMatch = NAVIGATION
+  const [counts, setCounts] = useState<SidebarCounts>(NO_COUNTS);
+
+  const allItems = NAVIGATION.flatMap((group) => group.items);
+  const longestMatch = allItems
     .filter((item) => pathname.startsWith(item.href))
     .map((item) => item.href)
     .sort((left, right) => right.length - left.length)[0];
+
+  // Свёрнутая группа помнит, открыл ли её человек. Без состояния она захлопывалась бы сама
+  // при каждом обновлении счётчиков: React вернул бы `open` к значению из разметки.
+  const insideExtras = NAVIGATION
+    .filter((group) => group.collapsible)
+    .some((group) => group.items.some((item) => item.href === longestMatch));
+  const [extrasOpen, setExtrasOpen] = useState(insideExtras);
+
+  useEffect(() => {
+    if (insideExtras) {
+      setExtrasOpen(true);
+    }
+  }, [insideExtras]);
+
+  /**
+   * Счётчики в меню.
+   *
+   * Каждый считается сам по себе и сам по себе пропадает: у роли может не быть прав на
+   * базу или на заявки, и меню, потерявшее все цифры из-за одного отказа, было бы хуже
+   * меню без одной цифры. Это те самые числа, ради которых существовал «Мой день».
+   */
+  const loadCounts = useCallback(async (signal?: AbortSignal) => {
+    const [tasks, registrations, imports] = await Promise.all([
+      listOutreachTaskBoard(true, signal)
+        .then((items) => items.filter((task) => task.urgency === "overdue").length)
+        .catch(() => 0),
+      listSiteRegistrations({ needsAttention: true, limit: 1 }, signal)
+        .then((page) => page.needsAttention)
+        .catch(() => 0),
+      listOutreachImports(signal)
+        .then((runs) => runs.reduce((sum, run) => sum + run.pendingRows, 0))
+        .catch(() => 0)
+    ]);
+    if (!signal?.aborted) {
+      setCounts({ overdueTasks: tasks, registrations, importRows: imports });
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadCounts(controller.signal);
+    return () => controller.abort();
+  }, [loadCounts]);
+
+  // Обновляем, когда вкладку вернули на передний план: менеджер уходит звонить и
+  // возвращается, а цифры за это время меняются. Опрос по таймеру здесь был бы запросом
+  // каждые полминуты ради числа, на которое смотрят раз в час.
+  useEffect(() => {
+    function refresh() {
+      if (document.visibilityState === "visible") {
+        void loadCounts();
+      }
+    }
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [loadCounts]);
+
+  // ⌘K — поиск. Страница поиска существовала и раньше, но на неё не вело ничего.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        router.push("/search");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
 
   async function signOut() {
     if (signingOut) {
@@ -73,6 +205,30 @@ export function AdminShell({
     }
   }
 
+  function renderLink(item: NavItem) {
+    // Совпадений может быть два: «Воронка» лежит внутри «Кампаний». Подсвечиваем самое
+    // длинное — иначе подсвечены оба, и непонятно, где ты находишься.
+    const active = item.href === longestMatch;
+    const Icon = item.icon;
+    const value = item.badge ? counts[item.badge] : 0;
+    return (
+      <Link
+        key={item.href}
+        className={active ? "nav-link nav-link-active" : "nav-link"}
+        href={item.href}
+        onClick={() => setMenuOpen(false)}
+      >
+        <Icon size={18} />
+        <span>{item.label}</span>
+        {value > 0 ? (
+          <span className={item.loud ? "nav-count nav-count-loud" : "nav-count"}>
+            {value}
+          </span>
+        ) : null}
+      </Link>
+    );
+  }
+
   return (
     <div className="admin-frame">
       <aside className={menuOpen ? "sidebar sidebar-open" : "sidebar"}>
@@ -81,8 +237,8 @@ export function AdminShell({
             <ShieldCheck size={20} />
           </div>
           <div>
-            <strong>Ticket Ops</strong>
-            <span>Control room</span>
+            <strong>Бизнес-Прорыв</strong>
+            <span>Рабочий кабинет</span>
           </div>
           <button
             className="icon-button sidebar-close"
@@ -95,23 +251,42 @@ export function AdminShell({
           </button>
         </div>
 
+        <button
+          className="sidebar-search"
+          type="button"
+          onClick={() => {
+            setMenuOpen(false);
+            router.push("/search");
+          }}
+        >
+          <Search size={15} />
+          <span>Поиск по всему</span>
+          <kbd>⌘K</kbd>
+        </button>
+
         <nav className="sidebar-nav" aria-label="Основная навигация">
-          <span className="nav-caption">Операции</span>
-          {NAVIGATION.map((item) => {
-            // Совпадений может быть два: «Бизнес-среда» лежит внутри «Кампаний». Подсвечиваем
-            // самое длинное — иначе подсвечены оба, и непонятно, где ты находишься.
-            const active = item.href === longestMatch;
-            const Icon = item.icon;
+          {NAVIGATION.map((group) => {
+            if (!group.collapsible) {
+              return (
+                <div className="nav-group" key={group.caption}>
+                  <span className="nav-caption">{group.caption}</span>
+                  {group.items.map(renderLink)}
+                </div>
+              );
+            }
             return (
-              <Link
-                key={item.href}
-                className={active ? "nav-link nav-link-active" : "nav-link"}
-                href={item.href}
-                onClick={() => setMenuOpen(false)}
+              <details
+                className="nav-group nav-group-fold"
+                key={group.caption}
+                open={extrasOpen}
+                onToggle={(event) => setExtrasOpen(event.currentTarget.open)}
               >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </Link>
+                <summary className="nav-caption">
+                  {group.caption}
+                  {group.hint ? <em>{group.hint}</em> : null}
+                </summary>
+                {group.items.map(renderLink)}
+              </details>
             );
           })}
         </nav>
@@ -157,7 +332,7 @@ export function AdminShell({
           >
             <Menu size={21} />
           </button>
-          <strong>Ticket Ops</strong>
+          <strong>Бизнес-Прорыв</strong>
           <span className="mobile-spacer" />
         </header>
         <main className="workspace">{children}</main>

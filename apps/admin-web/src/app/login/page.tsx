@@ -18,7 +18,7 @@ export default async function LoginPage() {
     const { data } = await supabase.auth.getUser();
     if (data.user) {
       if (!isAdminMfaRequired()) {
-        redirect("/users");
+        redirect("/tasks");
       }
       const { data: assurance, error: assuranceError } =
         await supabase.auth.mfa.getAuthenticatorAssuranceLevel();

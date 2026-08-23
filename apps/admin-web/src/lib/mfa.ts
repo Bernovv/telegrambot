@@ -1,4 +1,4 @@
-export type AdminAuthDestination = "/mfa" | "/users";
+export type AdminAuthDestination = "/mfa" | "/tasks";
 
 /**
  * Куда вести вошедшего. Когда второй фактор выключен, уровень подтверждения роли не
@@ -9,9 +9,9 @@ export function adminDestinationForAssurance(
   mfaRequired = true
 ): AdminAuthDestination {
   if (!mfaRequired) {
-    return "/users";
+    return "/tasks";
   }
-  return currentLevel === "aal2" ? "/users" : "/mfa";
+  return currentLevel === "aal2" ? "/tasks" : "/mfa";
 }
 
 export function normalizeTotpCode(value: string): string {
