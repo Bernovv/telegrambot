@@ -113,6 +113,24 @@ const TELEGRAM_ACCOUNT = [
   }
 ];
 
+// Аккаунт компании в MAX. Включается наличием MAX_ACCOUNT_DEVICE_ID. Токена среди
+// обязательных нет намеренно: канал включают до первого входа, а токен появляется после.
+// Зато его отсутствие видно в проверке канала — там оно значит «процесс не поднимется».
+const MAX_ACCOUNT = [
+  {
+    name: "MAX_ACCOUNT_PHONE",
+    hint: "номер аккаунта MAX; по нему сверяется, что вошли под тем",
+    pattern: /^\+[1-9]\d{7,14}$/,
+    patternHint: "+7XXXXXXXXXX"
+  },
+  {
+    name: "MAX_ACCOUNT_DEVICE_ID",
+    hint: "постоянный идентификатор устройства: uuidgen один раз и больше не менять — "
+      + "меняющийся выглядит для их антифрода как вход с нового устройства",
+    pattern: /^[A-Za-z0-9-]{8,64}$/
+  }
+];
+
 const path = resolve(process.argv[2] ?? ".env");
 const values = parseEnvFile(await readFile(path, "utf8"));
 const problems = [];
@@ -130,6 +148,15 @@ if (values.get("ADMIN_AUTH_ENABLED") === "true") {
 if ((values.get("TELEGRAM_ACCOUNT_API_ID") ?? "") !== "") {
   for (const variable of TELEGRAM_ACCOUNT) {
     problems.push(...inspect(variable, { required: true, context: "аккаунт компании включён" }));
+  }
+}
+
+if ((values.get("MAX_ACCOUNT_DEVICE_ID") ?? "") !== "") {
+  for (const variable of MAX_ACCOUNT) {
+    problems.push(...inspect(variable, {
+      required: true,
+      context: "аккаунт компании в MAX включён"
+    }));
   }
 }
 

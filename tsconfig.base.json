@@ -22,6 +22,7 @@
       "@ticket-platform/domain": ["packages/domain/src/index.ts"],
       "@ticket-platform/messenger-core": ["packages/messenger-core/src/index.ts"],
       "@ticket-platform/messenger-max": ["packages/messenger-max/src/index.ts"],
+      "@ticket-platform/messenger-max-account": ["packages/messenger-max-account/src/index.ts"],
       "@ticket-platform/messenger-telegram": ["packages/messenger-telegram/src/index.ts"],
       "@ticket-platform/messenger-telegram-account": ["packages/messenger-telegram-account/src/index.ts"],
       "@ticket-platform/observability": ["packages/observability/src/index.ts"],

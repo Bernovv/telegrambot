@@ -103,7 +103,11 @@ export default tseslint.config(
       "apps/telegram-account/src/login.ts",
       "apps/telegram-account/src/status.ts",
       "apps/telegram-account/src/bootstrap.ts",
-      "apps/telegram-account/src/prompts.ts"
+      "apps/telegram-account/src/prompts.ts",
+      "apps/max-account/src/login.ts",
+      "apps/max-account/src/status.ts",
+      "apps/max-account/src/whois.ts",
+      "apps/max-account/src/prompts.ts"
     ],
     rules: {
       "no-console": "off"

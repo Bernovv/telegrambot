@@ -236,6 +236,51 @@ export type TelegramAccountConfig =
       readonly deviceModel: string;
     };
 
+/**
+ * Аккаунт компании в MAX — фаза 3б плана интеграции каналов.
+ *
+ * Это не бот. Обычный аккаунт на корпоративном номере, живущий на сервере по тому же
+ * протоколу, что и их веб-клиент, и от имени которого менеджеры отвечают из панели.
+ * Бот при этом остаётся и продолжает продавать билеты: разговаривает аккаунт, продаёт бот.
+ *
+ * Выключен, пока не задан `MAX_ACCOUNT_DEVICE_ID`. Токена при этом может ещё не быть —
+ * так канал включают до первого входа: скрипт входа поднимает того же клиента без токена,
+ * получает его по коду и печатает строку для `.env`.
+ *
+ * **Экземпляр должен быть один.** Вторая копия на том же токене — второе устройство в их
+ * антифроде, а это ровно тот признак, за который аккаунт ограничивают.
+ */
+export type MaxAccountConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      /**
+       * Постоянный токен сессии. Вся авторизация помещается в эту строку — в отличие от
+       * Telegram, где сессия это каталог TDLib. Переезд сервера не требует нового кода из
+       * SMS; зато строка эта — полный доступ к переписке.
+       *
+       * `null` — вход ещё не сделан. Процесс канала с таким конфигом не поднимется, а
+       * скрипт входа — поднимется, за тем он и нужен.
+       */
+      readonly token: string | null;
+      /**
+       * Идентификатор устройства, постоянный. Меняющийся при каждом запуске выглядит для
+       * их антифрода как вход с нового устройства — то самое поведение, за которое банят.
+       */
+      readonly deviceId: string;
+      readonly deviceName: string;
+      /**
+       * Номер, на который заведён аккаунт. Держится в конфиге не ради удобства ввода:
+       * скрипт входа сверяет с ним вошедшую сессию и отказывается работать с чужой.
+       */
+      readonly phone: string;
+      /** Версия их веб-клиента, за которую мы себя выдаём. Меняется без нашего участия. */
+      readonly appVersion: string;
+      readonly userAgent: string;
+      readonly wsUrl: string;
+      readonly requestTimeoutMs: number;
+    };
+
 export interface WorkerConfig extends AppConfig {
   readonly databasePoolMax: number;
   readonly pgBossSchema: string;
@@ -819,6 +864,55 @@ export function loadTelegramAccountConfig(env: NodeJS.ProcessEnv): TelegramAccou
     proxy,
     deviceModel: deviceModel === "" ? "Business Proriv CRM" : deviceModel
   };
+}
+
+/**
+ * Настройки аккаунта компании в MAX. Отдельный загрузчик по той же причине, что у
+ * Telegram: аккаунт поднимается своим процессом, и обрыв его соединения не должен задевать
+ * продажу билетов.
+ */
+export function loadMaxAccountConfig(env: NodeJS.ProcessEnv): MaxAccountConfig {
+  const deviceId = (env.MAX_ACCOUNT_DEVICE_ID ?? "").trim();
+  if (deviceId === "") {
+    return { enabled: false };
+  }
+
+  const token = (env.MAX_ACCOUNT_TOKEN ?? "").trim();
+  const deviceName = (env.MAX_ACCOUNT_DEVICE_NAME ?? "").trim();
+  const appVersion = (env.MAX_ACCOUNT_APP_VERSION ?? "").trim();
+  const userAgent = (env.MAX_ACCOUNT_USER_AGENT ?? "").trim();
+  const wsUrl = (env.MAX_ACCOUNT_WS_URL ?? "").trim();
+
+  return {
+    enabled: true,
+    // Пустой токен — это «вход ещё не сделан», а не ошибка настройки: сначала включают
+    // канал, потом входят. Отказать здесь значило бы, что войти невозможно вовсе.
+    token: token === "" ? null : token,
+    deviceId,
+    deviceName: deviceName === "" ? "Бизнес-Прорыв CRM" : deviceName,
+    phone: parseMaxAccountPhone(env.MAX_ACCOUNT_PHONE),
+    appVersion: appVersion === "" ? "25.9.15" : appVersion,
+    userAgent: userAgent === ""
+      ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        + " (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+      : userAgent,
+    wsUrl: wsUrl === "" ? "wss://ws-api.oneme.ru/websocket" : wsUrl,
+    requestTimeoutMs: parseBoundedInteger(
+      env.MAX_ACCOUNT_REQUEST_TIMEOUT_MS ?? "30000",
+      "MAX_ACCOUNT_REQUEST_TIMEOUT_MS",
+      1_000,
+      120_000
+    )
+  };
+}
+
+function parseMaxAccountPhone(value: string | undefined): string {
+  const phone = required(value, "MAX_ACCOUNT_PHONE").trim();
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
+    throw new Error("MAX_ACCOUNT_PHONE must be in international form, e.g. +79001234567");
+  }
+
+  return phone;
 }
 
 /**
