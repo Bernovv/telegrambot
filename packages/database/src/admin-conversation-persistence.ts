@@ -46,7 +46,11 @@ import type { SqlConnectionPool, SqlExecutor } from "./postgres.js";
  * ленте стоил бы дороже самой страницы и всё равно устарел бы к следующему сообщению.
  */
 
-interface ThreadRow {
+/**
+ * Разбор строк ленты вынесен наружу: тем же кодом читает список диалогов
+ * (`admin-inbox-persistence`). Две копии разъехались бы на первой же новой колонке.
+ */
+export interface ThreadRow {
   readonly id: string;
   readonly channel: AdminConversationThread["channel"];
   readonly transport: AdminConversationThread["transport"];
@@ -58,7 +62,7 @@ interface ThreadRow {
   readonly message_count: string;
 }
 
-interface MessageRow {
+export interface MessageRow {
   readonly id: string;
   readonly conversation_id: string;
   readonly channel: AdminConversationMessage["channel"];
@@ -177,7 +181,7 @@ const CHAIN_CTE = `with recursive chain as (
              join chain on child.merged_into_contact_id = chain.id
          )`;
 
-async function loadAttachments(
+export async function loadAttachments(
   connection: SqlExecutor,
   messageIds: readonly string[]
 ): Promise<Map<string, AdminConversationAttachment[]>> {
@@ -213,7 +217,7 @@ async function loadAttachments(
   return byMessage;
 }
 
-function mapThread(row: ThreadRow): AdminConversationThread {
+export function mapThread(row: ThreadRow): AdminConversationThread {
   return {
     conversationId: row.id,
     channel: row.channel,
@@ -227,7 +231,7 @@ function mapThread(row: ThreadRow): AdminConversationThread {
   };
 }
 
-function mapMessage(
+export function mapMessage(
   row: MessageRow,
   attachments: readonly AdminConversationAttachment[]
 ): AdminConversationMessage {
@@ -249,7 +253,7 @@ function mapMessage(
   };
 }
 
-function nullableIso(value: Date | string | null): string | null {
+export function nullableIso(value: Date | string | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 

@@ -319,5 +319,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260824090000_telegram_phone_lookups",
     description: "Ask Telegram whether a phone number has an account, one manager click at a time",
     destructive: false
+  },
+  {
+    id: "20260825090000_conversation_reads",
+    description: "Track how far each manager has read a conversation so the inbox can show unread counts",
+    destructive: false
   }
 ];

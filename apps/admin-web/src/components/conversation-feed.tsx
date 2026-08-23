@@ -2,6 +2,7 @@
 
 import {
   conversationAttachmentUrl,
+  getConversationMessages,
   getPersonConversations,
   sendConversationFile,
   sendConversationReply
@@ -50,15 +51,51 @@ const SEARCH_DEBOUNCE_MS = 350;
 /** Столько же принимают прокси панели и api. Проверяем здесь, чтобы сказать до отправки. */
 const FILE_LIMIT_BYTES = 5 * 1_024 * 1_024;
 
-export function ConversationFeed({ contactId }: { readonly contactId: string }) {
+/**
+ * Откуда брать ленту.
+ *
+ * Из карточки — переписка человека целиком, всеми каналами сразу. Из списка диалогов —
+ * бывает и то и другое: у знакомого человека открываем его переписку, у безымянного
+ * диалога брать её не за кого, и тогда лента читается по самому диалогу.
+ */
+export function ConversationFeed({
+  contactId = null,
+  conversationId = null,
+  refreshToken = 0
+}: {
+  readonly contactId?: string | null;
+  readonly conversationId?: string | null;
+  /**
+   * Меняется — лента перечитывается молча, без «загружаем». Список диалогов опрашивает
+   * сервер сам, и мигать полем загрузки каждые полминуты он не должен.
+   */
+  readonly refreshToken?: number;
+}) {
   const [data, setData] = useState<AdminPersonConversations | null>(null);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [reloads, setReloads] = useState(0);
   const bottom = useRef<HTMLDivElement | null>(null);
+
+  const fetchPage = useCallback(
+    (
+      options: { readonly limit: number; readonly before?: string; readonly search?: string },
+      signal?: AbortSignal
+    ) => {
+      if (contactId !== null) {
+        return getPersonConversations(contactId, options, signal);
+      }
+      if (conversationId !== null) {
+        return getConversationMessages(conversationId, options, signal);
+      }
+      return Promise.reject(new Error("Не сказано, чью переписку показывать."));
+    },
+    [contactId, conversationId]
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setQuery(search.trim()), SEARCH_DEBOUNCE_MS);
@@ -69,8 +106,8 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    getPersonConversations(
-      contactId,
+    setExpanded(false);
+    fetchPage(
       { limit: PAGE_SIZE, ...(query === "" ? {} : { search: query }) },
       controller.signal
     )
@@ -86,7 +123,7 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
         setLoading(false);
       });
     return () => controller.abort();
-  }, [contactId, query, reloads]);
+  }, [fetchPage, query, reloads]);
 
   // Открываемся на свежем сообщении — там, где менеджер и продолжит разговор. Только при
   // первой загрузке: подгрузка ранних реплик не должна утаскивать его обратно вниз.
@@ -95,6 +132,25 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
       bottom.current?.scrollIntoView({ block: "nearest" });
     }
   }, [loading, data, query]);
+
+  /**
+   * Тихое обновление: данные подменяются, экран не мигает.
+   *
+   * Не трогаем ленту, когда менеджер листает историю или ищет по тексту: обновление
+   * оставляет только свежую страницу, и человека, читающего разговор недельной давности,
+   * это выкинуло бы обратно вниз.
+   */
+  useEffect(() => {
+    if (refreshToken === 0 || expanded || query !== "") {
+      return;
+    }
+    const controller = new AbortController();
+    fetchPage({ limit: PAGE_SIZE }, controller.signal)
+      .then((fresh) => setData(fresh))
+      // Молча: сорвавшееся фоновое обновление не должно стирать открытый разговор.
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [refreshToken, expanded, query, fetchPage]);
 
   const loadEarlier = useCallback(() => {
     if (!data || data.messages.length === 0) {
@@ -105,7 +161,8 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
       return;
     }
     setLoadingMore(true);
-    getPersonConversations(contactId, {
+    setExpanded(true);
+    fetchPage({
       limit: PAGE_SIZE,
       before: oldest.occurredAt,
       ...(query === "" ? {} : { search: query })
@@ -122,7 +179,7 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
         setError(errorText(cause));
         setLoadingMore(false);
       });
-  }, [contactId, data, query]);
+  }, [fetchPage, data, query]);
 
   if (loading) {
     return <p className="conversation-empty">Загружаем переписку…</p>;

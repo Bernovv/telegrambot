@@ -2,6 +2,7 @@
 
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
+  listInbox,
   listOutreachImports,
   listOutreachTaskBoard,
   listSiteRegistrations
@@ -14,6 +15,7 @@ import {
   ListChecks,
   LogOut,
   Megaphone,
+  MessagesSquare,
   Menu,
   PhoneCall,
   ReceiptText,
@@ -64,6 +66,13 @@ const NAVIGATION: readonly NavGroup[] = [
   {
     caption: "Работа",
     items: [
+      {
+        href: "/inbox",
+        label: "Переписки",
+        icon: MessagesSquare,
+        badge: "unreadThreads",
+        loud: true
+      },
       { href: "/tasks", label: "Задачи", icon: ListChecks, badge: "overdueTasks", loud: true },
       { href: "/outreach/sreda", label: "Воронка", icon: CalendarClock },
       { href: "/base", label: "База контактов", icon: Contact, badge: "importRows" }
@@ -97,12 +106,14 @@ const NAVIGATION: readonly NavGroup[] = [
 ];
 
 interface SidebarCounts {
+  readonly unreadThreads: number;
   readonly overdueTasks: number;
   readonly registrations: number;
   readonly importRows: number;
 }
 
 const NO_COUNTS: SidebarCounts = {
+  unreadThreads: 0,
   overdueTasks: 0,
   registrations: 0,
   importRows: 0
@@ -145,7 +156,12 @@ export function AdminShell({
    * меню без одной цифры. Это те самые числа, ради которых существовал «Мой день».
    */
   const loadCounts = useCallback(async (signal?: AbortSignal) => {
-    const [tasks, registrations, imports] = await Promise.all([
+    const [unread, tasks, registrations, imports] = await Promise.all([
+      // Список просим самый короткий: нужны только числа у отборов, а они приходят вместе
+      // со страницей независимо от её длины.
+      listInbox({ limit: 1 }, signal)
+        .then((page) => page.counts.unread)
+        .catch(() => 0),
       listOutreachTaskBoard(true, signal)
         .then((items) => items.filter((task) => task.urgency === "overdue").length)
         .catch(() => 0),
@@ -157,7 +173,12 @@ export function AdminShell({
         .catch(() => 0)
     ]);
     if (!signal?.aborted) {
-      setCounts({ overdueTasks: tasks, registrations, importRows: imports });
+      setCounts({
+        unreadThreads: unread,
+        overdueTasks: tasks,
+        registrations,
+        importRows: imports
+      });
     }
   }, []);
 

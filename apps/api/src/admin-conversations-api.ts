@@ -19,10 +19,13 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import type {
   AdminConversationsService,
+  AdminInboxService,
+  LinkConversationService,
   OpenConversationAttachmentService,
   SendConversationFileService,
   SendConversationReplyService
 } from "@ticket-platform/application";
+import type { AdminInboxFilter } from "@ticket-platform/contracts";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import {
@@ -64,7 +67,49 @@ const replyBody = z.object({
   takeOver: z.boolean().optional()
 });
 
+const inboxQuery = pageQuery.extend({
+  filter: z.enum(["all", "mine", "unread", "unlinked"]).optional()
+});
+
+/**
+ * Куда привязать безымянный диалог. Ровно одно из двух: карточка, которую менеджер нашёл в
+ * базе, или телефон, который человек назвал в разговоре. Что именно прислано — разбирает
+ * служба: два намерения в одном запросе она отвергает целиком.
+ */
+const linkBody = z.object({
+  contactId: z.string().uuid().optional(),
+  phone: z.string().min(5).max(30).optional(),
+  displayName: z.string().max(200).optional()
+});
+
 export interface AdminConversationsHandler {
+  listInbox(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly filter?: AdminInboxFilter | undefined;
+    readonly search?: string | null | undefined;
+    readonly limit?: number | undefined;
+    readonly before?: Date | null | undefined;
+  }): ReturnType<AdminInboxService["listInbox"]>;
+  getConversation(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly conversationId: string;
+    readonly limit?: number | undefined;
+    readonly before?: Date | null | undefined;
+    readonly search?: string | null | undefined;
+  }): ReturnType<AdminInboxService["getConversation"]>;
+  markConversationRead(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly conversationId: string;
+    readonly now: Date;
+  }): ReturnType<AdminInboxService["markRead"]>;
+  linkConversation(input: {
+    readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
+    readonly conversationId: string;
+    readonly contactId?: string | null | undefined;
+    readonly phone?: string | null | undefined;
+    readonly displayName?: string | null | undefined;
+    readonly now: Date;
+  }): ReturnType<LinkConversationService["execute"]>;
   getPersonConversations(input: {
     readonly actor: NonNullable<AuthenticatedAdminRequest["adminActor"]>;
     readonly contactId: string;
@@ -113,6 +158,118 @@ export class AdminConversationsController {
     @Inject(ADMIN_CONVERSATIONS)
     private readonly handler: AdminConversationsHandler
   ) {}
+
+  /**
+   * Список диалогов.
+   *
+   * Свежие сверху, курсор — время последней реплики. Числа у отборов приходят вместе со
+   * страницей: панель рисует их рядом с отборами, а второй запрос ради четырёх чисел
+   * означал бы, что список и его цифры разъезжаются на глазах.
+   */
+  @Get()
+  @RequireAdminPermission("conversations.read")
+  async listInbox(
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const page = parse(inboxQuery, query ?? {});
+    return await execute(() =>
+      this.handler.listInbox({
+        actor: requireActor(request),
+        filter: page.filter,
+        search: page.search ?? null,
+        limit: page.limit,
+        before: page.before === undefined ? null : new Date(page.before)
+      })
+    );
+  }
+
+  /** Лента одного диалога — тем же видом, что и переписка человека. */
+  @Get(":id/messages")
+  @RequireAdminPermission("conversations.read")
+  async getConversation(
+    @Param("id") id: string,
+    @Query() query: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const conversationId = parse(uuid, id);
+    const page = parse(pageQuery, query ?? {});
+    const found = await execute(() =>
+      this.handler.getConversation({
+        actor: requireActor(request),
+        conversationId,
+        limit: page.limit,
+        before: page.before === undefined ? null : new Date(page.before),
+        search: page.search ?? null
+      })
+    );
+    if (found === null) {
+      throw new NotFoundException({
+        code: "CONVERSATION_NOT_FOUND",
+        title: "Диалог не найден"
+      });
+    }
+    return found;
+  }
+
+  /**
+   * «Прочитано».
+   *
+   * Право на чтение, хотя строка в базе меняется: отметка описывает менеджера, а не
+   * разговор. Тот, кому переписку показывают, обязан уметь погасить у себя кружок, даже
+   * если отвечать ему не разрешено.
+   */
+  @Post(":id/read")
+  @RequireAdminPermission("conversations.read")
+  async markRead(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const conversationId = parse(uuid, id);
+    const result = await execute(() =>
+      this.handler.markConversationRead({
+        actor: requireActor(request),
+        conversationId,
+        now: new Date()
+      })
+    );
+    if (!result.marked) {
+      throw new NotFoundException({
+        code: "CONVERSATION_NOT_FOUND",
+        title: "Диалог не найден"
+      });
+    }
+    return result;
+  }
+
+  /** Разбор безымянного диалога: чей он. */
+  @Post(":id/link")
+  @RequireAdminPermission("conversations.write")
+  async linkConversation(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedAdminRequest
+  ) {
+    const conversationId = parse(uuid, id);
+    const input = parse(linkBody, body ?? {});
+    const result = await execute(() =>
+      this.handler.linkConversation({
+        actor: requireActor(request),
+        conversationId,
+        contactId: input.contactId ?? null,
+        phone: input.phone ?? null,
+        displayName: input.displayName ?? null,
+        now: new Date()
+      })
+    );
+    if (result.status === "not_found") {
+      throw new NotFoundException({
+        code: "CONVERSATION_NOT_FOUND",
+        title: "Диалог или карточка не найдены"
+      });
+    }
+    return result;
+  }
 
   @Get("people/:id")
   @RequireAdminPermission("conversations.read")

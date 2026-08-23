@@ -1,5 +1,8 @@
 import type {
+  AdminInboxFilter,
+  AdminInboxPage,
   AdminPersonConversations,
+  ConversationLinkResult,
   ConversationReplyResult
 } from "@ticket-platform/contracts/admin-conversations";
 import type {
@@ -973,6 +976,91 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
   return btoa(binary);
+}
+
+/**
+ * Список диалогов.
+ *
+ * Числа у отборов приходят вместе со страницей: рисовать их отдельным запросом значило бы
+ * смотреть на список и его цифры, посчитанные в разные моменты.
+ */
+export function listInbox(
+  options: {
+    readonly filter?: AdminInboxFilter;
+    readonly search?: string;
+    readonly limit?: number;
+    readonly before?: string;
+  } = {},
+  signal?: AbortSignal
+): Promise<AdminInboxPage> {
+  const query = new URLSearchParams();
+  if (options.filter !== undefined) {
+    query.set("filter", options.filter);
+  }
+  if (options.search !== undefined && options.search !== "") {
+    query.set("search", options.search);
+  }
+  if (options.limit !== undefined) {
+    query.set("limit", String(options.limit));
+  }
+  if (options.before !== undefined) {
+    query.set("before", options.before);
+  }
+  const suffix = query.toString();
+  return requestAdminApi(`conversations${suffix ? `?${suffix}` : ""}`, signal);
+}
+
+/** Лента одного диалога. Нужна там, где карточки нет и спросить переписку не за кого. */
+export function getConversationMessages(
+  conversationId: string,
+  options: {
+    readonly limit?: number;
+    readonly before?: string;
+    readonly search?: string;
+  } = {},
+  signal?: AbortSignal
+): Promise<AdminPersonConversations> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) {
+    query.set("limit", String(options.limit));
+  }
+  if (options.before !== undefined) {
+    query.set("before", options.before);
+  }
+  if (options.search !== undefined && options.search !== "") {
+    query.set("search", options.search);
+  }
+  const suffix = query.toString();
+  return requestAdminApi(
+    `conversations/${encodeURIComponent(conversationId)}/messages${suffix ? `?${suffix}` : ""}`,
+    signal
+  );
+}
+
+export function markConversationRead(
+  conversationId: string
+): Promise<{ readonly marked: boolean }> {
+  return requestAdminMutation(
+    `conversations/${encodeURIComponent(conversationId)}/read`,
+    "POST",
+    {}
+  );
+}
+
+/** Разбор безымянного диалога: чей он. Либо карточка из базы, либо телефон. */
+export function linkConversation(
+  conversationId: string,
+  input: {
+    readonly contactId?: string;
+    readonly phone?: string;
+    readonly displayName?: string;
+  }
+): Promise<ConversationLinkResult> {
+  return requestAdminMutation(
+    `conversations/${encodeURIComponent(conversationId)}/link`,
+    "POST",
+    input
+  );
 }
 
 export function conversationAttachmentUrl(attachmentId: string): string {

@@ -1,8 +1,12 @@
 import type {
+  AdminInboxFilter,
+  AdminInboxPage,
   AdminPersonConversations,
-  AdminRequestActor
+  AdminRequestActor,
+  ConversationLinkResult
 } from "@ticket-platform/contracts";
 import type { IdGenerator } from "./identity.js";
+import type { PhoneNormalizer } from "./phone.js";
 import {
   attachmentKindForMime,
   type AttachmentStorage,
@@ -292,5 +296,208 @@ export class SendConversationFileService {
       occurredAt: input.now,
       takeOver: input.takeOver ?? false
     });
+  }
+}
+
+/**
+ * Список диалогов — «Переписки».
+ *
+ * Тот же материал, что в карточке человека, собранный с другой стороны: не «что у нас с
+ * этим человеком», а «кому мы ещё не ответили». Ради второго вопроса открывать карточки по
+ * одной нельзя, поэтому у списка свой запрос и свои отборы.
+ *
+ * Непрочитанное считается **для того, кто спрашивает**: за одним аккаунтом компании стоит
+ * несколько менеджеров, и открытый одним диалог не должен гаснуть у остальных.
+ */
+
+export interface InboxQuery {
+  /** Чьё непрочитанное считаем и чьи диалоги показываем в отборе «мои». */
+  readonly adminId: string;
+  readonly filter: AdminInboxFilter;
+  readonly search: string | null;
+  readonly limit: number;
+  /**
+   * Курсор — время последней реплики, а не номер страницы. Список живой: пока менеджер
+   * листает, кто-то пишет, и вторая страница по номеру вернула бы уже увиденное.
+   */
+  readonly before: Date | null;
+}
+
+export interface ConversationMessagesQuery {
+  readonly conversationId: string;
+  readonly limit: number;
+  readonly before: Date | null;
+  readonly search: string | null;
+}
+
+export interface MarkConversationReadInput {
+  readonly conversationId: string;
+  readonly adminId: string;
+  readonly readAt: Date;
+}
+
+/**
+ * Привязка диалога к человеку.
+ *
+ * Два пути, и оба нужны. **По карточке** — менеджер узнал собеседника и выбрал его в базе.
+ * **По телефону** — человек назвал номер в разговоре; тогда карточка либо уже есть (и
+ * диалог уезжает в неё), либо заводится.
+ *
+ * Третьего пути — «завести карточку с одним именем» — нет, и не по лени: `outreach_contacts`
+ * требует хотя бы один опознаватель, телефон или ник. Карточка с одним именем не прошла бы
+ * проверку в базе, и правильно: найти человека в базе по имени «Сергей» невозможно.
+ */
+export interface LinkConversationInput {
+  readonly conversationId: string;
+  /** Куда привязать. Пусто — заводим по телефону. */
+  readonly contactId: string | null;
+  readonly phoneE164: string | null;
+  readonly displayName: string | null;
+  /** Идентификатор на случай, если карточку придётся завести. Заранее — как везде у нас. */
+  readonly newContactId: string;
+  readonly adminId: string;
+  readonly now: Date;
+}
+
+export interface AdminInboxRepository {
+  listInbox(query: InboxQuery): Promise<AdminInboxPage>;
+  /** Лента одного диалога. Нужна там, где карточки нет и спросить переписку не за кого. */
+  getConversation(query: ConversationMessagesQuery): Promise<AdminPersonConversations | null>;
+  markRead(input: MarkConversationReadInput): Promise<boolean>;
+}
+
+export interface ConversationLinkRepository {
+  linkConversation(input: LinkConversationInput): Promise<ConversationLinkResult>;
+}
+
+export class AdminInboxService {
+  constructor(private readonly repository: AdminInboxRepository) {}
+
+  async listInbox(input: {
+    readonly actor: AdminRequestActor;
+    readonly filter?: AdminInboxFilter | undefined;
+    readonly search?: string | null | undefined;
+    readonly limit?: number | undefined;
+    readonly before?: Date | null | undefined;
+  }): Promise<AdminInboxPage> {
+    requirePermission(input.actor, "conversations.read");
+    const search = (input.search ?? "").trim();
+    return await this.repository.listInbox({
+      adminId: input.actor.adminId,
+      filter: input.filter ?? "all",
+      search: search === "" ? null : search,
+      limit: pageSize(input.limit),
+      before: input.before ?? null
+    });
+  }
+
+  async getConversation(input: {
+    readonly actor: AdminRequestActor;
+    readonly conversationId: string;
+    readonly limit?: number | undefined;
+    readonly before?: Date | null | undefined;
+    readonly search?: string | null | undefined;
+  }): Promise<AdminPersonConversations | null> {
+    requirePermission(input.actor, "conversations.read");
+    if (!UUID_PATTERN.test(input.conversationId)) {
+      throw new Error("Administrator conversations conversation id is invalid");
+    }
+    const search = (input.search ?? "").trim();
+    return await this.repository.getConversation({
+      conversationId: input.conversationId,
+      limit: pageSize(input.limit),
+      before: input.before ?? null,
+      search: search === "" ? null : search
+    });
+  }
+
+  /**
+   * «Я это прочитал».
+   *
+   * Право — на чтение, а не на запись, хотя строка в базе меняется. Отметка описывает не
+   * разговор, а самого менеджера: тот, кому переписку показывают, обязан иметь возможность
+   * погасить у себя кружок, даже если отвечать ему не разрешено.
+   */
+  async markRead(input: {
+    readonly actor: AdminRequestActor;
+    readonly conversationId: string;
+    readonly now: Date;
+  }): Promise<{ readonly marked: boolean }> {
+    requirePermission(input.actor, "conversations.read");
+    if (!UUID_PATTERN.test(input.conversationId)) {
+      throw new Error("Administrator conversations conversation id is invalid");
+    }
+    return {
+      marked: await this.repository.markRead({
+        conversationId: input.conversationId,
+        adminId: input.actor.adminId,
+        readAt: input.now
+      })
+    };
+  }
+}
+
+export class LinkConversationService {
+  constructor(
+    private readonly repository: ConversationLinkRepository,
+    private readonly phoneNormalizer: PhoneNormalizer,
+    private readonly ids: IdGenerator
+  ) {}
+
+  async execute(input: {
+    readonly actor: AdminRequestActor;
+    readonly conversationId: string;
+    readonly contactId?: string | null | undefined;
+    readonly phone?: string | null | undefined;
+    readonly displayName?: string | null | undefined;
+    readonly now: Date;
+  }): Promise<ConversationLinkResult> {
+    requirePermission(input.actor, "conversations.write");
+    if (!UUID_PATTERN.test(input.conversationId)) {
+      throw new Error("Administrator conversations conversation id is invalid");
+    }
+
+    const contactId = (input.contactId ?? "").trim();
+    const rawPhone = (input.phone ?? "").trim();
+    // Ровно одно из двух. И то и другое сразу — это два разных намерения в одном запросе,
+    // и молча выбрать одно из них значит однажды привязать диалог не туда.
+    if ((contactId === "") === (rawPhone === "")) {
+      throw new Error("Administrator conversations link target is invalid");
+    }
+    if (contactId !== "" && !UUID_PATTERN.test(contactId)) {
+      throw new Error("Administrator conversations contact id is invalid");
+    }
+
+    const displayName = (input.displayName ?? "").trim();
+    if (displayName.length > 200) {
+      throw new Error("Administrator conversations display name is invalid");
+    }
+
+    return await this.repository.linkConversation({
+      conversationId: input.conversationId,
+      contactId: contactId === "" ? null : contactId,
+      // Нормализуем здесь, а не в базе: телефон в карточке обязан быть в одном виде, иначе
+      // тот же человек заводится второй раз с номером через восьмёрку.
+      phoneE164: rawPhone === "" ? null : normalizePhone(this.phoneNormalizer, rawPhone),
+      displayName: displayName === "" ? null : displayName,
+      newContactId: this.ids.newId(),
+      adminId: input.actor.adminId,
+      now: input.now
+    });
+  }
+}
+
+/**
+ * Телефон, введённый руками.
+ *
+ * Нормализатор бросает своей ошибкой, а она для api — «что-то сломалось», то есть 500 и
+ * запись в журнал. Менеджер, опечатавшийся в номере, должен получить внятный отказ, а не
+ * пятисотку: переводим на общий язык этого модуля, который ручка уже понимает как 400.
+ */
+function normalizePhone(normalizer: PhoneNormalizer, rawPhone: string): string {
+  try {
+    return normalizer.normalize(rawPhone);
+  } catch {
+    throw new Error("Administrator conversations phone is invalid");
   }
 }

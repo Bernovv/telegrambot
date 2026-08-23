@@ -25,6 +25,8 @@ import {
   CreateAdminEventProductService,
   CreateAdminEventDraftService,
   AdminConversationsService,
+  AdminInboxService,
+  LinkConversationService,
   OpenConversationAttachmentService,
   SendConversationFileService,
   SendConversationReplyService,
@@ -99,6 +101,7 @@ import {
   createZvonobotIntakePersistence,
   createPaymentConfirmationPersistence,
   createAdminConversationsPersistence,
+  createAdminInboxPersistence,
   createAttachmentFilePersistence,
   createConversationReplyPersistence,
   createConversationPersistence,
@@ -324,7 +327,32 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
             new FileSystemAttachmentStorage(config.conversationAttachments.directory),
             idGenerator
           );
+          // Список диалогов и разбор безымянных — рядом с чтением: у панели один адрес,
+          // а служб за ним столько, сколько разного поведения при отказе.
+          const inboxPersistence = createAdminInboxPersistence(pool);
+          const inbox = new AdminInboxService(inboxPersistence.repository);
+          const link = new LinkConversationService(
+            inboxPersistence.linkRepository,
+            new LibPhoneNumberNormalizer(
+              config.telegramWebhook.enabled
+                ? config.telegramWebhook.defaultCountry
+                : "RU"
+            ),
+            idGenerator
+          );
           return {
+            listInbox: (
+              input: Parameters<AdminInboxService["listInbox"]>[0]
+            ) => inbox.listInbox(input),
+            getConversation: (
+              input: Parameters<AdminInboxService["getConversation"]>[0]
+            ) => inbox.getConversation(input),
+            markConversationRead: (
+              input: Parameters<AdminInboxService["markRead"]>[0]
+            ) => inbox.markRead(input),
+            linkConversation: (
+              input: Parameters<LinkConversationService["execute"]>[0]
+            ) => link.execute(input),
             getPersonConversations: (
               input: Parameters<AdminConversationsService["getPersonConversations"]>[0]
             ) => reading.getPersonConversations(input),

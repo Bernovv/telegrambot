@@ -714,3 +714,37 @@ test("forwards a file into an existing conversation with its own body limit", ()
     65_536
   );
 });
+
+test("forwards the inbox list, one thread and the read mark", () => {
+  // Забытый здесь маршрут отвечает «не найдено» при живом эндпоинте, и в журнале api
+  // при этом пусто: запрос до него не доходит. Так уже терялась переписка человека.
+  assert.equal(isAllowedAdminApiPath("GET", "conversations"), true);
+  assert.equal(
+    isAllowedAdminApiPath("GET", "conversations?filter=unread&limit=50"),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "conversations/00000000-0000-4000-8000-000000000101/messages?limit=50"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "conversations/00000000-0000-4000-8000-000000000101/read"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "conversations/00000000-0000-4000-8000-000000000101/link"
+    ),
+    true
+  );
+  // Список — только для чтения. POST по этому пути не обрабатывает никто, и открытый
+  // путь без обработчика — это обещание, которого api не выполнит.
+  assert.equal(isAllowedAdminApiPath("POST", "conversations"), false);
+});

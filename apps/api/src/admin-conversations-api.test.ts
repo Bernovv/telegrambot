@@ -140,6 +140,8 @@ describe("отдача вложения по HTTP", () => {
 
 const ATTACHMENT_ID = "01a02a91-4b11-70e6-8db0-3e4838c5e5c2";
 const ADMIN_ID = "00000000-0000-4000-8000-000000000099";
+const CONTACT_ID = "3f2a5c88-1f11-4a2e-9c4d-77b0a1e2c3d4";
+const CONVERSATION_ID = "8c1d7e60-2a3b-4c5d-8e9f-0a1b2c3d4e5f";
 
 async function application(
   directory: string,
@@ -187,6 +189,22 @@ async function application(
       }
     },
     adminConversations: {
+      async listInbox() {
+        return {
+          items: [],
+          hasMore: false,
+          counts: { all: 0, mine: 0, unread: 0, unlinked: 0 }
+        };
+      },
+      async getConversation() {
+        return { threads: [], messages: [], hasMore: false };
+      },
+      async markConversationRead() {
+        return { marked: true };
+      },
+      async linkConversation() {
+        return { status: "linked" as const, contactId: CONTACT_ID };
+      },
       async getPersonConversations() {
         return { threads: [], messages: [], hasMore: false };
       },
@@ -204,6 +222,152 @@ async function application(
   });
   await app.init();
   return app;
+}
+
+/**
+ * Маршруты списка диалогов.
+ *
+ * Проверяем не содержимое ответа — оно приходит из службы, у которой свои тесты, — а то,
+ * что маршруты вообще попадают куда надо. Пути здесь пересекаются: `GET /conversations`
+ * рядом с `GET /conversations/people/:id`, а `GET /:id/messages` — с `POST /:id/messages`.
+ * Перепутанный порядок объявления в Nest ловится только настоящим запросом.
+ */
+describe("маршруты переписки", () => {
+  it("отдаёт список диалогов с числами у отборов", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const response = await inject(app, "GET", "/api/v1/conversations?filter=unread");
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.body), {
+        items: [],
+        hasMore: false,
+        counts: { all: 0, mine: 0, unread: 0, unlinked: 0 }
+      });
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("не путает список с перепиской человека", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const person = await inject(
+        app,
+        "GET",
+        `/api/v1/conversations/people/${CONTACT_ID}`
+      );
+      const thread = await inject(
+        app,
+        "GET",
+        `/api/v1/conversations/${CONVERSATION_ID}/messages`
+      );
+
+      assert.equal(person.statusCode, 200);
+      assert.equal(thread.statusCode, 200);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("отвергает неизвестный отбор, а не молча показывает всё", async () => {
+    // Молчаливая замена отбора на «все» — худший вид ошибки: менеджер видит полный список
+    // там, где просил непрочитанные, и считает, что непрочитанных нет.
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const response = await inject(app, "GET", "/api/v1/conversations?filter=whatever");
+
+      assert.equal(response.statusCode, 400);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("отмечает диалог прочитанным", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const response = await inject(
+        app,
+        "POST",
+        `/api/v1/conversations/${CONVERSATION_ID}/read`
+      );
+
+      assert.equal(response.statusCode, 201);
+      assert.deepEqual(JSON.parse(response.body), { marked: true });
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("привязывает безымянный диалог к карточке", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const response = await inject(
+        app,
+        "POST",
+        `/api/v1/conversations/${CONVERSATION_ID}/link`,
+        { contactId: CONTACT_ID }
+      );
+
+      assert.equal(response.statusCode, 201);
+      assert.deepEqual(JSON.parse(response.body), {
+        status: "linked",
+        contactId: CONTACT_ID
+      });
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("не принимает привязку без внятного телефона", async () => {
+    const root = await mkdtemp(join(tmpdir(), "conversation-files-"));
+    const app = await application(root, null);
+
+    try {
+      const response = await inject(
+        app,
+        "POST",
+        `/api/v1/conversations/${CONVERSATION_ID}/link`,
+        { phone: "нет" }
+      );
+
+      assert.equal(response.statusCode, 400);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+async function inject(
+  app: Awaited<ReturnType<typeof createApiApplication>>,
+  method: "GET" | "POST",
+  url: string,
+  payload?: Record<string, unknown>
+) {
+  const fastify = app.getHttpAdapter().getInstance() as FastifyInstance;
+  const headers = { authorization: "Bearer token" };
+  // Две ветки, а не расплывание объекта: у `inject` перегрузки, и на объединении типов
+  // TypeScript выбирает не ту, после чего у ответа пропадает даже `statusCode`.
+  if (payload === undefined) {
+    return await fastify.inject({ method, url, headers });
+  }
+  return await fastify.inject({ method, url, headers, payload });
 }
 
 async function injectFile(

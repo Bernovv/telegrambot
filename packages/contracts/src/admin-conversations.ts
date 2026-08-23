@@ -153,3 +153,86 @@ export interface SendConversationFileRequest {
   readonly caption?: string;
   readonly takeOver?: boolean;
 }
+
+/**
+ * Список диалогов — «Переписки».
+ *
+ * Отдельный от карточки взгляд на ту же переписку: карточка отвечает на вопрос «что у нас с
+ * этим человеком», список — на вопрос «кому мы ещё не ответили». Второй вопрос задают
+ * каждые десять минут, и ради него открывать карточки по одной нельзя.
+ *
+ * Строка списка — это **диалог**, а не человек. У одного человека их бывает несколько: бот
+ * и аккаунт в одном мессенджере — два разных собеседника, и отвечать надо туда, откуда
+ * спросили. Склеивать их в строку списка значило бы прятать, в какой из них уйдёт ответ.
+ */
+
+/**
+ * Отборы списка. Взаимоисключающие: набор галочек даёт больше сочетаний, но вопрос к списку
+ * звучит по одному за раз.
+ *
+ * `unlinked` — диалоги без карточки: человек написал первым, а кто он, мы ещё не знаем.
+ * Раньше такие не были видны нигде, хотя в базе лежали с первого дня переписки.
+ */
+export type AdminInboxFilter = "all" | "mine" | "unread" | "unlinked";
+
+export const ADMIN_INBOX_FILTERS: readonly AdminInboxFilter[] = [
+  "all",
+  "mine",
+  "unread",
+  "unlinked"
+];
+
+export interface AdminInboxItem {
+  readonly conversationId: string;
+  readonly channel: AdminConversationChannel;
+  readonly transport: AdminConversationTransport;
+  readonly status: AdminConversationStatus;
+  /** Карточка человека. Пусто — тот самый диалог без карточки. */
+  readonly contactId: string | null;
+  /**
+   * Чем подписана строка: имя из карточки, а если его нет — телефон, ник или
+   * идентификатор в мессенджере. Пустой подписи не бывает: строка без подписи не
+   * открывается осознанно.
+   */
+  readonly title: string;
+  readonly phone: string | null;
+  readonly telegramUsername: string | null;
+  /** Начало последней реплики. Вложение без текста подписано словом, а не пустотой. */
+  readonly lastMessagePreview: string | null;
+  readonly lastMessageDirection: AdminMessageDirection | null;
+  readonly lastMessageAt: string | null;
+  /** Сколько входящих пришло после того, как этот менеджер открывал диалог. */
+  readonly unreadCount: number;
+  readonly assignedAdminId: string | null;
+  readonly assignedAdminName: string | null;
+}
+
+/**
+ * Числа у отборов. Считаются по всей переписке, а не по выданной странице: «Непрочитанные
+ * 7» на странице из пятидесяти строк — это ответ про семь, а не про пятьдесят.
+ */
+export interface AdminInboxCounts {
+  readonly all: number;
+  readonly mine: number;
+  readonly unread: number;
+  readonly unlinked: number;
+}
+
+export interface AdminInboxPage {
+  readonly items: readonly AdminInboxItem[];
+  readonly hasMore: boolean;
+  readonly counts: AdminInboxCounts;
+}
+
+/**
+ * Чем кончилась привязка диалога к человеку.
+ *
+ * `merged_into_existing` — не ошибка: телефон из диалога уже есть в базе, и заводить вторую
+ * карточку тому же человеку нельзя. Панель показывает, в какую карточку он уехал.
+ */
+export type ConversationLinkResult =
+  | { readonly status: "linked"; readonly contactId: string }
+  | { readonly status: "merged_into_existing"; readonly contactId: string }
+  | { readonly status: "not_found" }
+  /** Диалог уже привязан. Перепривязка — это потеря истории, и делается она слиянием карточек. */
+  | { readonly status: "already_linked"; readonly contactId: string };

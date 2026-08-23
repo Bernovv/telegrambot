@@ -43,6 +43,9 @@ export function isAllowedAdminApiPath(
       || /^outreach\/imports(?:\?.*)?$/i.test(path)
       || /^outreach\/import-rows(?:\?.*)?$/i.test(path)
       || /^outreach\/base\/[0-9a-f-]{36}$/i.test(path)
+      // Список диалогов и лента одного из них. Отбор, поиск и курсор — строкой запроса.
+      || /^conversations(?:\?.*)?$/i.test(path)
+      || /^conversations\/[0-9a-f-]{36}\/messages(?:\?.*)?$/i.test(path)
       // Переписка человека: курсор, поиск и размер страницы идут строкой запроса.
       || /^conversations\/people\/[0-9a-f-]{36}(?:\?.*)?$/i.test(path)
       // Файл вложения. Путь берётся идентификатором вложения, а не именем файла: иначе
@@ -69,7 +72,7 @@ export function isAllowedAdminApiPath(
   if (method === "POST") {
     // Ответ менеджера в конкретный диалог. Путь узкий намеренно: писать можно только в
     // существующий разговор, а не «человеку» — бот первым написать всё равно не может.
-    return /^conversations\/[0-9a-f-]{36}\/(?:messages|files)$/i.test(path)
+    return /^conversations\/[0-9a-f-]{36}\/(?:messages|files|read|link)$/i.test(path)
       || path === "events"
       || path === "broadcasts"
       || path === "broadcast-images"
