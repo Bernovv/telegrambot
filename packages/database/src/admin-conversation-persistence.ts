@@ -1,3 +1,7 @@
+import {
+  conversationAcceptsReply,
+  MAX_BOT_READ_ONLY_REASON
+} from "@ticket-platform/contracts";
 import type {
   AdminConversationAttachment,
   AdminConversationMessage,
@@ -8,6 +12,7 @@ import type {
   AdminConversationsRepository,
   AttachmentFileRepository,
   ConversationQueueScope,
+  ConversationTransport,
   StoredAttachmentFile,
   ConversationReplyQueueRepository,
   ConversationReplyRepository,
@@ -303,11 +308,12 @@ implements ConversationReplyRepository, ConversationFileReplyRepository {
           readonly id: string;
           readonly contact_id: string | null;
           readonly channel: "telegram" | "max";
+          readonly transport: ConversationTransport;
           readonly assigned_admin_id: string | null;
           readonly assigned_admin_name: string | null;
         }>(
           `select conversation.id, conversation.contact_id, conversation.channel,
-                  conversation.assigned_admin_id,
+                  conversation.transport, conversation.assigned_admin_id,
                   coalesce(assignee.display_name, assignee.email_normalized, 'Менеджер')
                     as assigned_admin_name
              from public.conversations conversation
@@ -321,6 +327,12 @@ implements ConversationReplyRepository, ConversationFileReplyRepository {
         if (!conversation) {
           await connection.query("rollback");
           return { status: "not_found" };
+        }
+        // Запрет проверяется до всего остального: реплика, легшая в очередь «на всякий
+        // случай», уже видна человеку в ленте, и отменить её нечем.
+        if (!conversationAcceptsReply(conversation.channel, conversation.transport)) {
+          await connection.query("rollback");
+          return { status: "read_only", reason: MAX_BOT_READ_ONLY_REASON };
         }
         if (
           conversation.assigned_admin_id !== null

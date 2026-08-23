@@ -107,7 +107,10 @@ export type QueueReplyResult =
   | { readonly status: "queued"; readonly messageId: string }
   | { readonly status: "not_found" }
   /** Диалог взят другим менеджером. Перехват — отдельное осознанное действие. */
-  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string };
+  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string }
+  /** В эту ветку отвечать нельзя — и это правило, а не поломка. Причина внутри. */
+  | { readonly status: "read_only"; readonly reason: string };
+
 
 export interface QueueReplyInput {
   readonly conversationId: string;

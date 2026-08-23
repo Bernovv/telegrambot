@@ -693,6 +693,41 @@ async function main(): Promise<void> {
       throw new Error("несуществующий диалог не должен принимать ответ");
     }
   });
+  // Ветка бота MAX только читается: там разговаривает аккаунт компании. Правило стоит в
+  // той же транзакции, что и постановка в очередь, и проверить его можно только по базе:
+  // нужен настоящий диалог с нужным каналом и транспортом.
+  await check("conversations queueReply в ветку бота MAX отвергается", async () => {
+    const maxChat = `smoke-max-${randomUUID()}`;
+    const conversation = await conversations.recordIncoming({
+      channel: "max",
+      transport: "bot",
+      externalChatId: maxChat,
+      sender: { externalUserId: maxChat, username: null, displayName: "Проверка MAX" },
+      externalMessageId: "1",
+      editsExternalMessageId: null,
+      body: "а с ребёнком можно?",
+      attachments: [],
+      occurredAt: now,
+      payload: { update_type: "message_created" },
+      conversationId: randomUUID(),
+      messageId: randomUUID(),
+      contactId: randomUUID(),
+      attachmentIds: [],
+      taskId: randomUUID()
+    });
+
+    const result = await replies.repository.queueReply({
+      conversationId: conversation.conversationId,
+      messageId: randomUUID(),
+      authorAdminId: SITE_ADMIN,
+      body: "смоук",
+      occurredAt: now,
+      takeOver: false
+    });
+    if (result.status !== "read_only") {
+      throw new Error(`ответ в ветку бота MAX встал в очередь: ${result.status}`);
+    }
+  });
   await check("conversations claimQueued", async () => {
     const claimed = await replyQueue.queue.claimQueued({ batchSize: 5, at: now });
     assertChannelsWithin(claimed, ["telegram", "max"], "ответы ботов");

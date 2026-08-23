@@ -7,6 +7,7 @@ import {
   sendConversationReply
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import { conversationAcceptsReply } from "@ticket-platform/contracts/admin-conversations";
 import type {
   AdminConversationAttachment,
   AdminConversationMessage,
@@ -180,7 +181,8 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
       <div ref={bottom} />
 
       <ReplyComposer
-        threads={data.threads}
+        threads={data.threads.filter(answerable)}
+        readOnly={data.threads.filter((thread) => !answerable(thread))}
         onSent={() => setReloads((value) => value + 1)}
       />
     </div>
@@ -199,9 +201,12 @@ export function ConversationFeed({ contactId }: { readonly contactId: string }) 
  */
 function ReplyComposer({
   threads,
+  readOnly,
   onSent
 }: {
   readonly threads: readonly AdminConversationThread[];
+  /** Ветки, в которые отвечать нельзя. Нужны, чтобы объяснить пустое место. */
+  readonly readOnly: readonly AdminConversationThread[];
   readonly onSent: () => void;
 }) {
   const [conversationId, setConversationId] = useState(
@@ -237,6 +242,13 @@ function ReplyComposer({
       sending
         .then((result) => {
           setBusy(false);
+          if (result.status === "read_only") {
+            // Запрет пришёл с сервера — значит, ветка стала только для чтения уже после
+            // того, как панель нарисовала поле. Текст показываем как есть: он объясняет,
+            // куда отвечать вместо этого.
+            setError(result.reason);
+            return;
+          }
           if (result.status === "assigned_to_other") {
             // Не ошибка, а развилка: диалог ведёт коллега, и перехватить его — решение
             // человека. Текст и файл при этом остаются, чтобы не набирать заново.
@@ -260,6 +272,17 @@ function ReplyComposer({
   );
 
   if (threads.length === 0) {
+    // Ветка бота MAX — единственный случай, когда переписка есть, а отвечать в неё нельзя.
+    // Объяснить это важнее, чем спрятать: иначе менеджер решит, что панель сломалась.
+    if (readOnly.some((thread) => thread.channel === "max")) {
+      return (
+        <p className="conversation-empty">
+          В MAX отвечает аккаунт компании, а не бот. Эта ветка — только для чтения; чтобы
+          ответить, человек должен написать аккаунту, либо напишите ему сами из MAX.
+        </p>
+      );
+    }
+
     return (
       <p className="conversation-empty">
         Ответить некуда: человек нам не писал, а первым бот написать не может.
@@ -390,6 +413,11 @@ function ThreadChip({ thread }: { readonly thread: AdminConversationThread }) {
       {/* Бот и аккаунт компании — два разных собеседника для человека, и в ленте они
           обязаны быть различимы. */}
       {thread.transport === "account" ? `${channelName(thread.channel)} · аккаунт` : channelName(thread.channel)}
+      {/* Ветка бота MAX только читается: отвечает аккаунт. Пометка стоит на фишке, а не
+          только у поля ответа, — иначе непонятно, почему выбрать её нельзя. */}
+      {answerable(thread) ? null : (
+        <span className="conversation-thread-readonly">только чтение</span>
+      )}
       <span className="conversation-thread-count">{thread.messageCount}</span>
       {thread.assignedAdminName ? (
         <span className="conversation-thread-assignee">{thread.assignedAdminName}</span>
@@ -544,6 +572,11 @@ function channelName(channel: "telegram" | "max"): string {
  * мелкая неаккуратность: менеджер выбирает вслепую и отвечает не от того имени, с которым
  * человек разговаривал. Там, где ветка одна, лишнее слово только мешает.
  */
+/** Ветка, в которую можно ответить. Правило общее с сервером — оно в договорённостях. */
+function answerable(thread: AdminConversationThread): boolean {
+  return conversationAcceptsReply(thread.channel, thread.transport);
+}
+
 function threadName(
   thread: AdminConversationThread,
   threads: readonly AdminConversationThread[]

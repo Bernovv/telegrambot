@@ -71,6 +71,33 @@ export interface AdminConversationMessage {
   readonly attachments: readonly AdminConversationAttachment[];
 }
 
+/**
+ * Можно ли отвечать в эту ветку.
+ *
+ * Единственное «нельзя» сегодня — **бот MAX**. Решение владельца от 23.08.2026: в MAX
+ * разговаривает аккаунт компании, а бот только продаёт билеты. Если ответить можно двумя
+ * способами, половина ответов уйдёт мимо аккаунта, и человек увидит у себя двух
+ * собеседников вместо одного.
+ *
+ * Входящее в бота при этом продолжает записываться: человек напишет ему независимо от
+ * наших планов — хотя бы в ответ на билет, — и терять сказанное нельзя. Ветка видна, она
+ * просто только для чтения.
+ *
+ * Правило лежит в договорённостях, а не в панели: панель прячет поле ответа, а отказывает
+ * сервер. Панель — это удобство, а не запрет.
+ */
+export function conversationAcceptsReply(
+  channel: AdminConversationChannel,
+  transport: AdminConversationTransport
+): boolean {
+  return !(channel === "max" && transport === "bot");
+}
+
+/** Почему в ветку нельзя ответить. Текст видит менеджер, поэтому он про дело. */
+export const MAX_BOT_READ_ONLY_REASON =
+  "В MAX отвечает аккаунт компании, а не бот. Ветка бота — только для чтения:"
+  + " ответьте в ветке «MAX · аккаунт».";
+
 export interface AdminConversationThread {
   readonly conversationId: string;
   readonly channel: AdminConversationChannel;
@@ -100,7 +127,12 @@ export interface AdminPersonConversations {
  */
 export type ConversationReplyResult =
   | { readonly status: "queued"; readonly messageId: string }
-  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string };
+  | { readonly status: "assigned_to_other"; readonly assignedAdminName: string }
+  /**
+   * В эту ветку отвечать нельзя. Сегодня это только бот MAX: там разговаривает аккаунт
+   * компании, а бот продаёт билеты. Причина приходит текстом — её показывают менеджеру.
+   */
+  | { readonly status: "read_only"; readonly reason: string };
 
 /**
  * Файл, отправляемый из панели.

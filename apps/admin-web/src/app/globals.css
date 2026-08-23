@@ -6441,6 +6441,14 @@ a.person-channel:hover {
   font-weight: 500;
 }
 
+/* Ветка бота MAX: читать можно, отвечать нельзя — там разговаривает аккаунт компании. */
+.conversation-thread-readonly {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
 .conversation-search {
   display: flex;
   align-items: center;
