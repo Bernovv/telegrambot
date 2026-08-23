@@ -131,6 +131,25 @@ const MAX_ACCOUNT = [
   }
 ];
 
+// Аккаунт компании в WhatsApp. Включается наличием WHATSAPP_ACCOUNT_SESSION_DIR. Прокси —
+// в первую очередь и по той же причине, что у Telegram: без него канал не увидит WhatsApp
+// вовсе, а выглядеть это будет как тишина в переписке, а не как ошибка.
+const WHATSAPP_ACCOUNT = [
+  {
+    name: "WHATSAPP_ACCOUNT_PHONE",
+    hint: "номер аккаунта, только цифры и без плюса — так его ждёт привязка по коду",
+    pattern: /^[1-9]\d{7,14}$/,
+    patternHint: "79XXXXXXXXX"
+  },
+  {
+    name: "WHATSAPP_ACCOUNT_PROXY",
+    hint: "прокси до WhatsApp; годится та же амстердамская машина, что у Telegram-аккаунта. "
+      + "Своя переменная, а не общая: одна правка не должна гасить два канала сразу",
+    pattern: /^socks5h?:\/\/[^/]+:\d+$/,
+    patternHint: "socks5://логин:пароль@хост:порт"
+  }
+];
+
 const path = resolve(process.argv[2] ?? ".env");
 const values = parseEnvFile(await readFile(path, "utf8"));
 const problems = [];
@@ -156,6 +175,15 @@ if ((values.get("MAX_ACCOUNT_DEVICE_ID") ?? "") !== "") {
     problems.push(...inspect(variable, {
       required: true,
       context: "аккаунт компании в MAX включён"
+    }));
+  }
+}
+
+if ((values.get("WHATSAPP_ACCOUNT_SESSION_DIR") ?? "") !== "") {
+  for (const variable of WHATSAPP_ACCOUNT) {
+    problems.push(...inspect(variable, {
+      required: true,
+      context: "аккаунт компании в WhatsApp включён"
     }));
   }
 }

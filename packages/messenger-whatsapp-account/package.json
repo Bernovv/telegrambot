@@ -1,0 +1,21 @@
+{
+  "name": "@ticket-platform/messenger-whatsapp-account",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node ../../scripts/noop.mjs dev @ticket-platform/messenger-whatsapp-account",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/messenger-whatsapp-account",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@ticket-platform/application": "workspace:*",
+    "@ticket-platform/messenger-core": "workspace:*",
+    "baileys": "6.7.24",
+    "socks-proxy-agent": "^8.0.5"
+  }
+}

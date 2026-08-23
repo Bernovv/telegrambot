@@ -1,0 +1,24 @@
+{
+  "name": "@ticket-platform/whatsapp-account",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --import tsx --watch src/main.ts",
+    "login": "node --env-file=../../.env --import tsx src/login.ts",
+    "status": "node --env-file=../../.env --import tsx src/status.ts",
+    "whois": "node --env-file=../../.env --import tsx src/whois.ts",
+    "lint": "node ../../scripts/noop.mjs lint @ticket-platform/whatsapp-account",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../scripts/noop.mjs test @ticket-platform/whatsapp-account"
+  },
+  "dependencies": {
+    "@ticket-platform/application": "workspace:*",
+    "@ticket-platform/config": "workspace:*",
+    "@ticket-platform/database": "workspace:*",
+    "@ticket-platform/messenger-whatsapp-account": "workspace:*",
+    "@ticket-platform/observability": "workspace:*",
+    "uuid": "14.0.1"
+  }
+}

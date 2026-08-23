@@ -107,7 +107,10 @@ export default tseslint.config(
       "apps/max-account/src/login.ts",
       "apps/max-account/src/status.ts",
       "apps/max-account/src/whois.ts",
-      "apps/max-account/src/prompts.ts"
+      "apps/max-account/src/prompts.ts",
+      "apps/whatsapp-account/src/login.ts",
+      "apps/whatsapp-account/src/status.ts",
+      "apps/whatsapp-account/src/whois.ts"
     ],
     rules: {
       "no-console": "off"

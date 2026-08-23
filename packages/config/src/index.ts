@@ -250,6 +250,32 @@ export type TelegramAccountConfig =
  * **Экземпляр должен быть один.** Вторая копия на том же токене — второе устройство в их
  * антифроде, а это ровно тот признак, за который аккаунт ограничивают.
  */
+/**
+ * Аккаунт компании в WhatsApp — фаза 3в плана интеграции каналов.
+ *
+ * Отличий от MAX два, и оба про хранение. Сессия здесь не помещается в строку: это учётные
+ * данные плюс сигнальные ключи, которые меняются после каждого сообщения, — отсюда каталог
+ * вместо переменной, и отсюда же требование его резервировать. И прокси обязателен: MAX с
+ * этого сервера доступен напрямую, WhatsApp — нет.
+ *
+ * **Экземпляр должен быть один.** Вторая копия на том же каталоге — это две программы,
+ * пишущие одни и те же ключи, то есть испорченная сессия и новая привязка по коду.
+ */
+export type WhatsAppAccountConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      /** Каталог сессии. Права `700`, резервная копия обязательна. */
+      readonly sessionDir: string;
+      /** Номер аккаунта: только цифры, без плюса — так его ждёт привязка по коду. */
+      readonly phone: string;
+      /** Как аккаунт подписан в списке связанных устройств у владельца номера. */
+      readonly deviceName: string;
+      /** `null` — идём напрямую. На продакшне это запрещено: канал так не работает. */
+      readonly proxyUrl: string | null;
+      readonly requestTimeoutMs: number;
+    };
+
 export type MaxAccountConfig =
   | { readonly enabled: false }
   | {
@@ -864,6 +890,89 @@ export function loadTelegramAccountConfig(env: NodeJS.ProcessEnv): TelegramAccou
     proxy,
     deviceModel: deviceModel === "" ? "Business Proriv CRM" : deviceModel
   };
+}
+
+/**
+ * Аккаунт компании в WhatsApp — фаза 3в плана интеграции каналов.
+ *
+ * Выключен, пока не задан `WHATSAPP_ACCOUNT_SESSION_DIR`. Привязки при этом может ещё не
+ * быть: канал включают до первого входа, а `wa:login` печатает код, который вводят на
+ * телефоне.
+ *
+ * **Прокси обязателен на продакшне.** WhatsApp с этого сервера напрямую недоступен —
+ * домены исключены из национальной системы доменных имён. Своей переменной, а не общей с
+ * Telegram: значение то же самое, но одна правка не должна гасить два канала сразу.
+ */
+export function loadWhatsAppAccountConfig(env: NodeJS.ProcessEnv): WhatsAppAccountConfig {
+  const sessionDir = (env.WHATSAPP_ACCOUNT_SESSION_DIR ?? "").trim();
+  if (sessionDir === "") {
+    return { enabled: false };
+  }
+
+  const proxyUrl = parseWhatsAppAccountProxy(env.WHATSAPP_ACCOUNT_PROXY);
+  if (proxyUrl === null && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
+    throw new Error(
+      "WHATSAPP_ACCOUNT_PROXY is required in production: WhatsApp is not reachable from "
+      + "this server directly. Use the same Amsterdam SOCKS5 as the Telegram account"
+    );
+  }
+
+  const deviceName = (env.WHATSAPP_ACCOUNT_DEVICE_NAME ?? "").trim();
+
+  return {
+    enabled: true,
+    sessionDir,
+    phone: parseWhatsAppAccountPhone(env.WHATSAPP_ACCOUNT_PHONE),
+    deviceName: deviceName === "" ? "Бизнес-Прорыв CRM" : deviceName,
+    proxyUrl,
+    requestTimeoutMs: parseBoundedInteger(
+      env.WHATSAPP_ACCOUNT_REQUEST_TIMEOUT_MS ?? "60000",
+      "WHATSAPP_ACCOUNT_REQUEST_TIMEOUT_MS",
+      1_000,
+      120_000
+    )
+  };
+}
+
+/**
+ * Номер аккаунта: только цифры, международный вид.
+ *
+ * Без плюса — и это не небрежность. Именно так его ждёт вызов привязки по коду, и именно
+ * так WhatsApp возвращает его в адресе человека. Плюс, добавленный «для красоты», превратил
+ * бы сверку «тот ли это номер» в вечное несовпадение.
+ */
+function parseWhatsAppAccountPhone(value: string | undefined): string {
+  const phone = required(value, "WHATSAPP_ACCOUNT_PHONE").trim().replace(/^\+/, "");
+  if (!/^[1-9][0-9]{7,14}$/.test(phone)) {
+    throw new Error("WHATSAPP_ACCOUNT_PHONE must be digits only, e.g. 79001234567");
+  }
+
+  return phone;
+}
+
+/**
+ * Адрес прокси. Годится только SOCKS5: у WhatsApp это и вебсокет, и обычный HTTPS за
+ * файлами, а один агент на оба даёт лишь SOCKS.
+ */
+function parseWhatsAppAccountProxy(value: string | undefined): string | null {
+  const raw = (value ?? "").trim();
+  if (raw === "") {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("WHATSAPP_ACCOUNT_PROXY must be socks5://[user:password@]host:port");
+  }
+  if (url.protocol !== "socks5:" && url.protocol !== "socks5h:") {
+    throw new Error(`Unsupported WHATSAPP_ACCOUNT_PROXY scheme: ${url.protocol}`);
+  }
+  if (url.hostname === "" || url.port === "") {
+    throw new Error("WHATSAPP_ACCOUNT_PROXY must contain a host and a port");
+  }
+
+  return raw;
 }
 
 /**

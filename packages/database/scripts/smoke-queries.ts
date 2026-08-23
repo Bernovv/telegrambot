@@ -573,6 +573,45 @@ async function main(): Promise<void> {
     occurredAt: new Date(now.getTime() + 130_000)
   }));
 
+  // WhatsApp: тот же приём, но карточка человека заводится по телефону, а не по нику. Путь
+  // это новый и целиком на стороне SQL — вставка с `phone_e164` и поиск по уникальному
+  // индексу на нём. Заодно проверяется расширенное ограничение канала: до миграции
+  // `conversations_channel_check` отверг бы эту запись целиком.
+  const smokePhoneDigits = `7999${String(Math.floor(Math.random() * 9_000_000) + 1_000_000)}`;
+  const whatsappJid = `${smokePhoneDigits}@s.whatsapp.net`;
+  await check("conversations recordIncoming (WhatsApp, карточка по телефону)", async () => {
+    const recorded = await conversations.recordIncoming({
+      channel: "whatsapp",
+      transport: "account",
+      externalChatId: whatsappJid,
+      sender: {
+        externalUserId: smokePhoneDigits,
+        username: null,
+        displayName: "Проверка WhatsApp"
+      },
+      externalMessageId: `wa-${randomUUID()}`,
+      editsExternalMessageId: null,
+      body: "здравствуйте, я записывалась на среду",
+      attachments: [{
+        kind: "photo",
+        fileName: null,
+        mimeType: "image/jpeg",
+        sizeBytes: 204_800,
+        externalFileId: `wa:${randomUUID()}`
+      }],
+      occurredAt: new Date(now.getTime() + 140_000),
+      payload: { key: { id: "wa-1" }, message: { conversation: "здравствуйте" } },
+      conversationId: randomUUID(),
+      messageId: randomUUID(),
+      contactId: randomUUID(),
+      attachmentIds: [randomUUID()],
+      taskId: randomUUID()
+    });
+    if (!recorded.stored) {
+      throw new Error("входящее из WhatsApp не записалось");
+    }
+  });
+
   // Очередь скачивания вложений. Отбор здесь — не обычный select: одним запросом идут
   // блокировка с пропуском занятых, аренда строки и join до канала через две таблицы.
   // Ровно такой запрос Postgres и отвергает целиком, если в нём ошибиться колонкой.
@@ -602,6 +641,31 @@ async function main(): Promise<void> {
     console.log(`        вложений аккаунта в очереди: ${String(claimed.length)}`);
     for (const attachment of claimed) {
       await accountAttachments.markAttemptFailed({
+        attachmentId: attachment.id,
+        reason: "смоук",
+        at: now,
+        retryAt: now
+      });
+    }
+  });
+
+  const whatsappAttachments = createAttachmentDownloadPersistence(pool, {
+    transport: "account",
+    channels: ["whatsapp"]
+  }).repository;
+  await check("attachments claimPending (WhatsApp, тело реплики)", async () => {
+    // У WhatsApp файл зашифрован ключом своего сообщения, и загрузчику нужно само
+    // сообщение, а не идентификатор файла. Здесь проверяется, что `payload` доезжает до
+    // очереди: без него канал скачал бы ноль вложений, и выглядело бы это как «файлов нет».
+    const claimed = await whatsappAttachments.claimPending({ batchSize: 5, at: now });
+    assertChannelsWithin(claimed, ["whatsapp"], "вложения аккаунта WhatsApp");
+    const withoutPayload = claimed.find((row) => row.payload === null);
+    if (withoutPayload) {
+      throw new Error("вложение приехало без тела реплики — скачать его будет нечем");
+    }
+    console.log(`        вложений WhatsApp в очереди: ${String(claimed.length)}`);
+    for (const attachment of claimed) {
+      await whatsappAttachments.markAttemptFailed({
         attachmentId: attachment.id,
         reason: "смоук",
         at: now,
