@@ -305,6 +305,12 @@ export type MaxAccountConfig =
       readonly userAgent: string;
       readonly wsUrl: string;
       readonly requestTimeoutMs: number;
+      /**
+       * Писать в журнал каждый пришедший кадр. Выключено по умолчанию: это сотни строк в
+       * день. Включается на время разбирательства — единственный способ увидеть, что MAX
+       * присылает на самом деле, потому что протокол у них не документирован.
+       */
+      readonly trace: boolean;
     };
 
 export interface WorkerConfig extends AppConfig {
@@ -1011,7 +1017,8 @@ export function loadMaxAccountConfig(env: NodeJS.ProcessEnv): MaxAccountConfig {
       "MAX_ACCOUNT_REQUEST_TIMEOUT_MS",
       1_000,
       120_000
-    )
+    ),
+    trace: (env.MAX_ACCOUNT_TRACE ?? "").trim() === "1"
   };
 }
 

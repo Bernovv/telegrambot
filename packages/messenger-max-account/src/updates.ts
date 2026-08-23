@@ -4,7 +4,7 @@ import type {
   IncomingAttachment,
   IncomingConversationMessage
 } from "@ticket-platform/messenger-core";
-import { MaxCommand, MaxOpcode, type MaxInboundFrame } from "./protocol.js";
+import { MaxOpcode, type MaxInboundFrame } from "./protocol.js";
 
 /**
  * Что аккаунту написали — на языке нашей переписки.
@@ -36,6 +36,11 @@ export interface IncomingMaxMessage {
 /**
  * Наше ли это сообщение и от кого.
  *
+ * Отбор идёт только по коду операции. По типу кадра — намеренно нет: ответы на наши вызовы
+ * отсеиваются раньше, в клиенте, а как именно MAX помечает свои же уведомления, мы знать не
+ * можем — их протокол не документирован. Лишнее условие здесь способно только молча съесть
+ * сообщение клиента, и один раз уже съело.
+ *
  * `null` — кадр нам не подходит, и причины ровно три:
  *
  * - **Кадр не про новое сообщение.** Событий у MAX больше сотни: набор текста, реакции,
@@ -52,7 +57,7 @@ export function incomingMessage(
   frame: MaxInboundFrame,
   selfUserId: string
 ): IncomingMaxMessage | null {
-  if (frame.opcode !== MaxOpcode.notifyMessage || frame.cmd === MaxCommand.request) {
+  if (frame.opcode !== MaxOpcode.notifyMessage) {
     return null;
   }
   const payload = frame.payload ?? {};
