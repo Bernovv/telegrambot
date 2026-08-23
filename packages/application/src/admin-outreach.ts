@@ -430,6 +430,11 @@ export interface AdminOutreachRepository {
     readonly campaignContactId: string;
     readonly actorAdminId: string;
     readonly historyId: string;
+    /**
+     * Идентификатор на случай, если карточка доехала до выигранного этапа и человека надо
+     * завести участником мероприятия. Заранее — как везде у нас.
+     */
+    readonly participantId: string;
     readonly stage: OutreachPipelineStage;
     readonly lostReason: OutreachLostReason | null;
     readonly now: Date;
@@ -1966,6 +1971,7 @@ export class AdminOutreachService {
       campaignContactId: input.campaignContactId,
       actorAdminId: input.actor.adminId,
       historyId: this.idGenerator.newId(),
+      participantId: this.idGenerator.newId(),
       stage: input.stage,
       lostReason: outcome === "lost" ? input.lostReason ?? null : null,
       now: input.now

@@ -40,6 +40,7 @@ import {
   TestTube,
   X
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 const AUDIENCE_DEBOUNCE_MS = 300;
@@ -53,11 +54,15 @@ interface AttachedImage {
 }
 
 export default function BroadcastsPage() {
+  // Мероприятие приходит адресом, когда рассылку открыли из самого мероприятия. Отдельного
+  // раздела «Рассылки» в меню больше нет: письмо почти всегда пишут про конкретное событие.
+  const search = useSearchParams();
+  const preselectedEventId = search.get("event") ?? "";
   const [events, setEvents] = useState<readonly AdminEventSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
   const [targetAudience, setTargetAudience] = useState<AdminBroadcastAudience>("orders");
-  const [targetEventId, setTargetEventId] = useState("");
+  const [targetEventId, setTargetEventId] = useState(preselectedEventId);
   const [targetOrderStatus, setTargetOrderStatus] = useState<AdminOrderStatus | "">("");
   const [buttonText, setButtonText] = useState("");
   const [buttonUrl, setButtonUrl] = useState("");

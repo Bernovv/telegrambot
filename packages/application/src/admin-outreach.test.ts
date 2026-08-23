@@ -1146,6 +1146,38 @@ describe("AdminOutreachService", () => {
     );
   });
 
+  it("даёт хранилищу идентификатор участника вместе с переносом", async () => {
+    // Доехавшего до выигранного этапа заводят участником мероприятия в той же транзакции.
+    // Идентификатор для этого приходит отсюда; потеряв его, перенос молча перестанет
+    // заводить людей в список, и заметят это на входе на мероприятие.
+    let received: { readonly participantId?: string } | null = null;
+    const service = new AdminOutreachService(
+      repository({
+        async getPipelineColumnOutcome() { return "won"; },
+        async updateContactStage(input: { readonly participantId?: string }) {
+          received = input;
+
+          return true;
+        }
+      }),
+      { normalize: (value) => value },
+      sequenceIds()
+    );
+
+    await service.updateContactStage({
+      actor: writeActor,
+      campaignContactId: CAMPAIGN_CONTACT_ID,
+      stage: "won",
+      now
+    });
+
+    assert.ok(received);
+    assert.match(
+      (received as { readonly participantId: string }).participantId,
+      /^[0-9a-f-]{36}$|^id-/
+    );
+  });
+
   it("rejects moving a contact to a stage the campaign no longer has", async () => {
     const service = new AdminOutreachService(
       repository({

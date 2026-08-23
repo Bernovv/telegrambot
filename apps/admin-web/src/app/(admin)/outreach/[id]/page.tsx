@@ -1222,13 +1222,23 @@ export default function OutreachCampaignPage() {
 
   return (
     <>
-      <Link className="back-link" href="/outreach">
+      {/* Назад — туда, откуда пришли. У воронки мероприятия это само мероприятие:
+          отдельного раздела «Кампании» в меню больше нет, и возвращать в него человека,
+          который открыл воронку из пикника, значит терять его на полпути. */}
+      <Link
+        className="back-link"
+        href={campaign.eventId === null ? "/base" : `/events/${campaign.eventId}`}
+      >
         <ArrowLeft size={16} />
-        Работа с базой
+        {campaign.eventId === null
+          ? "Работа с базой"
+          : campaign.eventTitle ?? "Мероприятие"}
       </Link>
       <div className="page-heading outreach-heading">
         <div>
-          <p className="eyebrow">Кампания</p>
+          <p className="eyebrow">
+            {campaign.eventId === null ? "Постоянная воронка" : "Воронка мероприятия"}
+          </p>
           <div className="title-with-status">
             <h1>{campaign.name}</h1>
             <StatusPill tone={campaign.status === "completed" ? "neutral" : "positive"}>

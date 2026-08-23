@@ -3461,6 +3461,16 @@ implements AdminOutreachRepository {
           input.now
         ]
       );
+      // Доехал до этапа с исходом «выиграно» — заводим участника мероприятия. В той же
+      // транзакции, что и сам перенос: участник, появившийся без переноса, и перенос без
+      // участника — оба хуже, чем ничего, потому что расходятся с тем, что видит менеджер.
+      await enrolWonParticipant(connection, {
+        campaignContactId: input.campaignContactId,
+        stage: input.stage,
+        participantId: input.participantId,
+        actorAdminId: input.actorAdminId,
+        now: input.now
+      });
       if (
         row.pipeline_stage !== input.stage
         || row.lost_reason !== input.lostReason
@@ -4207,6 +4217,73 @@ async function writeOutreachAudit(
       input.before === null ? null : JSON.stringify(input.before),
       JSON.stringify(input.after),
       input.occurredAt
+    ]
+  );
+}
+
+/**
+ * Участник мероприятия из выигранной карточки воронки.
+ *
+ * Условия проверяются в самом запросе, а не в коде вокруг: так «когда заводить» описано
+ * одним местом и одной транзакцией. Их четыре — кампания привязана к мероприятию, этап
+ * помечен исходом «выиграно», человек ещё не в списке, и строка участия существует.
+ *
+ * **Второй раз не заводим.** Менеджер таскает карточку туда-сюда по десять раз в день, и
+ * каждый заход в «оплатил» не должен добавлять человека в список ещё раз. Проверка идёт по
+ * связке с карточкой человека, а не по имени: тёзки на выезде бывают.
+ *
+ * Имени у контакта может не быть — в списке участников оно обязательно. «Без имени» лучше,
+ * чем отказ завести оплатившего человека: имя дописывают, отсутствие человека в списке
+ * замечают на входе.
+ */
+async function enrolWonParticipant(
+  connection: SqlConnection,
+  input: {
+    readonly campaignContactId: string;
+    readonly stage: string;
+    readonly participantId: string;
+    readonly actorAdminId: string;
+    readonly now: Date;
+  }
+): Promise<void> {
+  await connection.query(
+    `insert into public.event_participants (
+       id, event_id, outreach_contact_id, display_name, phone_e164, source,
+       ticket_title, created_by_admin_id, created_at, updated_at
+     )
+     select $1::uuid,
+            campaign.event_id,
+            contact.id,
+            coalesce(nullif(btrim(contact.display_name), ''), 'Без имени'),
+            contact.phone_e164,
+            'funnel',
+            '',
+            $4::uuid,
+            $5::timestamptz,
+            $5::timestamptz
+       from public.outreach_campaign_contacts member
+       join public.outreach_campaigns campaign on campaign.id = member.campaign_id
+       join public.outreach_contacts contact on contact.id = member.contact_id
+       join public.outreach_pipeline_columns stage_column
+         on stage_column.campaign_id = campaign.id
+        and stage_column.stage = $3::text
+      where member.id = $2::uuid
+        and member.removed_at is null
+        and campaign.event_id is not null
+        and stage_column.outcome = 'won'
+        and not exists (
+          select 1
+            from public.event_participants existing
+           where existing.event_id = campaign.event_id
+             and existing.outreach_contact_id = contact.id
+             and existing.deleted_at is null
+        )`,
+    [
+      input.participantId,
+      input.campaignContactId,
+      input.stage,
+      input.actorAdminId,
+      input.now
     ]
   );
 }

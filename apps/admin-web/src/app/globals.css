@@ -7337,3 +7337,81 @@ a.person-channel:hover {
   color: var(--muted);
   font-weight: 600;
 }
+
+/* Сводка из трёх чисел: та же полоса, что в отчёте, но столбцов три, а не четыре. */
+.metrics-strip-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Отбор и «обновить» справа в шапке раздела. */
+.section-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-note {
+  padding: 12px 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* «Ещё» в ряду вкладок мероприятия: то, что открывают раз в неделю, а не каждый день. */
+.event-tabs-extra {
+  position: relative;
+  flex: none;
+}
+
+.event-tabs-extra > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 9px 13px 11px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13.5px;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.event-tabs-extra > summary::-webkit-details-marker {
+  display: none;
+}
+
+.event-tabs-extra > summary::after {
+  content: "▾";
+  font-size: 10px;
+}
+
+.event-tabs-extra[open] > summary {
+  color: var(--ink);
+}
+
+.event-tabs-extra[open] > summary::after {
+  content: "▴";
+}
+
+.event-tabs-extra > summary:hover {
+  color: var(--ink);
+}
+
+/* Выпадает поверх страницы, а не раздвигает ряд: иначе вкладки прыгают при раскрытии. */
+.event-tabs-extra > div {
+  position: absolute;
+  z-index: 5;
+  top: 100%;
+  right: 0;
+  display: grid;
+  min-width: 190px;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+
+.event-tabs-extra > div .event-tab {
+  border-bottom: 0;
+}
