@@ -302,7 +302,26 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
     );
   }
 
+  /**
+   * Заявка без нового участника: повторная или та, которой не нашлось встречи.
+   *
+   * Раньше здесь записывалась только сама заявка, и человек не попадал никуда: ни в базу,
+   * ни в воронку, ни в чью-то задачу. Теперь путь тот же, что у заявки с участником —
+   * сначала опознание по телефону, потом карточка в воронке и звонок. Разница только в
+   * том, что участника мероприятия не заводим: его либо уже завели, либо заводить не в
+   * какой список.
+   */
   async recordRegistration(input: RecordSiteRegistrationInput): Promise<void> {
+    const contactId = await resolveParticipantContact(this.session, {
+      contactId: input.contactSeedId,
+      displayName: input.name,
+      phoneE164: input.phoneE164,
+      telegram: null,
+      email: null,
+      adminId: input.createdByAdminId,
+      source: SITE_REQUEST_CONTACT_SOURCE
+    });
+
     await this.session.query(
       `insert into public.site_registrations (
          id, event_id, participant_id, display_name, phone_e164,
@@ -329,6 +348,14 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
         input.attribution?.utmTerm ?? null
       ]
     );
+
+    if (contactId === null) {
+      return;
+    }
+    await writeAttribution(this.session, contactId, input.attribution);
+    if (input.enrollment) {
+      await this.enroll(contactId, input.enrollment);
+    }
   }
 }
 
@@ -384,6 +411,14 @@ async function writeAttribution(
     ]
   );
 }
+
+/**
+ * Откуда человек взялся, когда участника мы не заводили.
+ *
+ * Отдельная подпись, а не «Участник мероприятия»: он им не стал — либо уже был в списке,
+ * либо списка не нашлось. В отборе по источнику это разные вещи.
+ */
+const SITE_REQUEST_CONTACT_SOURCE = "Заявка с сайта";
 
 /** Примечание участника: откуда он взялся. Видно прямо в списке, без похода в заявки. */
 function siteNote(page: string): string {

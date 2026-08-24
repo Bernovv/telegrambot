@@ -19,6 +19,50 @@ const EVENT = {
 };
 
 describe("RegisterFromSiteService", () => {
+  it("заявка без встречи всё равно кладётся в воронку со звонком", async () => {
+    // Человек оставил телефон и ждёт звонка. Раньше такая заявка не попадала никуда: ни в
+    // базу, ни в воронку, ни в чью-то задачу, — и находили её, только зайдя в «Заявки с
+    // сайта» и заметив состояние «встреча не нашлась».
+    const state = repositoryState({ event: null });
+    const service = createService(state.repository, []);
+
+    const result = await service.execute({
+      name: "Мария",
+      phone: "8 999 123-45-67",
+      consent: true,
+      now: NOW
+    });
+
+    assert.equal(result.status, "registered");
+    const recorded = state.recorded[0];
+    assert.equal(recorded?.status, "unassigned");
+    assert.equal(recorded?.enrollment?.campaignId, STANDING_CAMPAIGN.campaignId);
+    assert.ok(recorded?.enrollment?.task, "звонок по заявке обязателен");
+    assert.ok(recorded?.contactSeedId, "человека надо опознать или завести");
+  });
+
+  it("повторная заявка тоже проходит опознание и попадает в воронку", async () => {
+    // Второй раз форму отправляют, не увидев окно успеха. Участником он уже числится, а
+    // вот в воронке мог и не быть — например, если первую заявку принимали до того, как
+    // воронка появилась.
+    const state = repositoryState({ existingParticipantId: "participant-1" });
+    const service = createService(state.repository, []);
+
+    const result = await service.execute({
+      name: "Мария",
+      phone: "8 999 123-45-67",
+      consent: true,
+      now: NOW
+    });
+
+    assert.equal(result.status, "already_registered");
+    assert.equal(state.recorded[0]?.status, "duplicate");
+    assert.equal(
+      state.recorded[0]?.enrollment?.campaignId,
+      STANDING_CAMPAIGN.campaignId
+    );
+  });
+
   it("уносит метку рекламы в заявку и в карточку", async () => {
     // Вся реклама ведёт на лендинг, и метка существует только там. Не донеся её сюда,
     // отчёт по источникам не появится вообще: задним числом её взять неоткуда.

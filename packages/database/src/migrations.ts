@@ -339,5 +339,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260828090000_contact_attribution",
     description: "Record the first-touch campaign a contact arrived with, and keep the raw marks on the request",
     destructive: false
+  },
+  {
+    id: "20260829090000_stop_reply_tasks",
+    description: "Stop opening a task for every incoming message now that the inbox shows unread threads",
+    destructive: false
   }
 ];

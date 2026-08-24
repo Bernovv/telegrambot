@@ -118,6 +118,18 @@ export interface RecordSiteRegistrationInput {
   readonly page: string;
   readonly status: "duplicate" | "unassigned";
   readonly attribution: SiteRegistrationAttributionInput | null;
+  /** Идентификатор на случай, если человека в базе ещё нет и карточку придётся завести. */
+  readonly contactSeedId: string;
+  readonly createdByAdminId: string;
+  /**
+   * Куда положить карточку и когда позвонить.
+   *
+   * Раньше воронка и звонок доставались только заявке, по которой завели участника. Заявка
+   * без встречи и повторная заявка не попадали никуда: человек оставил телефон, ждёт
+   * звонка, а в панели его нет. Теперь любая заявка сначала проходит опознание по
+   * телефону, а потом ложится в воронку — с участником или без.
+   */
+  readonly enrollment: SiteRegistrationEnrollment | null;
 }
 
 export interface SiteRegistrationRepository {
@@ -188,6 +200,7 @@ export class RegisterFromSiteService {
     if (!event) {
       // Встречи нет — заявка всё равно принята, а организаторы узнают об этом из сообщения:
       // молча потерять человека здесь хуже, чем прислать заявку без списка.
+      const enrollment = await this.buildEnrollment(input.now);
       await this.unitOfWork.transact(async () => {
         await this.repository.recordRegistration({
           registrationId,
@@ -198,7 +211,10 @@ export class RegisterFromSiteService {
           consentAt: input.now,
           page,
           status: "unassigned",
-          attribution
+          attribution,
+          contactSeedId: this.idGenerator.newId(),
+          createdByAdminId: this.options.systemAdminId,
+          enrollment
         });
         await this.outboxWriter.append(
           submittedEvent(registrationId, this.idGenerator.newId(), input.now)
@@ -216,6 +232,7 @@ export class RegisterFromSiteService {
       // Повторная отправка формы — обычное дело: человек не увидел окно успеха или решил
       // «на всякий случай». В списке он остаётся один, и организаторам о нём не пишем
       // второй раз, но саму заявку сохраняем — по ней видно, что человек приходил снова.
+      const enrollment = await this.buildEnrollment(input.now);
       await this.unitOfWork.transact(async () => {
         await this.repository.recordRegistration({
           registrationId,
@@ -226,15 +243,19 @@ export class RegisterFromSiteService {
           consentAt: input.now,
           page,
           status: "duplicate",
-          attribution
+          attribution,
+          contactSeedId: this.idGenerator.newId(),
+          createdByAdminId: this.options.systemAdminId,
+          enrollment
         });
       });
       return response("already_registered", event.title, event.startsAt);
     }
 
     const participantId = this.idGenerator.newId();
-    // Повторную заявку в воронку не заводим: человек попал туда с первой, и вторая карточка
-    // означала бы два места, где по нему ведут работу.
+    // Вторая карточка в воронке от повторной заявки не появляется: место человека в ней
+    // ищется по нему самому, а не по заявке. Это же верно для заявки без встречи и для
+    // повторной — они тоже проходят опознание и ложатся в ту же карточку.
     const enrollment = await this.buildEnrollment(input.now);
     await this.unitOfWork.transact(async () => {
       await this.repository.createParticipant({
