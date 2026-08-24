@@ -116,15 +116,20 @@ export function EventTabs({
     );
   }
 
+  // «Ещё» стоит рядом с рядом вкладок, а не внутри него. Ряд прокручивается вбок, а всё,
+  // что прокручивается по одной оси, обрезает содержимое и по другой: выпадающий список,
+  // лежащий внутри, срезался бы по нижней кромке ряда.
   return (
-    <nav className="event-tabs" aria-label="Разделы мероприятия">
-      {everyday.map(renderTab)}
+    <div className="event-tabs-row">
+      <nav className="event-tabs" aria-label="Разделы мероприятия">
+        {everyday.map(renderTab)}
+      </nav>
       {extra.length > 0 ? (
         <details className="event-tabs-extra" open={insideExtra}>
           <summary>Ещё</summary>
           <div>{extra.map(renderTab)}</div>
         </details>
       ) : null}
-    </nav>
+    </div>
   );
 }

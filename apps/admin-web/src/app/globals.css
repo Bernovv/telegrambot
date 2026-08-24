@@ -74,9 +74,12 @@ p {
 }
 
 h1 {
-  font-size: clamp(27px, 3vw, 36px);
-  line-height: 1.12;
+  /* Было до 36px. Заголовок в кабинете отвечает на вопрос «где я», а не «что за
+     продукт»: на него смотрят полсекунды, и треть экрана он стоить не должен. */
+  font-size: clamp(21px, 1.7vw, 25px);
+  line-height: 1.15;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 h2 {
@@ -109,8 +112,9 @@ h2 {
 
 .eyebrow {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
@@ -674,7 +678,9 @@ summary.nav-caption:hover {
   width: min(100%, 1480px);
   min-height: 100svh;
   margin: 0 auto;
-  padding: 44px clamp(24px, 4vw, 62px) 64px;
+  /* Было 44px сверху. Кабинет — рабочее место, а не витрина: воздух здесь платится
+     первым экраном, на котором ещё не началась работа. */
+  padding: 24px clamp(20px, 3vw, 44px) 48px;
 }
 
 .page-heading {
@@ -685,26 +691,38 @@ summary.nav-caption:hover {
 }
 
 .page-heading h1 {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .page-heading > div > p:last-child,
 .detail-heading p {
-  margin-top: 8px;
+  margin-top: 3px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 13px;
 }
 
+/*
+ * Полоса отбора.
+ *
+ * Липкая: на длинном списке и на доске из восьмидесяти карточек отбор уезжает вверх, и,
+ * чтобы сменить этап, приходится прокручивать страницу к началу и обратно. `sticky`
+ * безопасен — если родитель почему-то не позволит прилипнуть, полоса просто останется на
+ * месте, как раньше.
+ */
 .filter-bar {
+  position: sticky;
+  z-index: 4;
+  top: 0;
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(170px, 210px) auto;
   align-items: end;
   gap: 12px;
-  margin-top: 30px;
-  padding: 14px;
+  margin-top: 16px;
+  padding: 11px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 7px;
+  box-shadow: 0 1px 0 var(--bg), 0 6px 12px rgb(23 37 31 / 5%);
 }
 
 .search-field {
@@ -817,11 +835,11 @@ summary.nav-caption:hover {
 
 .section-title-row {
   display: flex;
-  min-height: 66px;
+  min-height: 50px;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 13px 18px;
+  gap: 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1052,8 +1070,9 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 26px;
+  margin-bottom: 12px;
   color: var(--muted);
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -1098,13 +1117,22 @@ tbody tr:hover {
   font-size: 15px;
 }
 
+/* Ряд вкладок и «Ещё» рядом с ним. Подчёркивание — на обёртке: сам ряд прокручивается,
+   и линия под ним уезжала бы вместе с вкладками. */
+.event-tabs-row {
+  display: flex;
+  align-items: stretch;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
 .event-tabs {
   display: flex;
+  min-width: 0;
+  flex: 1;
   gap: 4px;
-  margin-top: 22px;
   padding-bottom: 2px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line);
   scrollbar-width: thin;
 }
 
@@ -1453,8 +1481,10 @@ tbody tr:hover {
 
 .metrics-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-top: 30px;
+  /* Было ровно четыре столбца, и пятое число уезжало на вторую строку — полоса
+     занимала вдвое больше места ради одной цифры. Сколько влезет, столько и будет. */
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  margin-top: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -1463,8 +1493,8 @@ tbody tr:hover {
 .metrics-strip > div {
   display: grid;
   min-width: 0;
-  gap: 6px;
-  padding: 20px;
+  gap: 3px;
+  padding: 12px 14px;
   border-right: 1px solid var(--line);
 }
 
@@ -1479,7 +1509,7 @@ tbody tr:hover {
 
 .metrics-strip strong {
   overflow-wrap: anywhere;
-  font-size: 18px;
+  font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1605,7 +1635,18 @@ tbody tr:hover {
 .campaign-event-row {
   align-items: center;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 10px 14px;
+  /* Строка настройки, а не заголовок: она стоит над доской и не должна отодвигать её
+     вниз. Раньше занимала сто пикселей ради одного выпадающего списка. */
+  margin-top: 10px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+}
+
+.campaign-event-row .select-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .campaign-event-row .select-field {
@@ -2212,8 +2253,8 @@ tbody tr:hover {
 
 .outreach-lead-card {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: 9px 10px;
   background: #ffffff;
   border: 1px solid #dce3e6;
   border-radius: 6px;
@@ -2295,14 +2336,33 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-top: 8px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
+}
+
+/*
+ * Кнопки карточки появляются под курсором.
+ *
+ * Они занимают сорок пикселей на каждой карточке — при восьми карточках в колонке это
+ * целый экран, отданный кнопкам, которыми пользуются в одном случае из десяти. Прятать
+ * их можно только там, где есть курсор: на телефоне «навести» нельзя, и на нём они
+ * видны всегда.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .outreach-lead-card .outreach-card-actions {
+    display: none;
+  }
+
+  .outreach-lead-card:hover .outreach-card-actions,
+  .outreach-lead-card:focus-within .outreach-card-actions {
+    display: flex;
+  }
 }
 
 .outreach-card-actions button {
   display: inline-grid;
-  width: 30px;
-  height: 30px;
+  width: 27px;
+  height: 27px;
   place-items: center;
   color: var(--muted);
   background: #ffffff;
@@ -4195,7 +4255,14 @@ tbody tr:hover {
 
   .workspace {
     min-height: calc(100svh - 58px);
-    padding: 28px 18px 48px;
+    padding: 18px 14px 40px;
+  }
+
+  /* Шапка на телефоне липкая и высотой 58px. Полоса отбора прилипает под неё, иначе
+     они наезжают друг на друга и отбор наполовину скрыт. */
+  .filter-bar {
+    top: 58px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .detail-grid {
@@ -6921,7 +6988,9 @@ a.person-channel:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: calc(100svh - 88px);
+  /* Ровно столько, сколько осталось от окна после полей рабочей области: 24 сверху и
+     48 снизу. Число привязано к ним — поменяются поля, надо поменять и здесь. */
+  height: calc(100svh - 72px);
 }
 
 .inbox-heading {
@@ -7360,6 +7429,7 @@ a.person-channel:hover {
 .event-tabs-extra {
   position: relative;
   flex: none;
+  align-self: center;
 }
 
 .event-tabs-extra > summary {
