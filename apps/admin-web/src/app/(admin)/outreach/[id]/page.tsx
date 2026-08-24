@@ -104,8 +104,8 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  SlidersHorizontal,
   ShieldCheck,
-  Tent,
   Users,
   Trash2,
   UserRoundCheck,
@@ -117,6 +117,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
+  type PointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -171,6 +172,92 @@ export default function OutreachCampaignPage() {
   const [onlyWithoutTask, setOnlyWithoutTask] = useState(false);
   const [taskRules, setTaskRules] = useState<readonly OutreachTaskRule[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  /**
+   * Сводка и отбор свёрнуты.
+   *
+   * Пять плиток и строка отбора занимали двести пикселей над доской каждый день ради того,
+   * чем пользуются несколько раз в день. Развернул — посмотрел — свернул. Когда отбор
+   * включён, об этом сказано отдельной строкой: доска, показывающая не всех, обязана
+   * объяснять почему, даже когда сам отбор убран с глаз.
+   */
+  const [toolsOpen, setToolsOpen] = useState(false);
+
+  /**
+   * Доску возят мышкой за пустое место.
+   *
+   * Полосу прокрутки теперь видно всегда, но целиться в неё всё равно неудобно: доска
+   * широкая, а полоса тонкая. Хват за фон — то, как это устроено везде, где есть доски.
+   *
+   * Тянуть можно только за пустое место: карточку таскают по этапам, и перехватив на ней
+   * нажатие, мы бы отняли у неё перетаскивание. Мышкой и только ей — на телефоне доска и
+   * так листается пальцем, и второй обработчик там мешал бы родному прокручиванию.
+   */
+  const panFrom = useRef<{ readonly x: number; readonly left: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+
+  function startPan(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "mouse" || event.button !== 0) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest(".outreach-lead-card, button, a, input, select, label")) {
+      return;
+    }
+    panFrom.current = { x: event.clientX, left: event.currentTarget.scrollLeft };
+    setPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function pan(event: PointerEvent<HTMLDivElement>) {
+    const from = panFrom.current;
+    if (from === null) {
+      return;
+    }
+    event.currentTarget.scrollLeft = from.left - (event.clientX - from.x);
+  }
+
+  function endPan(event: PointerEvent<HTMLDivElement>) {
+    if (panFrom.current === null) {
+      return;
+    }
+    panFrom.current = null;
+    setPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  /**
+   * Доска занимает то, что осталось от окна.
+   *
+   * Считается по месту, а не константой в стилях: над доской стоят заголовок, настройка,
+   * плитки, подсказка и отбор, и высота этой шапки меняется — от длины названия кампании до
+   * того, есть ли жёлтая полоса про карточки без следующего шага. Константа промахнулась бы
+   * на любой из них, а промах здесь означает ровно ту беду, ради которой всё затевалось:
+   * полоса прокрутки снова уезжает под экран.
+   */
+  const fitBoard = useCallback(() => {
+    const board = boardRef.current;
+    if (board === null) {
+      return;
+    }
+    // Положение доски в странице, а не в окне: считаем так, будто страница не прокручена, —
+    // иначе высота зависела бы от того, где человек стоял в момент замера.
+    const top = board.getBoundingClientRect().top + window.scrollY;
+    const room = window.innerHeight - top - BOARD_BOTTOM_GAP;
+    board.style.maxHeight = `${Math.max(room, BOARD_MIN_HEIGHT)}px`;
+  }, []);
+
+  // Без списка зависимостей — после каждой отрисовки. Всё, что стоит над доской, меняет её
+  // положение: развернули настройку, появилась жёлтая полоса, сменилось число колонок.
+  // Перечислять эти поводы значит однажды один забыть, а замер стоит одного вызова.
+  useEffect(fitBoard);
+
+  useEffect(() => {
+    window.addEventListener("resize", fitBoard);
+    return () => window.removeEventListener("resize", fitBoard);
+  }, [fitBoard]);
   const [detail, setDetail] = useState<OutreachCampaignContactDetail | null>(null);
   // Полная карточка человека — та же, что на своей странице в базе. Раньше в панели была
   // своя урезанная версия, и менеджер звонил, не видя ни денег, ни заметок, ни истории по
@@ -369,6 +456,17 @@ export default function OutreachCampaignPage() {
   function outcomeFor(stage: OutreachPipelineStage): OutreachPipelineColumnOutcome {
     return pipelineColumns.find((column) => column.stage === stage)?.outcome
       ?? "open";
+  }
+
+  const filtersActive = filters.search !== undefined
+    || filters.stage !== undefined
+    || filters.assignedAdminId !== undefined
+    || filters.mine === true
+    || onlyWithoutTask;
+
+  function resetFilters() {
+    setOnlyWithoutTask(false);
+    setFilters({ page: 1, limit: view === "board" ? 500 : 50 });
   }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
@@ -1258,6 +1356,15 @@ export default function OutreachCampaignPage() {
           >
             <RefreshCw size={18} />
           </button>
+          <button
+            className="secondary-button"
+            type="button"
+            aria-expanded={toolsOpen}
+            onClick={() => setToolsOpen((current) => !current)}
+          >
+            <SlidersHorizontal size={16} />
+            {toolsOpen ? "Свернуть отбор" : "Отбор и сводка"}
+          </button>
           <input
             ref={fileInput}
             className="sr-only"
@@ -1330,28 +1437,7 @@ export default function OutreachCampaignPage() {
         </div>
       </div>
 
-      <div className="accommodation-note campaign-event-row">
-        <Tent size={16} />
-        <label className="select-field">
-          <span>Мероприятие кампании</span>
-          <select
-            value={campaign.eventId ?? ""}
-            disabled={mutating}
-            onChange={(event) => void changeEvent(event.target.value)}
-          >
-            <option value="">Без привязки</option>
-            {events.map((event) => (
-              <option key={event.id} value={event.id}>{event.title}</option>
-            ))}
-          </select>
-        </label>
-        <span>
-          {campaign.eventTitle
-            ? "Доехал до «оплатил» — участник заводится сам."
-            : "Привяжите мероприятие — и доехавшие до «оплатил» будут попадать в участников сами."}
-        </span>
-      </div>
-
+      {toolsOpen ? (
       <div className="metrics-strip">
         <div><span>Всего контактов</span><strong>{campaign.totalContacts}</strong></div>
         <div><span>Обработано</span><strong>{processed}</strong></div>
@@ -1364,6 +1450,7 @@ export default function OutreachCampaignPage() {
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {campaign.requireOpenTask && withoutTask > 0 ? (
         <div className="outreach-notice">
@@ -1387,6 +1474,17 @@ export default function OutreachCampaignPage() {
       {notice ? <div className="outreach-notice">{notice}</div> : null}
       {error ? <PageError message={error} retry={() => void load()} /> : null}
 
+      {!toolsOpen && filtersActive ? (
+        <div className="outreach-filter-hint">
+          Показаны не все: включён отбор.
+          {" "}
+          <button className="inline-link" type="button" onClick={resetFilters}>
+            Показать всех
+          </button>
+        </div>
+      ) : null}
+
+      {toolsOpen ? (
       <form className="filter-bar outreach-filters" onSubmit={applyFilters}>
         <label className="search-field">
           <Search size={17} aria-hidden="true" />
@@ -1416,6 +1514,7 @@ export default function OutreachCampaignPage() {
           Показать
         </button>
       </form>
+      ) : null}
 
       {selected.length > 0 ? (
         <div className="outreach-bulk-bar">
@@ -1522,7 +1621,14 @@ export default function OutreachCampaignPage() {
                 Показаны первые {contacts.items.length} контактов. Уточните фильтр для полной выборки.
               </div>
             ) : null}
-            <div className={loading ? "outreach-board table-refreshing" : "outreach-board"}>
+            <div
+              ref={boardRef}
+              className={boardClassName(loading, panning)}
+              onPointerDown={startPan}
+              onPointerMove={pan}
+              onPointerUp={endPan}
+              onPointerCancel={endPan}
+            >
               {pipelineColumns.map((column) => (
                 <div
                   className={`outreach-column outreach-column-${column.stage}`}
@@ -1798,6 +1904,27 @@ export default function OutreachCampaignPage() {
               className="outreach-pipeline-form"
               onSubmit={(event) => void submitPipelineSettings(event)}
             >
+              {/* Привязка к мероприятию стояла над доской и отнимала строку каждый день
+                  ради настройки, которую меняют один раз. Её место здесь — рядом с
+                  колонками, где и решают, чем эта воронка занята. */}
+              <label className="select-field outreach-pipeline-event">
+                <span>Мероприятие воронки</span>
+                <select
+                  value={campaign.eventId ?? ""}
+                  disabled={mutating}
+                  onChange={(event) => void changeEvent(event.target.value)}
+                >
+                  <option value="">Без привязки</option>
+                  {events.map((event) => (
+                    <option key={event.id} value={event.id}>{event.title}</option>
+                  ))}
+                </select>
+                <small>
+                  {campaign.eventTitle
+                    ? "Доехал до колонки с результатом «выигран» — участник заводится сам."
+                    : "Привяжите мероприятие — и доехавшие до «выигран» попадут в участников сами."}
+                </small>
+              </label>
               <div className="outreach-pipeline-list">
                 {pipelineDraft.map((column, index) => (
                   <div key={column.stage ?? `draft-${index}`}>
@@ -2569,6 +2696,20 @@ function toPipelineDraft(
   columns: readonly OutreachPipelineColumn[]
 ): readonly OutreachPipelineColumnDraft[] {
   return columns.map(({ stage, label, outcome }) => ({ stage, label, outcome }));
+}
+
+/** Сколько оставить под доской, чтобы полоса прокрутки не липла к нижнему краю окна. */
+const BOARD_BOTTOM_GAP = 20;
+/** Ниже этого доска не сжимается: на низком окне лучше прокрутка страницы, чем щель. */
+const BOARD_MIN_HEIGHT = 320;
+
+/** Три состояния доски в одном месте: обычная, обновляемая, возимая мышкой. */
+function boardClassName(loading: boolean, panning: boolean): string {
+  return [
+    "outreach-board",
+    loading ? "table-refreshing" : "",
+    panning ? "outreach-board-dragging" : ""
+  ].filter((name) => name !== "").join(" ");
 }
 
 const DEFAULT_PIPELINE_COLUMNS: readonly OutreachPipelineColumn[] = [

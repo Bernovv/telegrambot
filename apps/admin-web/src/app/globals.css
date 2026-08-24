@@ -1632,21 +1632,17 @@ tbody tr:hover {
   margin-top: 2px;
 }
 
-.campaign-event-row {
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  /* Строка настройки, а не заголовок: она стоит над доской и не должна отодвигать её
-     вниз. Раньше занимала сто пикселей ради одного выпадающего списка. */
-  margin-top: 10px;
-  padding: 7px 12px;
-  font-size: 12.5px;
+/* Привязка воронки к мероприятию. Живёт в настройках воронки: её задают один раз, а над
+   доской она отнимала строку каждый день. */
+.outreach-pipeline-event {
+  padding-bottom: 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
 }
 
-.campaign-event-row .select-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.outreach-pipeline-event small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .campaign-event-row .select-field {
@@ -2145,18 +2141,47 @@ tbody tr:hover {
   font-size: 12px;
 }
 
+/*
+ * Доска воронки.
+ *
+ * **Высота ограничена окном.** Раньше доска росла вместе с самой длинной колонкой, а
+ * полоса горизонтальной прокрутки живёт по её нижнему краю — то есть уезжала вниз вместе с
+ * карточками. Чтобы сдвинуться вправо, приходилось сначала прокрутить страницу до конца
+ * доски, найти полосу, сдвинуть, вернуться наверх. Теперь доска занимает то, что осталось
+ * от окна, и её полоса всегда на экране.
+ *
+ * Вертикальную прокрутку при этом забирает каждая колонка себе: длинный «Звонок
+ * состоялся» листается сам и не тянет за собой соседние.
+ */
 .outreach-board {
   display: flex;
-  min-height: 470px;
+  min-height: 320px;
+  max-height: calc(100svh - 190px);
   gap: 10px;
   padding: 0 16px 18px;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
+  /* Прокручивается сама доска, обе оси сразу. Пробовал отдать вертикаль колонкам: в
+     контейнере, у которого высота задана только через `max-height`, проценты у детей не
+     разрешаются, и колонка просто не сжимается — доска снова растёт вниз вместе с самой
+     длинной. Одна область прокрутки надёжнее и ведёт себя одинаково во всех браузерах. */
+  overflow: auto;
+  overscroll-behavior: contain;
+  cursor: grab;
+}
+
+/* Доску можно возить мышкой за пустое место — см. `onPointerDown` на самой доске. */
+.outreach-board-dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .outreach-column {
+  display: flex;
   width: 264px;
   min-width: 264px;
+  flex-direction: column;
+  /* Колонка тянется на всю высоту доски: короткая колонка тоже должна принимать
+     карточку, а не быть полоской в три сантиметра. */
+  align-self: stretch;
   padding-top: 4px;
   background: #f2f5f6;
   border-top: 3px solid #aeb9bf;
@@ -2246,8 +2271,11 @@ tbody tr:hover {
 .outreach-column-cards {
   display: grid;
   align-content: start;
+  /* Чтобы в пустую колонку было куда целиться карточкой. Меньше прежних 410: доска
+     теперь прокручивается сама, и высоту ей задаёт окно, а не самая пустая колонка. */
+  min-height: 180px;
+  flex: 1;
   gap: 8px;
-  min-height: 410px;
   padding: 0 8px 8px;
 }
 
@@ -7484,4 +7512,15 @@ a.person-channel:hover {
 
 .event-tabs-extra > div .event-tab {
   border-bottom: 0;
+}
+
+/* Доска показывает не всех, а сам отбор свёрнут — об этом надо сказать прямо. */
+.outreach-filter-hint {
+  margin-top: 12px;
+  padding: 8px 14px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid #eddcb4;
+  border-radius: 7px;
+  font-size: 12.5px;
 }
