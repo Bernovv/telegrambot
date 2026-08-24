@@ -10,6 +10,7 @@ import {
   markConversationRead
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import {
   ADMIN_INBOX_FILTERS,
   type AdminInboxFilter,
@@ -317,7 +318,7 @@ function UnknownPerson({
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {

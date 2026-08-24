@@ -59,6 +59,7 @@ import {
   type OutreachPipelineColumnDraft
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import {
   LOST_REASONS,
   lostReasonLabel,
@@ -271,7 +272,7 @@ export default function OutreachCampaignPage() {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const [otherCampaigns, setOtherCampaigns] =
     useState<readonly OutreachCampaignSummary[]>([]);
   const [events, setEvents] = useState<readonly AdminEventSummary[]>([]);

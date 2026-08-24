@@ -1,5 +1,6 @@
 "use client";
 
+import { useNotice } from "@/lib/use-notice";
 import { PageError, PageLoading } from "@/components/page-state";
 import { StatusPill } from "@/components/status-pill";
 import { MentorCalendar } from "@/components/mentor-calendar";
@@ -57,7 +58,7 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);

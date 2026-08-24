@@ -35,6 +35,7 @@ import {
   updateOutreachPerson
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import type {
   OutreachDeleteBlocker,
   OutreachCampaignSummary,
@@ -100,7 +101,7 @@ export default function OutreachPersonPage(
   const [person, setPerson] = useState<OutreachPersonCard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const [editing, setEditing] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [blockers, setBlockers] = useState<readonly OutreachDeleteBlocker[]>([]);

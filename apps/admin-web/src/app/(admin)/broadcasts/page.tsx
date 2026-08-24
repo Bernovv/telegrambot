@@ -23,6 +23,7 @@ import {
   recipientCountLabel
 } from "@/lib/broadcast";
 import { orderStatusLabel } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import {
   ADMIN_BROADCAST_AUDIENCES,
   ADMIN_ORDER_STATUSES,
@@ -74,7 +75,7 @@ export default function BroadcastsPage() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [sending, setSending] = useState<"live" | "test" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
 
   const loadEvents = useCallback(async (signal?: AbortSignal) => {
     setLoadError(null);

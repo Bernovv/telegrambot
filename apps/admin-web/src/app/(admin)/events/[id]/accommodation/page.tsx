@@ -13,6 +13,7 @@ import {
   splitAccommodationGroup
 } from "@/lib/admin-api";
 import { formatDateTime, formatKopecks } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import type {
   AccommodationPartyView,
   AccommodationSummary,
@@ -44,7 +45,7 @@ export default function EventAccommodationPage() {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [openParticipantId, setOpenParticipantId] = useState<string | null>(null);

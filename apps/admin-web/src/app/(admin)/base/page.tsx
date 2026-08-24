@@ -10,6 +10,7 @@ import {
   startOutreachImport
 } from "@/lib/admin-api";
 import { formatCompactDate } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import { parseOutreachCsv } from "@/lib/outreach-csv";
 import {
   type OutreachChannelLookupState,
@@ -85,7 +86,7 @@ export default function OutreachBasePage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const [importing, setImporting] = useState(false);
   const [pendingImportRows, setPendingImportRows] = useState(0);
 

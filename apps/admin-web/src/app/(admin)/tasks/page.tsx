@@ -19,6 +19,7 @@ import {
   listOutreachTaskBoard
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import type {
   OutreachManager,
   OutreachTaskBoardItem,
@@ -82,7 +83,7 @@ export default function OutreachTasksPage() {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   // Касание записывается по строке участия в кампании — у задачи про человека вообще её
   // нет, и связаться с доски по такой задаче не выйдет. Поэтому храним не саму задачу, а
   // уже разобранную цель: так у диалога нет пустых полей, которые он не знает чем закрыть.

@@ -1,5 +1,6 @@
 "use client";
 
+import { useNotice } from "@/lib/use-notice";
 import {
   confirmManualPayment,
   newIdempotencyKey,
@@ -53,7 +54,7 @@ export function OrderActions({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
 
   const payable = PAYABLE_STATUSES.has(order.status);
   const refundable = REFUNDABLE_STATUSES.has(order.status);

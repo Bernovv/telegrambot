@@ -9,6 +9,7 @@ import {
   retryOutreachImportRow
 } from "@/lib/admin-api";
 import { formatDateTime } from "@/lib/format";
+import { useNotice } from "@/lib/use-notice";
 import type {
   OutreachImportRow,
   OutreachImportRowRecord,
@@ -23,7 +24,7 @@ export default function OutreachImportsPage() {
   const [rows, setRows] = useState<readonly OutreachImportRowRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNotice();
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
