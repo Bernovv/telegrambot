@@ -1516,10 +1516,12 @@ tbody tr:hover {
 /* Пять кнопок и длинное название кампании не помещаются в одну строку даже на
    широком ноутбуке, поэтому кнопки всегда идут отдельной строкой под
    заголовком — иначе они рвутся на две правые «ступеньки». */
+/* Было пять кнопок в ряд под заголовком, отсюда и колонка с большим просветом. Осталась
+   одна — «Действия», — и ей просвет в восемнадцать пикселей ни к чему. */
 .outreach-heading {
   align-items: stretch;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
 }
 
 .accommodation-heading {
@@ -7523,4 +7525,57 @@ a.person-channel:hover {
   border: 1px solid #eddcb4;
   border-radius: 7px;
   font-size: 12.5px;
+}
+
+/* ─────────── Меню действий: всё, что нажимают не каждый день ─────────── */
+
+.actions-menu {
+  position: relative;
+}
+
+.actions-menu-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  /* По левому краю кнопки: сама кнопка стоит слева под заголовком, и список, выровненный
+     по правому краю, ушёл бы за левый край окна — он шире кнопки вдвое. */
+  left: 0;
+  display: grid;
+  min-width: 232px;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+
+.actions-menu-list button {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13.5px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.actions-menu-list button:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.actions-menu-list button:disabled {
+  color: var(--faint, #9aa4a0);
+  cursor: not-allowed;
+}
+
+.actions-menu-list svg {
+  flex: none;
+  color: var(--muted);
 }

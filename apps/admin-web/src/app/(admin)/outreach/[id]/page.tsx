@@ -103,6 +103,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  MoreHorizontal,
   Settings2,
   SlidersHorizontal,
   ShieldCheck,
@@ -118,6 +119,7 @@ import {
   type DragEvent,
   type FormEvent,
   type PointerEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -1346,25 +1348,6 @@ export default function OutreachCampaignPage() {
           <p>{campaign.description ?? "Без описания"}</p>
         </div>
         <div className="heading-actions">
-          <button
-            className="icon-button bordered"
-            type="button"
-            aria-label="Обновить"
-            title="Обновить"
-            disabled={loading || mutating}
-            onClick={() => void load()}
-          >
-            <RefreshCw size={18} />
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            aria-expanded={toolsOpen}
-            onClick={() => setToolsOpen((current) => !current)}
-          >
-            <SlidersHorizontal size={16} />
-            {toolsOpen ? "Свернуть отбор" : "Отбор и сводка"}
-          </button>
           <input
             ref={fileInput}
             className="sr-only"
@@ -1372,68 +1355,87 @@ export default function OutreachCampaignPage() {
             accept=".csv,text/csv"
             onChange={(event) => void importCsv(event)}
           />
-          <button
-            className="primary-button"
-            type="button"
-            disabled={mutating || campaign.status === "completed"}
-            onClick={() => setContactFormOpen(true)}
-          >
-            <Plus size={16} />
-            Добавить контакт
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating || campaign.status === "completed"}
-            onClick={() => {
-              setBaseOpen(true);
-              setBaseSelected([]);
-              void loadBaseContacts("");
-            }}
-          >
-            <Users size={16} />
-            Добавить из базы
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating || campaign.status === "completed"}
-            onClick={() => fileInput.current?.click()}
-          >
-            <FileUp size={16} />
-            Импорт CSV
-          </button>
-          {campaign.eventId ? (
+          {/*
+            Семь кнопок занимали над доской целую строку, а нажимают их по одной и не
+            каждый день: контакт добавляют руками редко, импорт и экспорт — раз в неделю,
+            «Завершить» — один раз за жизнь воронки. Место над доской дороже.
+          */}
+          <ActionsMenu>
             <button
-              className="secondary-button"
               type="button"
-              disabled={mutating}
-              onClick={() => void importParticipants()}
+              disabled={loading || mutating}
+              onClick={() => void load()}
+            >
+              <RefreshCw size={16} />
+              Обновить
+            </button>
+            <button
+              type="button"
+              aria-expanded={toolsOpen}
+              onClick={() => setToolsOpen((current) => !current)}
+            >
+              <SlidersHorizontal size={16} />
+              {toolsOpen ? "Свернуть отбор и сводку" : "Отбор и сводка"}
+            </button>
+            <button
+              type="button"
+              disabled={mutating || campaign.status === "completed"}
+              onClick={() => setContactFormOpen(true)}
+            >
+              <Plus size={16} />
+              Добавить контакт
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPipelineDraft(toPipelineDraft(pipelineColumns));
+                setPipelineSettingsOpen(true);
+              }}
+            >
+              <Settings2 size={16} />
+              Настроить воронку
+            </button>
+            <button
+              type="button"
+              disabled={mutating || campaign.status === "completed"}
+              onClick={() => {
+                setBaseOpen(true);
+                setBaseSelected([]);
+                void loadBaseContacts("");
+              }}
             >
               <Users size={16} />
-              Загрузить участников
+              Добавить из базы
             </button>
-          ) : null}
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={mutating}
-            onClick={() => void downloadExport()}
-          >
-            <Download size={16} />
-            Экспорт
-          </button>
-          {campaign.status !== "completed" ? (
             <button
-              className="secondary-button"
               type="button"
-              disabled={mutating}
-              onClick={() => void completeCampaign()}
+              disabled={mutating || campaign.status === "completed"}
+              onClick={() => fileInput.current?.click()}
             >
-              <Check size={16} />
-              Завершить
+              <FileUp size={16} />
+              Импорт CSV
             </button>
-          ) : null}
+            {campaign.eventId ? (
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={() => void importParticipants()}
+              >
+                <Users size={16} />
+                Загрузить участников
+              </button>
+            ) : null}
+            <button type="button" disabled={mutating} onClick={() => void downloadExport()}>
+              <Download size={16} />
+              Экспорт
+            </button>
+            {campaign.status !== "completed" ? (
+              <button type="button" disabled={mutating} onClick={() => void completeCampaign()}>
+                <Check size={16} />
+                Завершить
+              </button>
+            ) : null}
+          </ActionsMenu>
         </div>
       </div>
 
@@ -1574,17 +1576,6 @@ export default function OutreachCampaignPage() {
             <span>{contacts ? `${contacts.total} в кампании` : "—"}</span>
           </div>
           <div className="outreach-toolbar-actions">
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => {
-                setPipelineDraft(toPipelineDraft(pipelineColumns));
-                setPipelineSettingsOpen(true);
-              }}
-            >
-              <Settings2 size={16} />
-              Настроить воронку
-            </button>
             <div className="outreach-view-toggle" aria-label="Вид контактов">
               <button
                 type="button"
@@ -2696,6 +2687,62 @@ function toPipelineDraft(
   columns: readonly OutreachPipelineColumn[]
 ): readonly OutreachPipelineColumnDraft[] {
   return columns.map(({ stage, label, outcome }) => ({ stage, label, outcome }));
+}
+
+/**
+ * Меню действий воронки.
+ *
+ * Закрывается само — по нажатию внутри, по щелчку мимо и по Escape. Без этого меню из
+ * восьми пунктов остаётся открытым поверх доски, и его приходится закрывать той же
+ * кнопкой, которой открыли: неудобно ровно там, где мы место и освобождали.
+ */
+function ActionsMenu({ children }: { readonly children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function away(event: MouseEvent) {
+      if (!box.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div className="actions-menu" ref={box}>
+      <button
+        className="secondary-button"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <MoreHorizontal size={16} />
+        Действия
+      </button>
+      {open ? (
+        // Нажали пункт — меню закрылось. Обработчик один на всех: своего у каждой кнопки
+        // не нужно, а забыть его в одной из восьми — обычное дело.
+        <div className="actions-menu-list" role="menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Сколько оставить под доской, чтобы полоса прокрутки не липла к нижнему краю окна. */
