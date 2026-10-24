@@ -135,10 +135,15 @@ export interface RecordSiteRegistrationInput {
 export interface SiteRegistrationRepository {
   /** Воронка направления, в которую попадают заявки. `null` — её не завели. */
   findStandingCampaign(slugPrefix: string): Promise<SiteRegistrationCampaign | null>;
-  /** Ближайшая встреча, на которую сейчас идёт запись с сайта. */
+  /**
+   * Встреча, на которую идёт запись с сайта: ближайшая — или та, что в этот день, если
+   * человек выбрал день в расписании.
+   */
   findRegistrationEvent(input: {
     readonly slugPrefix: string;
     readonly now: Date;
+    /** «2026-10-28» по местному времени мероприятия. Пусто — ближайшая. */
+    readonly date: string | null;
   }): Promise<SiteRegistrationEvent | null>;
   /** Идентификатор участника с этим телефоном, если он в списке встречи уже есть. */
   findParticipantByPhone(input: {
@@ -163,6 +168,23 @@ export interface SiteRegistrationOptions {
   readonly eventSlugPrefix: string;
   /** От чьего имени заводится участник: служебная учётная запись из миграции. */
   readonly systemAdminId: string;
+  /**
+   * Страницы со своим расписанием: страница → начало слага её мероприятий.
+   *
+   * У страницы мастер-классов Чурсина свои встречи по средам, параллельно с большой
+   * встречей. Ближайшая по общему префиксу записала бы человека не туда, поэтому у такой
+   * страницы свой префикс (`chursin` → `chursin-2026-10-28`), а день он выбирает сам.
+   * Страница из запроса — только ключ в этом списке: незнакомая страница пишет туда же,
+   * куда и раньше, и выбрать произвольное мероприятие через неё нельзя.
+   */
+  readonly pagePrefixes?: Readonly<Record<string, string>>;
+  /**
+   * Писать ли организаторам в Telegram о каждой заявке.
+   *
+   * Выключается, когда заявку принимает приёмник на сервере сайта и пишет организаторам
+   * сам, а сюда только пересылает: иначе каждая заявка приходила бы в чат дважды.
+   */
+  readonly notifyOrganizers?: boolean;
 }
 
 export class RegisterFromSiteService {
@@ -180,6 +202,8 @@ export class RegisterFromSiteService {
     readonly phone: string;
     readonly consent: boolean;
     readonly page?: string;
+    /** День встречи из расписания страницы, «2026-10-28». */
+    readonly meeting?: string;
     readonly attribution?: SiteRegistrationAttribution;
     readonly now: Date;
   }): Promise<SiteRegistrationResponse> {
@@ -192,15 +216,17 @@ export class RegisterFromSiteService {
     const page = (input.page ?? "").trim().slice(0, 200);
     const attribution = normalizeAttribution(input.attribution);
     const registrationId = this.idGenerator.newId();
+    const slugPrefix = this.options.pagePrefixes?.[page] ?? this.options.eventSlugPrefix;
     const event = await this.repository.findRegistrationEvent({
-      slugPrefix: this.options.eventSlugPrefix,
-      now: input.now
+      slugPrefix,
+      now: input.now,
+      date: meetingDate(input.meeting)
     });
 
     if (!event) {
       // Встречи нет — заявка всё равно принята, а организаторы узнают об этом из сообщения:
       // молча потерять человека здесь хуже, чем прислать заявку без списка.
-      const enrollment = await this.buildEnrollment(input.now);
+      const enrollment = await this.buildEnrollment(input.now, slugPrefix);
       await this.unitOfWork.transact(async () => {
         await this.repository.recordRegistration({
           registrationId,
@@ -216,9 +242,7 @@ export class RegisterFromSiteService {
           createdByAdminId: this.options.systemAdminId,
           enrollment
         });
-        await this.outboxWriter.append(
-          submittedEvent(registrationId, this.idGenerator.newId(), input.now)
-        );
+        await this.notifyOrganizers(registrationId, input.now);
       });
       return response("registered", null, null);
     }
@@ -232,7 +256,7 @@ export class RegisterFromSiteService {
       // Повторная отправка формы — обычное дело: человек не увидел окно успеха или решил
       // «на всякий случай». В списке он остаётся один, и организаторам о нём не пишем
       // второй раз, но саму заявку сохраняем — по ней видно, что человек приходил снова.
-      const enrollment = await this.buildEnrollment(input.now);
+      const enrollment = await this.buildEnrollment(input.now, slugPrefix);
       await this.unitOfWork.transact(async () => {
         await this.repository.recordRegistration({
           registrationId,
@@ -256,7 +280,7 @@ export class RegisterFromSiteService {
     // Вторая карточка в воронке от повторной заявки не появляется: место человека в ней
     // ищется по нему самому, а не по заявке. Это же верно для заявки без встречи и для
     // повторной — они тоже проходят опознание и ложатся в ту же карточку.
-    const enrollment = await this.buildEnrollment(input.now);
+    const enrollment = await this.buildEnrollment(input.now, slugPrefix);
     await this.unitOfWork.transact(async () => {
       await this.repository.createParticipant({
         registrationId,
@@ -271,12 +295,19 @@ export class RegisterFromSiteService {
         enrollment,
         attribution
       });
-      await this.outboxWriter.append(
-        submittedEvent(registrationId, this.idGenerator.newId(), input.now)
-      );
+      await this.notifyOrganizers(registrationId, input.now);
     });
 
     return response("registered", event.title, event.startsAt);
+  }
+
+  private async notifyOrganizers(registrationId: string, now: Date): Promise<void> {
+    if (this.options.notifyOrganizers === false) {
+      return;
+    }
+    await this.outboxWriter.append(
+      submittedEvent(registrationId, this.idGenerator.newId(), now)
+    );
   }
 
   /**
@@ -286,11 +317,10 @@ export class RegisterFromSiteService {
    * терять заявку: участник заведётся и без неё, а организаторы получат сообщение.
    */
   private async buildEnrollment(
-    now: Date
+    now: Date,
+    slugPrefix: string
   ): Promise<SiteRegistrationEnrollment | null> {
-    const campaign = await this.repository.findStandingCampaign(
-      this.options.eventSlugPrefix
-    );
+    const campaign = await this.repository.findStandingCampaign(slugPrefix);
     if (!campaign) {
       return null;
     }
@@ -343,6 +373,19 @@ function response(
     eventTitle,
     startsAt: startsAt ? startsAt.toISOString() : null
   };
+}
+
+/** «2026-10-28» — и только такая дата. Остальное не ошибка формы, а «дня не выбрали». */
+function meetingDate(raw: string | undefined): string | null {
+  const value = (raw ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().startsWith(value)
+    ? value
+    : null;
 }
 
 function normalizeName(rawName: string): string {

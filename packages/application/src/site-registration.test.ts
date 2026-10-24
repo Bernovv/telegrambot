@@ -6,6 +6,7 @@ import {
   RegisterFromSiteService,
   type CreateSiteParticipantInput,
   type RecordSiteRegistrationInput,
+  type SiteRegistrationOptions,
   type SiteRegistrationRepository
 } from "./site-registration.js";
 import type { OutboxWriter, UnitOfWork } from "./identity.js";
@@ -293,12 +294,78 @@ describe("RegisterFromSiteService", () => {
     });
 
     assert.equal(state.lookups[0]?.slugPrefix, "sreda");
+    assert.equal(state.lookups[0]?.date, null);
+  });
+
+  it("страница с расписанием ищет свою встречу в выбранный день", async () => {
+    // Мастер-классы Чурсина идут по средам параллельно с большой встречей. Ближайшая по
+    // общему префиксу записала бы человека не туда.
+    const state = repositoryState();
+    const service = createService(state.repository, [], {
+      pagePrefixes: { chursin: "chursin" }
+    });
+
+    await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      page: "chursin",
+      meeting: "2026-10-28",
+      now: NOW
+    });
+
+    assert.deepEqual(
+      { prefix: state.lookups[0]?.slugPrefix, date: state.lookups[0]?.date },
+      { prefix: "chursin", date: "2026-10-28" }
+    );
+    assert.equal(state.campaignPrefixes[0], "chursin");
+  });
+
+  it("незнакомая страница и кривая дата не уводят заявку в чужое мероприятие", async () => {
+    const state = repositoryState();
+    const service = createService(state.repository, [], {
+      pagePrefixes: { chursin: "chursin" }
+    });
+
+    await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      page: "picnic",
+      meeting: "2026-02-30",
+      now: NOW
+    });
+
+    assert.deepEqual(
+      { prefix: state.lookups[0]?.slugPrefix, date: state.lookups[0]?.date },
+      { prefix: "sreda", date: null }
+    );
+  });
+
+  it("не пишет организаторам, когда это делает приёмник сайта", async () => {
+    // Приёмник на сервере сайта пишет в чат сам и сюда только пересылает заявку: второе
+    // сообщение о той же заявке было бы эхом.
+    const appended: DomainEvent[] = [];
+    const state = repositoryState();
+    const service = createService(state.repository, appended, { notifyOrganizers: false });
+
+    const result = await service.execute({
+      name: "Мария Соколова",
+      phone: "+79991234567",
+      consent: true,
+      now: NOW
+    });
+
+    assert.equal(result.status, "registered");
+    assert.equal(state.created.length, 1);
+    assert.equal(appended.length, 0);
   });
 });
 
 function createService(
   repository: SiteRegistrationRepository,
-  appended: DomainEvent[]
+  appended: DomainEvent[],
+  extra: Pick<SiteRegistrationOptions, "pagePrefixes" | "notifyOrganizers"> = {}
 ): RegisterFromSiteService {
   let id = 0;
 
@@ -312,7 +379,11 @@ function createService(
     } satisfies OutboxWriter,
     unitOfWork(),
     { newId() { id += 1; return `id-${id}`; } },
-    { eventSlugPrefix: "sreda", systemAdminId: "00000000-0000-4000-8000-000000000001" }
+    {
+      eventSlugPrefix: "sreda",
+      systemAdminId: "00000000-0000-4000-8000-000000000001",
+      ...extra
+    }
   );
 }
 
@@ -336,7 +407,12 @@ function repositoryState(options: {
 } = {}) {
   const created: CreateSiteParticipantInput[] = [];
   const recorded: RecordSiteRegistrationInput[] = [];
-  const lookups: { readonly slugPrefix: string; readonly now: Date }[] = [];
+  const lookups: {
+    readonly slugPrefix: string;
+    readonly now: Date;
+    readonly date: string | null;
+  }[] = [];
+  const campaignPrefixes: string[] = [];
   const event = options.event === undefined ? EVENT : options.event;
 
   const repository: SiteRegistrationRepository = {
@@ -344,7 +420,8 @@ function repositoryState(options: {
       lookups.push(input);
       return event;
     },
-    async findStandingCampaign() {
+    async findStandingCampaign(slugPrefix) {
+      campaignPrefixes.push(slugPrefix);
       return options.standingCampaign === undefined
         ? STANDING_CAMPAIGN
         : options.standingCampaign;
@@ -360,7 +437,7 @@ function repositoryState(options: {
     }
   };
 
-  return { repository, created, recorded, lookups };
+  return { repository, created, recorded, lookups, campaignPrefixes };
 }
 
 /** Тот же разбор, что у боевого нормализатора, но без зависимости на библиотеку. */

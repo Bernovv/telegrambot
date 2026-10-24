@@ -375,7 +375,10 @@ async function main(): Promise<void> {
     console.log(`        колонка заявок: ${standing.stage}`);
   });
   await check("findRegistrationEvent",
-    () => site.repository.findRegistrationEvent({ slugPrefix: "sreda", now }));
+    () => site.repository.findRegistrationEvent({ slugPrefix: "sreda", now, date: null }));
+  await check("findRegistrationEvent в выбранный день", () => site.repository.findRegistrationEvent({
+    slugPrefix: "chursin", now, date: "2026-10-28"
+  }));
   await check("findParticipantByPhone", () => site.repository.findParticipantByPhone({
     eventId: upcomingEventId, phoneE164: phone
   }));

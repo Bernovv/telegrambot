@@ -55,20 +55,25 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
   async findRegistrationEvent(input: {
     readonly slugPrefix: string;
     readonly now: Date;
+    readonly date: string | null;
   }): Promise<SiteRegistrationEvent | null> {
     const connection = await this.pool.connect();
     try {
+      // День сравнивается по местному времени мероприятия: «среда, 28 октября» в расписании
+      // страницы — это московская среда, а не та, что получится из UTC.
       const result = await connection.query<RegistrationEventRow>(
         `select id, title, starts_at
            from public.events
           where slug like $1::text
             and status not in ('finished', 'archived')
             and starts_at >= $2::timestamptz
+            and ($3::date is null or (starts_at at time zone timezone)::date = $3::date)
           order by starts_at
           limit 1`,
         [
           `${input.slugPrefix}%`,
-          siteRegistrationWindowStart(input.now)
+          siteRegistrationWindowStart(input.now),
+          input.date
         ]
       );
       const row = result.rows[0];

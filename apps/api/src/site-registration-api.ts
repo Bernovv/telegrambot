@@ -27,6 +27,7 @@ export interface SiteRegistrationHandler {
     readonly phone: string;
     readonly consent: boolean;
     readonly page?: string;
+    readonly meeting?: string;
     readonly now: Date;
   }): Promise<SiteRegistrationResponse>;
 }
@@ -54,6 +55,9 @@ const requestSchema = z.object({
   phone: z.string().min(1).max(32),
   consent: z.boolean(),
   page: z.string().max(200).optional(),
+  // День из расписания страницы — у Чурсина встреча каждую среду, и человек выбирает свою.
+  // Длина — как у приёмника на сервере сайта, который пересылает заявку сюда.
+  meeting: z.string().max(20).optional(),
   attribution: attributionSchema.optional()
 });
 
@@ -158,6 +162,7 @@ export class SiteRegistrationService {
         phone: parsed.data.phone,
         consent: parsed.data.consent,
         ...(parsed.data.page === undefined ? {} : { page: parsed.data.page }),
+        ...(parsed.data.meeting === undefined ? {} : { meeting: parsed.data.meeting }),
         ...(parsed.data.attribution === undefined
           ? {}
           : { attribution: parsed.data.attribution }),

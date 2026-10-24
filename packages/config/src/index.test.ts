@@ -69,6 +69,26 @@ describe("loadTelegramBotConfig", () => {
 });
 
 describe("loadApiConfig", () => {
+  it("reads schedule pages and the organizer notice switch for site registrations", () => {
+    const plain = loadApiConfig(validEnvironment());
+    const relayed = loadApiConfig(validEnvironment({
+      SITE_REGISTRATION_PAGE_PREFIXES: " chursin = chursin , masterclass=master-class",
+      SITE_REGISTRATION_NOTIFY_ORGANIZERS: "false"
+    }));
+
+    assert.deepEqual(plain.siteRegistration.pagePrefixes, {});
+    assert.equal(plain.siteRegistration.notifyOrganizers, true);
+    assert.deepEqual(relayed.siteRegistration.pagePrefixes, {
+      chursin: "chursin",
+      masterclass: "master-class"
+    });
+    assert.equal(relayed.siteRegistration.notifyOrganizers, false);
+    assert.throws(
+      () => loadApiConfig(validEnvironment({ SITE_REGISTRATION_PAGE_PREFIXES: "chursin" })),
+      /page=prefix/
+    );
+  });
+
   it("keeps the webhook disabled by default outside production", () => {
     const config = loadApiConfig(validEnvironment());
 

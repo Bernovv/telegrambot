@@ -153,6 +153,16 @@ export interface SiteRegistrationConfig {
   readonly eventSlugPrefix: string;
   /** Служебная учётная запись из миграции 20260820120000: от её имени заводится участник. */
   readonly systemAdminId: string;
+  /**
+   * Страницы со своим расписанием: `chursin=chursin` — заявки со страницы `chursin` идут
+   * в мероприятия `chursin-2026-10-28` и т. д. Переменная `SITE_REGISTRATION_PAGE_PREFIXES`.
+   */
+  readonly pagePrefixes: Readonly<Record<string, string>>;
+  /**
+   * Писать ли организаторам о заявке. `false`, когда заявку принимает приёмник на сервере
+   * сайта и пишет в чат сам. Переменная `SITE_REGISTRATION_NOTIFY_ORGANIZERS`.
+   */
+  readonly notifyOrganizers: boolean;
 }
 
 /**
@@ -792,7 +802,12 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       eventSlugPrefix: parseEventSlugPrefix(
         env.SITE_REGISTRATION_EVENT_SLUG_PREFIX ?? "sreda"
       ),
-      systemAdminId: "00000000-0000-4000-8000-000000000001"
+      systemAdminId: "00000000-0000-4000-8000-000000000001",
+      pagePrefixes: parsePagePrefixes(env.SITE_REGISTRATION_PAGE_PREFIXES ?? ""),
+      notifyOrganizers: parseBoolean(
+        env.SITE_REGISTRATION_NOTIFY_ORGANIZERS ?? "true",
+        "SITE_REGISTRATION_NOTIFY_ORGANIZERS"
+      )
     },
     max: loadMaxChannelConfig(env),
     zvonobot: loadZvonobotConfig(env),
@@ -810,6 +825,26 @@ function parseEventSlugPrefix(value: string): string {
   }
 
   return prefix;
+}
+
+/** «chursin=chursin,masterclass=master» — страница и начало слага её мероприятий. */
+function parsePagePrefixes(value: string): Readonly<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const raw of value.split(",")) {
+    const pair = raw.trim();
+    if (pair === "") {
+      continue;
+    }
+    const [page, prefix] = pair.split("=").map((part) => part.trim());
+    if (!page || !prefix || !/^[a-z][a-z0-9-]{0,40}$/.test(page)) {
+      throw new Error(
+        "SITE_REGISTRATION_PAGE_PREFIXES must look like page=prefix, separated by commas"
+      );
+    }
+    result[page] = parseEventSlugPrefix(prefix);
+  }
+
+  return result;
 }
 
 function loadOfferStorageConfig(env: NodeJS.ProcessEnv): OfferStorageConfig {
