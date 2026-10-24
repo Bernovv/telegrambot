@@ -121,6 +121,10 @@ import type { EventOverview } from "@ticket-platform/contracts/admin-overview";
 import type { EventReport } from "@ticket-platform/contracts/admin-event-report";
 import type { AdminSiteRegistrationPage }
   from "@ticket-platform/contracts/site-registration";
+import type {
+  EventGreetingView,
+  SaveEventGreetingRequest
+} from "@ticket-platform/contracts/admin-greetings";
 
 import type {
   CreateEventOrganizerRequest,
@@ -362,6 +366,24 @@ export function getEventOverview(
   signal?: AbortSignal
 ): Promise<EventOverview> {
   return requestAdminApi(`events/${encodeURIComponent(eventId)}/overview`, signal);
+}
+
+export function getEventGreeting(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<EventGreetingView> {
+  return requestAdminApi(`events/${encodeURIComponent(eventId)}/greeting`, signal);
+}
+
+export function saveEventGreeting(
+  eventId: string,
+  input: SaveEventGreetingRequest
+): Promise<EventGreetingView> {
+  return requestAdminMutation(
+    `events/${encodeURIComponent(eventId)}/greeting`,
+    "POST",
+    input
+  );
 }
 
 export function getEventTeam(

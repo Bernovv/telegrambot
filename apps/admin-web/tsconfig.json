@@ -67,6 +67,9 @@
       ],
       "@ticket-platform/contracts/site-registration": [
         "../../packages/contracts/src/site-registration.ts"
+      ],
+      "@ticket-platform/contracts/admin-greetings": [
+        "../../packages/contracts/src/admin-greetings.ts"
       ]
     }
   },

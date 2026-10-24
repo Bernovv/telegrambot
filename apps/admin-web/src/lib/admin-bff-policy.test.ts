@@ -328,6 +328,28 @@ test("allowlists only implemented administrator API methods and paths", () => {
     ),
     true
   );
+  // Настройки приветствия: прочитать и сохранить целиком, одной ручкой.
+  assert.equal(
+    isAllowedAdminApiPath(
+      "GET",
+      "events/00000000-0000-4000-8000-000000000101/greeting"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/greeting"
+    ),
+    true
+  );
+  assert.equal(
+    isAllowedAdminApiPath(
+      "POST",
+      "events/00000000-0000-4000-8000-000000000101/greeting/send"
+    ),
+    false
+  );
   assert.equal(
     isAllowedAdminApiPath(
       "POST",

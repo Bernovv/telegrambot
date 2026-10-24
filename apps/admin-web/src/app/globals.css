@@ -7579,3 +7579,88 @@ a.person-channel:hover {
   flex: none;
   color: var(--muted);
 }
+
+/* Приветствие по заявке: настройки слева, предпросмотр справа — текст правят, глядя на
+   то, что получит человек. На узком экране предпросмотр уходит под настройки. */
+@media (min-width: 1100px) {
+  .greeting-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+    align-items: start;
+  }
+
+  .greeting-layout > .event-form-error,
+  .greeting-layout > .event-form-actions {
+    grid-column: 1 / -1;
+  }
+
+  .greeting-preview-section {
+    position: sticky;
+    top: 16px;
+  }
+}
+
+/* Текст пишут как сообщение, а не как код: моноширинный шрифт браузера здесь мешает
+   увидеть, как оно будет читаться. */
+.greeting-layout textarea {
+  font: inherit;
+  font-size: 14px;
+}
+
+.greeting-placeholders {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.greeting-placeholders li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.greeting-placeholders button {
+  flex: none;
+  min-width: 128px;
+  justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.greeting-placeholders span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.greeting-preview-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px 20px;
+}
+
+.greeting-bubble {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid #cfe6db;
+  border-radius: 12px 12px 12px 4px;
+}
+
+.greeting-bubble svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+.greeting-bubble p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

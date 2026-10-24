@@ -47,6 +47,7 @@ export * from "./admin-event-report-persistence.js";
 export * from "./telegram-access-persistence.js";
 export * from "./site-registration-persistence.js";
 export * from "./registration-greeting-persistence.js";
+export * from "./admin-event-greeting-persistence.js";
 export * from "./admin-conversation-persistence.js";
 export * from "./admin-inbox-persistence.js";
 export * from "./conversation-attachment-persistence.js";

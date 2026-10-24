@@ -8,6 +8,7 @@ import {
   AdminEventExpensesService,
   AdminEventInventoryService,
   AdminEventTeamService,
+  AdminEventGreetingService,
   AdminStaffService,
   AdminEventOverviewService,
   AdminEventReportService,
@@ -85,6 +86,7 @@ import {
   createAdminEventExpensesPersistence,
   createAdminEventInventoryPersistence,
   createAdminEventTeamPersistence,
+  createAdminEventGreetingPersistence,
   createAdminEventOverviewPersistence,
   createAdminEventReportPersistence,
   PostgresAdminOrderCancellationRepository,
@@ -424,6 +426,12 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           idGenerator
         )
       : undefined;
+    const adminGreeting = adminAuth
+      ? new AdminEventGreetingService(
+          createAdminEventGreetingPersistence(pool).repository,
+          { now: () => new Date() }
+        )
+      : undefined;
     // Команда кабинета — не то же самое, что команда мероприятия выше: там доли от
     // прибыли пикника, здесь роли и календари наставников.
     const adminStaff = adminAuth
@@ -760,6 +768,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminExpenses ? { adminExpenses } : {}),
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),
+      ...(adminGreeting ? { adminGreeting } : {}),
       ...(adminStaff ? { adminStaff } : {}),
       ...(adminOverview ? { adminOverview } : {}),
       ...(adminEventReport ? { adminEventReport } : {}),

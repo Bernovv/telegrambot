@@ -47,3 +47,4 @@ export * from "./admin-overview.js";
 export * from "./admin-event-report.js";
 export * from "./orders.js";
 export * from "./site-registration.js";
+export * from "./admin-greetings.js";

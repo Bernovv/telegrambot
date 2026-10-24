@@ -85,6 +85,10 @@ import {
   type AdminTeamHandler
 } from "./admin-team-api.js";
 import {
+  AdminGreetingApiModule,
+  type AdminGreetingHandler
+} from "./admin-greeting-api.js";
+import {
   AdminStaffApiModule,
   type AdminStaffHandler
 } from "./admin-staff-api.js";
@@ -186,6 +190,8 @@ export interface ApiApplicationOptions {
   readonly adminExpenses?: AdminExpensesHandler;
   readonly adminInventory?: AdminInventoryHandler;
   readonly adminTeam?: AdminTeamHandler;
+  /** Приветствие по заявке с сайта: настройки мероприятия. */
+  readonly adminGreeting?: AdminGreetingHandler;
   /** Команда кабинета: роли и календари наставников. */
   readonly adminStaff?: AdminStaffHandler;
   readonly adminOverview?: AdminOverviewHandler;
@@ -277,6 +283,9 @@ class ApiModule {
         ...(options.adminTeam
           ? [AdminTeamApiModule.register(options.adminTeam)]
           : []),
+        ...(options.adminGreeting
+          ? [AdminGreetingApiModule.register(options.adminGreeting)]
+          : []),
         ...(options.adminStaff
           ? [AdminStaffApiModule.register(options.adminStaff)]
           : []),
@@ -345,6 +354,7 @@ export async function createApiApplication(
       || options.adminExpenses
       || options.adminInventory
       || options.adminTeam
+      || options.adminGreeting
       || options.adminStaff
       || options.adminOverview
     )

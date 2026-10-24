@@ -64,6 +64,7 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/expenses$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/inventory$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/team$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/greeting$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/overview$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/report$/i.test(path)
       || path === "broadcasts"
@@ -118,6 +119,7 @@ export function isAllowedAdminApiPath(
       || path === "vendors"
       || /^events\/[0-9a-f-]{36}\/expenses(?:\/(?:update|cancel))?$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/team(?:\/(?:update|remove))?$/i.test(path)
+      || /^events\/[0-9a-f-]{36}\/greeting$/i.test(path)
       || path === "inventory/items"
       || path === "inventory/components"
       || /^events\/[0-9a-f-]{36}\/inventory\/(?:needs|needs\/update|movements)$/i

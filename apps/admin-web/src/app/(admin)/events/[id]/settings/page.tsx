@@ -6,6 +6,7 @@ import {
   FileCheck2,
   FileText,
   Lock,
+  MessageCircle,
   PackageOpen,
   Pencil,
   Workflow
@@ -13,9 +14,12 @@ import {
 import Link from "next/link";
 
 /**
- * Пять экранов правки мероприятия. Все они работают только у черновика — раньше это
+ * Экраны правки мероприятия. Почти все работают только у черновика — раньше это
  * выражалось тем, что кнопки просто исчезали после публикации, и понять, куда они делись,
  * было нельзя. Теперь они на месте и подписаны, почему закрыты.
+ *
+ * Приветствие — исключение: оно ни во что не вшито, по нему не принимают согласий, и
+ * править его нужно как раз у опубликованного мероприятия, на которое идёт запись.
  */
 const SCREENS = [
   {
@@ -23,35 +27,48 @@ const SCREENS = [
     label: "Основное",
     description: "Дата, время, площадка, сколько ждём человек",
     icon: Pencil,
-    salesOnly: false
+    salesOnly: false,
+    alwaysEditable: false
   },
   {
     segment: "catalog",
     label: "Продукты и тарифы",
     description: "Состав билетов, цены и ценовые правила",
     icon: PackageOpen,
-    salesOnly: true
+    salesOnly: true,
+    alwaysEditable: false
   },
   {
     segment: "content",
     label: "Контент",
     description: "Блоки, которые бот показывает участнику",
     icon: FileText,
-    salesOnly: false
+    salesOnly: false,
+    alwaysEditable: false
   },
   {
     segment: "scenario",
     label: "Сценарий",
     description: "Шаги диалога и переходы между экранами бота",
     icon: Workflow,
-    salesOnly: true
+    salesOnly: true,
+    alwaysEditable: false
   },
   {
     segment: "offer",
     label: "Оферта",
     description: "Версии документа и то, с чем соглашается покупатель",
     icon: FileCheck2,
-    salesOnly: true
+    salesOnly: true,
+    alwaysEditable: false
+  },
+  {
+    segment: "greeting",
+    label: "Приветствие",
+    description: "Что аккаунт компании пишет тем, кто записался с сайта",
+    icon: MessageCircle,
+    salesOnly: false,
+    alwaysEditable: true
   }
 ] as const;
 
@@ -86,6 +103,7 @@ export default function EventSettingsPage() {
             У опубликованного мероприятия правки закрыты намеренно: по этим данным уже
             выставлены счета и приняты согласия. Цены меняются командой{" "}
             <code>pnpm price:set</code>, остальное — новой версией мероприятия.
+            Приветствие правится и сейчас.
           </span>
         </div>
       ) : null}
@@ -107,7 +125,7 @@ export default function EventSettingsPage() {
                   <strong>{screen.label}</strong>
                   <small>{screen.description}</small>
                 </span>
-                {editable ? null : (
+                {editable || screen.alwaysEditable ? null : (
                   <span className="settings-item-lock">
                     <Lock size={14} />
                     только просмотр

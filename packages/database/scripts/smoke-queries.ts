@@ -26,6 +26,7 @@ import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
 import { createRegistrationGreetingPersistence } from "../src/registration-greeting-persistence.js";
 import { createChannelLookupQueue } from "../src/channel-lookup-persistence.js";
+import { createAdminEventGreetingPersistence } from "../src/admin-event-greeting-persistence.js";
 import {
   createAdminConversationsPersistence,
   createAttachmentFilePersistence,
@@ -494,6 +495,37 @@ async function main(): Promise<void> {
       throw new Error(`В карточке не то: ${JSON.stringify(registration?.greeting)}`);
     }
   });
+
+  // Настройки приветствия мероприятия: экран в панели. Сохраняем дважды — второй раз идёт
+  // через `on conflict`, и именно он ломается, если перепутать колонки.
+  const greetingSettings = createAdminEventGreetingPersistence(pool).repository;
+  await check("eventGreeting saveSettings и loadSettings", async () => {
+    await greetingSettings.saveSettings({
+      eventId: upcomingEventId, isEnabled: true,
+      eventPhrase: "Открытой встрече предпринимателей", bodyTemplate: null,
+      adminId: AUTOMATION_ADMIN, at: now
+    });
+    await greetingSettings.saveSettings({
+      eventId: upcomingEventId, isEnabled: false,
+      eventPhrase: null, bodyTemplate: "Ждём вас {когда}",
+      adminId: AUTOMATION_ADMIN, at: now
+    });
+    const stored = await greetingSettings.loadSettings(upcomingEventId);
+    if (stored?.isEnabled !== false || stored.bodyTemplate !== "Ждём вас {когда}") {
+      throw new Error(`Сохранилось не то: ${JSON.stringify(stored)}`);
+    }
+  });
+  await check("eventGreeting findEvent и countGreetings", async () => {
+    const found = await greetingSettings.findEvent(upcomingEventId);
+    const stats = await greetingSettings.countGreetings(upcomingEventId);
+    if (!found || stats.queued < 1) {
+      throw new Error(`Мероприятие или итоги не те: ${JSON.stringify({ found, stats })}`);
+    }
+  });
+  await check("eventGreeting hasPermission",
+    () => greetingSettings.hasPermission(AUTOMATION_ADMIN, "events.write"));
+  await check("greetings listPending с настройками мероприятия",
+    () => greetings.listPending({ batchSize: 50 }));
 
   // Списки людей и заказов: то, что панель открывает первым делом. Здесь легко потерять
   // колонку, которой нет в подзапросе, — Postgres отвергнет запрос целиком, и страница
