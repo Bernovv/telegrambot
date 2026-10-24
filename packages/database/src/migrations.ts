@@ -344,5 +344,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260829090000_stop_reply_tasks",
     description: "Stop opening a task for every incoming message now that the inbox shows unread threads",
     destructive: false
+  },
+  {
+    id: "20260830090000_registration_greetings",
+    description: "Greet each site registration from the company account in the first messenger that knows the phone",
+    destructive: false
   }
 ];

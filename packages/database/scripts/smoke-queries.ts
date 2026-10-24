@@ -24,6 +24,8 @@ import { createEventCampaignSyncPersistence } from "../src/event-campaign-sync-p
 import { createNodePostgresPool } from "../src/node-postgres.js";
 import { createAdminStaffPersistence } from "../src/admin-staff-persistence.js";
 import { createSiteRegistrationPersistence } from "../src/site-registration-persistence.js";
+import { createRegistrationGreetingPersistence } from "../src/registration-greeting-persistence.js";
+import { createChannelLookupQueue } from "../src/channel-lookup-persistence.js";
 import {
   createAdminConversationsPersistence,
   createAttachmentFilePersistence,
@@ -222,12 +224,14 @@ async function main(): Promise<void> {
   }));
   await check("updateContactStage", () => outreach.updateContactStage({
     campaignContactId: memberId, actorAdminId: AUTOMATION_ADMIN,
-    historyId: randomUUID(), stage: "invited", lostReason: null, now
+    historyId: randomUUID(), participantId: randomUUID(), stage: "invited",
+    lostReason: null, now
   }));
   // Перенос в проигрышную колонку: причина обязательна, и её проверяет триггер.
   await check("updateContactStage (проигрыш)", () => outreach.updateContactStage({
     campaignContactId: memberId, actorAdminId: AUTOMATION_ADMIN,
-    historyId: randomUUID(), stage: "lost", lostReason: "declined", now
+    historyId: randomUUID(), participantId: randomUUID(), stage: "lost",
+    lostReason: "declined", now
   }));
 
   console.log("\nАвтоматика:");
@@ -374,9 +378,10 @@ async function main(): Promise<void> {
   await check("findParticipantByPhone", () => site.repository.findParticipantByPhone({
     eventId: upcomingEventId, phoneE164: phone
   }));
+  const greetedRegistrationId = randomUUID();
   await check("createParticipant с карточкой и звонком", () => site.unitOfWork.transact(
     () => site.repository.createParticipant({
-      registrationId: randomUUID(),
+      registrationId: greetedRegistrationId,
       participantId: randomUUID(),
       contactSeedId: randomUUID(),
       eventId: upcomingEventId,
@@ -385,6 +390,7 @@ async function main(): Promise<void> {
       consentAt: now,
       page: "sreda",
       createdByAdminId: SITE_ADMIN,
+      attribution: null,
       enrollment: {
         campaignId,
         campaignContactId: randomUUID(),
@@ -399,6 +405,95 @@ async function main(): Promise<void> {
       }
     })
   ));
+
+  // Приветствие по заявке: заявка выше завела строку в ожидании. Проходим всю цепочку —
+  // проверка нашла человека, приветствие легло в очередь аккаунта, карточка его показывает.
+  console.log("\nПриветствие по заявке:");
+  const greetings = createRegistrationGreetingPersistence(pool).repository;
+  const lookups = createChannelLookupQueue(pool).queue;
+  let greetedContactId: string | null = null;
+  await check("greetings listPending", async () => {
+    const pending = await greetings.listPending({ batchSize: 50 });
+    const own = pending.find((item) => item.registrationId === greetedRegistrationId);
+    if (!own) {
+      throw new Error("Заявка с сайта не завела приветствие в ожидании");
+    }
+    greetedContactId = own.contactId;
+    console.log(`        проверки: ${JSON.stringify(own.lookups)}`);
+  });
+  const greetingConversationId = randomUUID();
+  await check("lookups markFound для приветствия", async () => {
+    if (greetedContactId === null) {
+      throw new Error("Нет человека из заявки");
+    }
+    await lookups.markFound({
+      contactId: greetedContactId,
+      channel: "telegram",
+      externalUserId: String(Math.floor(Math.random() * 1_000_000_000)),
+      externalChatId: String(Math.floor(Math.random() * 1_000_000_000)),
+      username: null,
+      conversationId: greetingConversationId,
+      at: now
+    });
+  });
+  await check("greetings listPending видит ветку", async () => {
+    const pending = await greetings.listPending({ batchSize: 50 });
+    const own = pending.find((item) => item.registrationId === greetedRegistrationId);
+    if (own?.conversations.telegram !== greetingConversationId) {
+      throw new Error(`Ветка Telegram не видна: ${JSON.stringify(own?.conversations)}`);
+    }
+  });
+  await check("greetings queueGreeting", async () => {
+    if (greetedContactId === null) {
+      throw new Error("Нет человека из заявки");
+    }
+    const accepted = await greetings.queueGreeting({
+      registrationId: greetedRegistrationId,
+      contactId: greetedContactId,
+      actorAdminId: SITE_ADMIN,
+      channel: "telegram",
+      conversationId: greetingConversationId,
+      messageId: randomUUID(),
+      body: "Привет! На связи Бизнес-Прорыв",
+      at: now
+    });
+    if (!accepted) {
+      throw new Error("Приветствие в ожидании не приняло реплику");
+    }
+    const again = await greetings.queueGreeting({
+      registrationId: greetedRegistrationId,
+      contactId: greetedContactId,
+      actorAdminId: SITE_ADMIN,
+      channel: "telegram",
+      conversationId: greetingConversationId,
+      messageId: randomUUID(),
+      body: "Привет ещё раз",
+      at: now
+    });
+    if (again) {
+      throw new Error("Второе приветствие по той же заявке легло в очередь");
+    }
+  });
+  await check("greetings countQueuedSince", () => greetings.countQueuedSince({
+    since: new Date(now.getTime() - 86_400_000)
+  }));
+  await check("greetings markSkipped и markNoChannel", async () => {
+    await greetings.markSkipped({
+      registrationId: randomUUID(), reason: "проверка", at: now
+    });
+    await greetings.markNoChannel({ registrationId: randomUUID(), at: now });
+  });
+  await check("getPerson показывает приветствие", async () => {
+    if (greetedContactId === null) {
+      throw new Error("Нет человека из заявки");
+    }
+    const person = await outreach.getPerson(greetedContactId, AUTOMATION_ADMIN);
+    const registration = person?.siteRegistrations
+      .find((item) => item.id === greetedRegistrationId);
+    if (registration?.greeting?.state !== "queued" || registration.greeting.channel !== "telegram") {
+      throw new Error(`В карточке не то: ${JSON.stringify(registration?.greeting)}`);
+    }
+  });
 
   // Списки людей и заказов: то, что панель открывает первым делом. Здесь легко потерять
   // колонку, которой нет в подзапросе, — Postgres отвергнет запрос целиком, и страница

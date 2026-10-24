@@ -35,6 +35,7 @@ import type {
   OutreachPersonCard,
   OutreachChannelLookup,
   OutreachChannelLookupState,
+  OutreachLookupChannel,
   OutreachContactAttribution,
   RequestChannelLookupResult,
   OutreachParticipationAnswer,
@@ -392,6 +393,10 @@ interface PersonSiteRegistrationRow {
   readonly status: string;
   readonly consent_at: Date | string;
   readonly created_at: Date | string;
+  readonly greeting_status: "pending" | "queued" | "no_channel" | "skipped" | null;
+  readonly greeting_channel: OutreachLookupChannel | null;
+  readonly greeting_skip_reason: string | null;
+  readonly greeting_decided_at: Date | string | null;
 }
 
 interface PersonOrderAnswerRow {
@@ -1863,9 +1868,15 @@ implements AdminOutreachRepository {
       // номеру заявка и связывается с карточкой.
       const siteRegistrations = await connection.query<PersonSiteRegistrationRow>(
         `select registration.id, event.title as event_title, registration.page,
-                registration.status, registration.consent_at, registration.created_at
+                registration.status, registration.consent_at, registration.created_at,
+                greeting.status as greeting_status,
+                greeting.channel as greeting_channel,
+                greeting.skip_reason as greeting_skip_reason,
+                greeting.decided_at as greeting_decided_at
          from public.site_registrations registration
          left join public.events event on event.id = registration.event_id
+         left join public.registration_greetings greeting
+           on greeting.registration_id = registration.id
          where registration.phone_e164 in (
            select linked.phone_e164 from public.outreach_contacts linked
            where linked.id = any($1::uuid[]) and linked.phone_e164 is not null
@@ -2073,7 +2084,15 @@ implements AdminOutreachRepository {
           page: row.page,
           status: row.status,
           consentAt: toIso(row.consent_at),
-          createdAt: toIso(row.created_at)
+          createdAt: toIso(row.created_at),
+          greeting: row.greeting_status === null
+            ? null
+            : {
+                state: row.greeting_status === "no_channel" ? "noChannel" : row.greeting_status,
+                channel: row.greeting_channel,
+                skipReason: row.greeting_skip_reason,
+                decidedAt: nullableIso(row.greeting_decided_at)
+              }
         })),
         channelLookups: channelLookups.rows.map(mapChannelLookup),
         attribution: mapAttribution(attribution.rows[0])

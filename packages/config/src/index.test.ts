@@ -247,6 +247,42 @@ describe("loadWorkerConfig", () => {
     assert.deepEqual(config.telegramNotifications, { enabled: false });
   });
 
+  it("keeps registration greetings off until the owner turns them on", () => {
+    const config = loadWorkerConfig(validEnvironment());
+
+    assert.equal(config.registrationGreetings.enabled, false);
+    assert.deepEqual(config.registrationGreetings.channels, ["telegram", "max"]);
+    assert.equal(config.registrationGreetings.windowStartHour, 9);
+    assert.equal(config.registrationGreetings.windowEndHour, 21);
+    assert.equal(config.registrationGreetings.dailyLimit, 50);
+  });
+
+  it("reads greeting channels in order and rejects a typo", () => {
+    const config = loadWorkerConfig(validEnvironment({
+      REGISTRATION_GREETINGS_CHANNELS: " max, Telegram ,max,whatsapp"
+    }));
+
+    assert.deepEqual(config.registrationGreetings.channels, ["max", "telegram", "whatsapp"]);
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({ REGISTRATION_GREETINGS_CHANNELS: "telegram,vk" })),
+      /unknown channel: vk/
+    );
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({ REGISTRATION_GREETINGS_CHANNELS: " , " })),
+      /at least one channel/
+    );
+  });
+
+  it("rejects a greeting window that ends before it starts", () => {
+    assert.throws(
+      () => loadWorkerConfig(validEnvironment({
+        REGISTRATION_GREETINGS_WINDOW_START: "21",
+        REGISTRATION_GREETINGS_WINDOW_END: "9"
+      })),
+      /WINDOW_END must be later/
+    );
+  });
+
   it("loads an explicitly enabled bounded T-Bank reconciliation worker", () => {
     const config = loadWorkerConfig(validEnvironment({
       TBANK_RECONCILIATION_ENABLED: "true",

@@ -494,6 +494,21 @@ export interface OutreachPersonSiteRegistration {
   readonly status: string;
   readonly consentAt: string;
   readonly createdAt: string;
+  /** Приветствие от аккаунта по этой заявке. Пусто — заявка его не заводила: повтор или без встречи. */
+  readonly greeting: OutreachPersonGreeting | null;
+}
+
+/**
+ * Что стало с приветствием по заявке.
+ *
+ * `queued` — реплика легла в очередь аккаунта; дошла ли она, видно в самой переписке.
+ * `skipped` всегда с причиной: «не писали» без «почему» менеджер прочёл бы как поломку.
+ */
+export interface OutreachPersonGreeting {
+  readonly state: "pending" | "queued" | "noChannel" | "skipped";
+  readonly channel: OutreachLookupChannel | null;
+  readonly skipReason: string | null;
+  readonly decidedAt: string | null;
 }
 
 /** Откуда человек пришёл в бота: метка источника, кампания и код партнёра из диплинка. */

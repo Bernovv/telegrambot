@@ -9,6 +9,7 @@ import {
   DispatchOutboxBatchService,
   DEFAULT_BROADCAST_DELIVERY_OPTIONS,
   ExpireOrdersBatchService,
+  GreetRegistrationsBatchService,
   HandleNotificationJobService,
   HmacTicketReferenceGenerator,
   ReconcileTBankPaymentsBatchService,
@@ -33,6 +34,7 @@ import {
   createAutoTaskPersistence,
   createZvonobotProcessingPersistence,
   createEventReminderPersistence,
+  createRegistrationGreetingPersistence,
   createNotificationDeliveryPersistence,
   createNodePostgresPool,
   createOrderExpiryPersistence,
@@ -136,6 +138,27 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     idGenerator,
     { systemAdminId: config.zvonobotSystemAdminId }
   );
+  // Приветствие по заявке с сайта: куда и что написать. Пишут сами аккаунты — проход только
+  // кладёт реплику в их очередь, поэтому живёт здесь и не зависит от того, подняты ли они.
+  const greetingsConfig = config.registrationGreetings;
+  const greetRegistrations = greetingsConfig.enabled
+    ? new GreetRegistrationsBatchService(
+      createRegistrationGreetingPersistence(pool).repository,
+      idGenerator,
+      {
+        channels: greetingsConfig.channels,
+        lookupWaitMs: greetingsConfig.lookupWaitMs,
+        maxAgeMs: greetingsConfig.maxAgeMs,
+        dailyLimit: greetingsConfig.dailyLimit,
+        window: {
+          startHour: greetingsConfig.windowStartHour,
+          endHour: greetingsConfig.windowEndHour,
+          timeZone: greetingsConfig.windowTimeZone
+        },
+        systemAdminId: config.siteRegistrationSystemAdminId
+      }
+    )
+    : null;
   const tbankReconciliation = config.tbankReconciliation.enabled
     ? (() => {
         const provider = new TBankPaymentProvider({
@@ -182,6 +205,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let nextEventCampaignSyncSweepAt = 0;
   let nextAutoTaskSweepAt = 0;
   let nextZvonobotSweepAt = 0;
+  let nextGreetingSweepAt = 0;
   let nextAttachmentSweepAt = 0;
   let nextReplySweepAt = 0;
   let lastOrderExpirySweepAt: string | null = null;
@@ -190,6 +214,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   let lastEventCampaignSyncSweepAt: string | null = null;
   let lastAutoTaskSweepAt: string | null = null;
   let lastZvonobotSweepAt: string | null = null;
+  let lastGreetingSweepAt: string | null = null;
   let lastAttachmentSweepAt: string | null = null;
   let lastReplySweepAt: string | null = null;
   // Появляется только вместе с отправителем уведомлений: без него отправлять нечем.
@@ -200,6 +225,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
   const eventCampaignSyncWorkload = "event-campaign-sync";
   const autoTaskWorkload = "outreach-auto-tasks";
   const zvonobotWorkload = "zvonobot-calls";
+  const greetingWorkload = "registration-greetings";
   const attachmentWorkload = "conversation-attachments";
   const replyWorkload = "conversation-replies";
   // Скачивание вложений. Без папки не поднимается вовсе: проход, которому некуда писать,
@@ -244,6 +270,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
     eventCampaignSyncWorkload,
     autoTaskWorkload,
     zvonobotWorkload,
+    ...(greetRegistrations ? [greetingWorkload] : []),
     ...(config.conversationAttachments.enabled ? [attachmentWorkload] : []),
     ...(config.telegramNotifications.enabled ? [replyWorkload] : []),
     ...(tbankReconciliation ? [tbankReconciliationWorkload] : [])
@@ -283,6 +310,7 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
           lastEventCampaignSyncSweepAt,
           lastAutoTaskSweepAt,
           lastZvonobotSweepAt,
+          lastGreetingSweepAt,
           lastAttachmentSweepAt,
           lastReplySweepAt
         }
@@ -611,6 +639,34 @@ export async function bootstrapWorker(env: NodeJS.ProcessEnv = process.env): Pro
         } finally {
           currentJobId = null;
           nextZvonobotSweepAt = Date.now() + config.zvonobotPollIntervalMs;
+        }
+      }
+
+      if (greetRegistrations && Date.now() >= nextGreetingSweepAt) {
+        currentJobId = greetingWorkload;
+
+        try {
+          const result = await greetRegistrations.execute({
+            at: new Date(),
+            batchSize: greetingsConfig.batchSize
+          });
+          lastGreetingSweepAt = new Date().toISOString();
+
+          if (result.queued + result.noChannel + result.skipped > 0) {
+            logger.info("registration greetings decided", {
+              queued: result.queued,
+              noChannel: result.noChannel,
+              skipped: result.skipped,
+              waiting: result.waiting
+            });
+          }
+        } catch (error) {
+          logger.error("registration greeting batch failed", {
+            errorType: error instanceof Error ? error.name : "UnknownError"
+          });
+        } finally {
+          currentJobId = null;
+          nextGreetingSweepAt = Date.now() + greetingsConfig.pollIntervalMs;
         }
       }
 

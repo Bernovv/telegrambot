@@ -33,6 +33,7 @@ import type {
   OutreachManager,
   OutreachPersonCampaign,
   OutreachPersonCard,
+  OutreachPersonGreeting,
   OutreachPersonQuestionnaire,
   OutreachPersonTask
 } from "@ticket-platform/contracts/admin-outreach";
@@ -91,6 +92,30 @@ const SITE_REGISTRATION_LABELS: Record<string, string> = {
   duplicate: "повтор заявки",
   unassigned: "встреча не нашлась"
 };
+
+/**
+ * Что стало с приветствием по заявке — одной строкой под ней.
+ *
+ * Дошло ли ушедшее, здесь не пишем: это видно в самой переписке, и второй источник того же
+ * ответа однажды разошёлся бы с первым.
+ */
+function greetingLine(greeting: OutreachPersonGreeting | null): string | null {
+  if (greeting === null) {
+    return null;
+  }
+  if (greeting.state === "pending") {
+    return "Приветствие: ждём ответа мессенджеров";
+  }
+  if (greeting.state === "queued") {
+    return greeting.channel === null
+      ? "Приветствие отправлено"
+      : `Приветствие отправлено в ${LOOKUP_CHANNEL_LABELS[greeting.channel]}`;
+  }
+  if (greeting.state === "noChannel") {
+    return "Приветствие не отправлено: ни в одном мессенджере человека не нашли";
+  }
+  return `Приветствие не отправлено: ${greeting.skipReason ?? "причина не записана"}`;
+}
 
 /**
  * Открыть разбор касания по одной воронке.
@@ -1697,7 +1722,9 @@ function buildPersonTimeline(person: OutreachPersonCard): readonly TimelineEntry
       actor: "",
       campaignName: null,
       occurredAt: registration.createdAt,
-      note: registration.page || null,
+      note: [registration.page, greetingLine(registration.greeting)]
+        .filter((line) => line !== null && line !== "")
+        .join(" · ") || null,
       removableNoteId: null
     }))
   ];

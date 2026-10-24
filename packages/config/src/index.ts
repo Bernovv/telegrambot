@@ -334,6 +334,9 @@ export interface WorkerConfig extends AppConfig {
   readonly zvonobotPollIntervalMs: number;
   readonly conversationAttachments: ConversationAttachmentsConfig;
   readonly conversationReplies: ConversationRepliesConfig;
+  readonly registrationGreetings: RegistrationGreetingsConfig;
+  /** Служебная учётная запись регистрации с сайта: автор приветствий в карточке. */
+  readonly siteRegistrationSystemAdminId: string;
   /** Служебная учётная запись из миграции 20260822160000: от её имени заводится заявка. */
   readonly zvonobotSystemAdminId: string;
   /** Отправитель уведомлений в MAX. Выключен — билеты по заказам MAX доставлены не будут. */
@@ -548,6 +551,124 @@ export function loadChannelLookupConfig(
     // растянется на недели — и это правильный исход, а не помеха.
     dailyLimit: read("DAILY_LIMIT", "150", 1, 5_000)
   };
+}
+
+/**
+ * Приветствие по заявке с сайта: «получили вашу заявку, ждём» от аккаунта компании.
+ *
+ * **Выключено по умолчанию.** Это первое сообщение незнакомому человеку, и включает его
+ * владелец, когда аккаунты привязаны и текст проверен, а не выкладка, которая заодно
+ * обновила код.
+ *
+ * Каналы — по порядку попытки. Решение владельца от 24.10.2026: Telegram, затем MAX;
+ * WhatsApp дописывается в конец списка, когда два первых поработают.
+ */
+export interface RegistrationGreetingsConfig {
+  readonly enabled: boolean;
+  readonly channels: readonly LookupChannel[];
+  readonly batchSize: number;
+  readonly pollIntervalMs: number;
+  readonly lookupWaitMs: number;
+  readonly maxAgeMs: number;
+  readonly dailyLimit: number;
+  readonly windowStartHour: number;
+  readonly windowEndHour: number;
+  readonly windowTimeZone: string;
+}
+
+export function loadRegistrationGreetingsConfig(
+  env: NodeJS.ProcessEnv
+): RegistrationGreetingsConfig {
+  const windowStartHour = parseBoundedInteger(
+    env.REGISTRATION_GREETINGS_WINDOW_START ?? "9",
+    "REGISTRATION_GREETINGS_WINDOW_START",
+    0,
+    23
+  );
+  const windowEndHour = parseBoundedInteger(
+    env.REGISTRATION_GREETINGS_WINDOW_END ?? "21",
+    "REGISTRATION_GREETINGS_WINDOW_END",
+    1,
+    24
+  );
+  if (windowEndHour <= windowStartHour) {
+    throw new Error(
+      "REGISTRATION_GREETINGS_WINDOW_END must be later than REGISTRATION_GREETINGS_WINDOW_START"
+    );
+  }
+
+  return {
+    enabled: parseBoolean(
+      env.REGISTRATION_GREETINGS_ENABLED ?? "false",
+      "REGISTRATION_GREETINGS_ENABLED"
+    ),
+    channels: parseGreetingChannels(env.REGISTRATION_GREETINGS_CHANNELS ?? "telegram,max"),
+    batchSize: parseBoundedInteger(
+      env.REGISTRATION_GREETINGS_BATCH_SIZE ?? "20",
+      "REGISTRATION_GREETINGS_BATCH_SIZE",
+      1,
+      200
+    ),
+    // Полминуты: проверка номера отвечает за секунды, и человек, только что нажавший
+    // «Записаться», получает сообщение, пока ещё помнит, куда записывался.
+    pollIntervalMs: parseBoundedInteger(
+      env.REGISTRATION_GREETINGS_POLL_INTERVAL_MS ?? "30000",
+      "REGISTRATION_GREETINGS_POLL_INTERVAL_MS",
+      5_000,
+      3_600_000
+    ),
+    // Два часа ждём ответа канала, прежде чем перейти к следующему. Меньше — и короткий
+    // перезапуск процесса Telegram отправлял бы людей с Telegram в MAX.
+    lookupWaitMs: parseBoundedInteger(
+      env.REGISTRATION_GREETINGS_LOOKUP_WAIT_MS ?? "7200000",
+      "REGISTRATION_GREETINGS_LOOKUP_WAIT_MS",
+      0,
+      172_800_000
+    ),
+    // Двое суток: заявка, пролежавшая дольше, — повод позвонить, а не писать «получили».
+    maxAgeMs: parseBoundedInteger(
+      env.REGISTRATION_GREETINGS_MAX_AGE_MS ?? "172800000",
+      "REGISTRATION_GREETINGS_MAX_AGE_MS",
+      3_600_000,
+      1_209_600_000
+    ),
+    // Пятьдесят в сутки на канал — втрое больше самого горячего дня заявок. Потолок не про
+    // очередь, а про аккаунт: волна незнакомым из одного имени выглядит как рассылка.
+    dailyLimit: parseBoundedInteger(
+      env.REGISTRATION_GREETINGS_DAILY_LIMIT ?? "50",
+      "REGISTRATION_GREETINGS_DAILY_LIMIT",
+      1,
+      1_000
+    ),
+    windowStartHour,
+    windowEndHour,
+    windowTimeZone: (env.REGISTRATION_GREETINGS_TIMEZONE ?? "Europe/Moscow").trim()
+      || "Europe/Moscow"
+  };
+}
+
+/** «telegram,max» — по порядку, без повторов. Пустой список значит «никуда», это ошибка. */
+function parseGreetingChannels(value: string): readonly LookupChannel[] {
+  const known: readonly LookupChannel[] = ["telegram", "max", "whatsapp"];
+  const channels: LookupChannel[] = [];
+  for (const raw of value.split(",")) {
+    const channel = raw.trim().toLowerCase();
+    if (channel === "") {
+      continue;
+    }
+    const match = known.find((item) => item === channel);
+    if (match === undefined) {
+      throw new Error(`REGISTRATION_GREETINGS_CHANNELS has unknown channel: ${channel}`);
+    }
+    if (!channels.includes(match)) {
+      channels.push(match);
+    }
+  }
+  if (channels.length === 0) {
+    throw new Error("REGISTRATION_GREETINGS_CHANNELS must name at least one channel");
+  }
+
+  return channels;
 }
 
 export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -881,6 +1002,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
     zvonobotSystemAdminId: "00000000-0000-4000-8000-000000000003",
     conversationAttachments: loadConversationAttachmentsConfig(env),
     conversationReplies: loadConversationRepliesConfig(env),
+    registrationGreetings: loadRegistrationGreetingsConfig(env),
+    siteRegistrationSystemAdminId: "00000000-0000-4000-8000-000000000001",
     max: loadMaxChannelConfig(env),
     tbankReconciliation,
     telegramNotifications

@@ -230,10 +230,51 @@ export class PostgresSiteRegistrationRepository implements SiteRegistrationRepos
     // играет телефон. Без него класть в воронку нечего.
     if (contactId !== null) {
       await writeAttribution(this.session, contactId, input.attribution);
+      await this.awaitGreeting(input, contactId);
     }
     if (input.enrollment && contactId !== null) {
       await this.enroll(contactId, input.enrollment);
     }
+  }
+
+  /**
+   * Приветствие ставится в ожидание вместе с заявкой, а проверка номера — вперёд очереди.
+   *
+   * Решает, куда и что писать, воркер: ему нужны ответы мессенджеров, а их ещё нет. Здесь —
+   * только обещание, что по этой заявке решение будет принято, даже если воркер сейчас лежит.
+   *
+   * Проверка поднимается в очереди, потому что человек ждёт сообщения прямо сейчас, а в
+   * очереди перед ним могут стоять тысячи номеров из загрузки CSV. Это та же срочность, что у
+   * кнопки менеджера, поэтому и отметка та же — «кто попросил», служебная учётная запись
+   * регистрации. Прежний отказ мессенджера («не дозвонились») перезапрашивается: он был про
+   * нас, а не про человека. Ответ «нет такого» не трогаем — он не протухает за неделю, а
+   * лишний вопрос про чужой номер аккаунту дорог.
+   *
+   * Срок повтора у стоящих в очереди не трогаем: его мог назвать сам мессенджер, и вопрос
+   * раньше срока продлевает запрет.
+   */
+  private async awaitGreeting(
+    input: CreateSiteParticipantInput,
+    contactId: string
+  ): Promise<void> {
+    await this.session.query(
+      `insert into public.registration_greetings (registration_id, contact_id, event_id)
+       values ($1::uuid, $2::uuid, $3::uuid)`,
+      [input.registrationId, contactId, input.eventId]
+    );
+    await this.session.query(
+      `update public.contact_channel_lookups
+          set requested_by_admin_id = coalesce(requested_by_admin_id, $2::uuid),
+              requested_at = case when status = 'failed' then now() else requested_at end,
+              status = 'queued',
+              attempts = case when status = 'failed' then 0 else attempts end,
+              next_attempt_at = case when status = 'failed' then null else next_attempt_at end,
+              failure_reason = case when status = 'failed' then null else failure_reason end,
+              updated_at = now()
+        where contact_id = $1::uuid
+          and status in ('queued', 'failed')`,
+      [contactId, input.createdByAdminId]
+    );
   }
 
   /**
