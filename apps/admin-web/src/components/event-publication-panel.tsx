@@ -1,6 +1,7 @@
 "use client";
 
 import { AdminApiError, publishEvent } from "@/lib/admin-api";
+import { eventPublicationRequirements } from "@/lib/event-publication";
 import type { AdminEventDetail } from "@ticket-platform/contracts/admin-events";
 import {
   AlertTriangle,
@@ -10,12 +11,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
-
-interface PublicationRequirement {
-  readonly label: string;
-  readonly ready: boolean;
-  readonly href: string;
-}
 
 export function EventPublicationPanel({
   event,
@@ -96,52 +91,6 @@ export function EventPublicationPanel({
       </div>
     </form>
   );
-}
-
-export function eventPublicationRequirements(
-  event: AdminEventDetail
-): readonly PublicationRequirement[] {
-  const activeProducts = event.products.filter((product) => product.isActive);
-  return [
-    {
-      label: "Название и дата",
-      ready: event.title.trim().length > 0 && Boolean(event.startsAt),
-      href: `/events/${event.id}/edit`
-    },
-    {
-      label: "Контакт поддержки",
-      ready: Boolean(event.supportContact?.trim()),
-      href: `/events/${event.id}/edit`
-    },
-    {
-      label: "Активный продукт",
-      ready: activeProducts.length > 0,
-      href: `/events/${event.id}/catalog`
-    },
-    {
-      label: "Цена каждого активного продукта",
-      ready: activeProducts.length > 0 && activeProducts.every(
-        (product) => product.pricingRules.some(
-          (rule) => rule.isActive && isPositiveKopeckAmount(rule.unitPriceKopecks)
-        )
-      ),
-      href: `/events/${event.id}/catalog`
-    },
-    {
-      label: "Опубликованный сценарий",
-      ready: event.publishedScenarioVersionId !== null,
-      href: `/events/${event.id}/scenario`
-    },
-    {
-      label: event.offerRequired ? "Активная оферта" : "Оферта не обязательна",
-      ready: !event.offerRequired || event.activeOfferVersionId !== null,
-      href: `/events/${event.id}/offer`
-    }
-  ];
-}
-
-function isPositiveKopeckAmount(value: string): boolean {
-  return /^\d{1,19}$/.test(value) && BigInt(value) > 0n;
 }
 
 function publicationErrorMessage(error: unknown): string {
