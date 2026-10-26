@@ -55,7 +55,9 @@ implements RegistrationGreetingRepository {
                 event.timezone,
                 event.location_name,
                 event.location_address,
-                coalesce(settings.is_enabled, true) as greeting_enabled,
+                -- Нет настроек — не пишем: первое сообщение незнакомому уходит только
+                -- по мероприятию, где это решили (решение владельца от 26.10.2026).
+                coalesce(settings.is_enabled, false) as greeting_enabled,
                 settings.event_phrase,
                 settings.body_template,
                 (select json_object_agg(lookup.channel, lookup.status)

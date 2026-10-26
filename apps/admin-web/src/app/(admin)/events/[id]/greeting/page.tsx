@@ -45,7 +45,7 @@ export default function EventGreetingPage() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useNotice();
 
-  const [isEnabled, setIsEnabled] = useState(true);
+  const [isEnabled, setIsEnabled] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [template, setTemplate] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -227,7 +227,7 @@ export default function EventGreetingPage() {
               <h2>Настройки</h2>
               <span>
                 {view.updatedAt === null
-                  ? "Не меняли — действует общий текст"
+                  ? "Не настраивали — приветствие выключено"
                   : `Изменено ${formatDateTime(view.updatedAt)}${
                       view.updatedByName ? ` · ${view.updatedByName}` : ""
                     }`}
@@ -245,8 +245,9 @@ export default function EventGreetingPage() {
               <span>
                 Писать по заявкам на это мероприятие
                 <small>
-                  Выключите, если первым пишет бот продажи или человеку позвонят сами.
-                  Задача на звонок по заявке ставится в любом случае.
+                  По умолчанию выключено: пока галочки нет, людям, записавшимся на это
+                  мероприятие, аккаунт не пишет. Задача на звонок по заявке ставится в любом
+                  случае.
                 </small>
               </span>
             </label>

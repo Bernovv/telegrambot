@@ -349,5 +349,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260830090000_registration_greetings",
     description: "Greet each site registration from the company account in the first messenger that knows the phone",
     destructive: false
+  },
+  {
+    id: "20260831090000_event_greetings_opt_in",
+    description: "Make the registration greeting opt-in per event: nothing is sent until someone turns it on",
+    destructive: false
   }
 ];

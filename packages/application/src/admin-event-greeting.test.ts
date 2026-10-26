@@ -71,12 +71,13 @@ class Settings implements AdminEventGreetingRepository {
 const clock = { now: () => NOW };
 
 describe("настройки приветствия мероприятия", () => {
-  it("без сохранённых настроек показывает общий текст и включённое приветствие", async () => {
+  it("без сохранённых настроек показывает общий текст и выключенное приветствие", async () => {
+    // Новое мероприятие никому не пишет, пока приветствие у него не включили.
     const service = new AdminEventGreetingService(new Settings(), clock);
 
     const view = await service.get({ actor: actor("events.read"), eventId: EVENT_ID });
 
-    assert.equal(view.isEnabled, true);
+    assert.equal(view.isEnabled, false);
     assert.equal(view.eventPhrase, null);
     assert.equal(view.bodyTemplate, null);
     assert.equal(view.defaultTemplate, DEFAULT_GREETING_TEMPLATE);
