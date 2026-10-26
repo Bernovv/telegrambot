@@ -52,6 +52,20 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+  const message = error instanceof Error ? error.message : String(error);
+  // Сессию держит работающий tg-account: TDLib пускает к ней ровно одну программу. Это не
+  // поломка, и второй копии при этом не случилось — проверка упёрлась в замок до соединения.
+  if (message.includes("Can't lock file")) {
+    console.error(
+      "Сессию сейчас держит работающий процесс tg-account, и проверка с ним одновременно не"
+      + " откроется — это не поломка.\n"
+      + "Как дела у работающего процесса: pm2 logs tg-account --lines 40 --nostream"
+      + " (ищите «account ready» и «listening»).\n"
+      + "Полная проверка соединения: pm2 stop tg-account && pnpm account:status"
+      + " && pm2 start tg-account"
+    );
+  } else {
+    console.error(message);
+  }
   process.exitCode = 1;
 });
