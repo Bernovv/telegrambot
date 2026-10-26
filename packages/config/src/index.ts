@@ -1091,15 +1091,18 @@ export function loadTelegramAccountConfig(env: NodeJS.ProcessEnv): TelegramAccou
     return { enabled: false };
   }
 
-  const proxy = parseTelegramAccountProxy(env.TELEGRAM_ACCOUNT_PROXY);
-  if (proxy === null && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
-    // Молча пойти напрямую здесь нельзя. Именно так 27 июля затёрся адрес Cloudflare-прокси
-    // и два часа не доставлялись билеты: переменной не было, код выбрал другой путь и никто
-    // не упал. Аккаунт без прокси с этого сервера Telegram не увидит вовсе.
+  // `direct` — сервер за границей, и Telegram виден ему напрямую. С октября 2026 так и есть:
+  // новый сервер стоит в Амстердаме. Значение явное, а не пустое, и это главное: пустое
+  // по-прежнему ошибка, потому что молча пойти напрямую нельзя — именно так 27 июля
+  // затёрся адрес Cloudflare-прокси и два часа не доставлялись билеты.
+  const direct = isDirectConnection(env.TELEGRAM_ACCOUNT_PROXY);
+  const proxy = direct ? null : parseTelegramAccountProxy(env.TELEGRAM_ACCOUNT_PROXY);
+  if (proxy === null && !direct
+    && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
     throw new Error(
-      "TELEGRAM_ACCOUNT_PROXY is required in production: MTProto does not reach Telegram "
-      + "from this server directly, and TELEGRAM_API_ROOT does not help — it proxies Bot "
-      + "API HTTP requests and knows nothing about MTProto"
+      "TELEGRAM_ACCOUNT_PROXY is required in production: socks5://… when the server is in "
+      + "Russia, where MTProto does not reach Telegram (TELEGRAM_API_ROOT does not help — it "
+      + "proxies Bot API HTTP requests only), or direct when the server is abroad"
     );
   }
 
@@ -1145,11 +1148,15 @@ export function loadWhatsAppAccountConfig(env: NodeJS.ProcessEnv): WhatsAppAccou
     return { enabled: false };
   }
 
-  const proxyUrl = parseWhatsAppAccountProxy(env.WHATSAPP_ACCOUNT_PROXY);
-  if (proxyUrl === null && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
+  // `direct` — как у Telegram-аккаунта: сервер за границей, прокси не нужен, и сказано это
+  // явно, а не пустой строкой.
+  const direct = isDirectConnection(env.WHATSAPP_ACCOUNT_PROXY);
+  const proxyUrl = direct ? null : parseWhatsAppAccountProxy(env.WHATSAPP_ACCOUNT_PROXY);
+  if (proxyUrl === null && !direct
+    && parseAppEnvironment(env.APP_ENV ?? "local") === "production") {
     throw new Error(
-      "WHATSAPP_ACCOUNT_PROXY is required in production: WhatsApp is not reachable from "
-      + "this server directly. Use the same Amsterdam SOCKS5 as the Telegram account"
+      "WHATSAPP_ACCOUNT_PROXY is required in production: socks5://… when the server is in "
+      + "Russia, where WhatsApp is not reachable directly, or direct when the server is abroad"
     );
   }
 
@@ -1282,6 +1289,11 @@ function parseTelegramAccountPhone(value: string | undefined): string {
  * Одна строка, а не пять переменных, — чтобы прокси нельзя было настроить наполовину.
  * Половина настроек — это ровно та поломка, которую видно не сразу, а через час тишины.
  */
+/** «Прокси не нужен, сервер за границей» — словом, а не пустой строкой. */
+function isDirectConnection(value: string | undefined): boolean {
+  return (value ?? "").trim().toLowerCase() === "direct";
+}
+
 function parseTelegramAccountProxy(
   value: string | undefined
 ): TelegramAccountProxy | null {

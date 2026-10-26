@@ -105,10 +105,11 @@ const TELEGRAM_ACCOUNT = [
   },
   {
     name: "TELEGRAM_ACCOUNT_PROXY",
-    hint: "прокси до Telegram на зарубежной машине; TELEGRAM_API_ROOT его не заменяет — "
-      + "тот воркер умеет только HTTP-запросы Bot API",
-    pattern: /^(socks5h?|mtproxy|mtproto):\/\/[^/]+:\d+$/,
-    patternHint: "socks5://логин:пароль@хост:порт или mtproxy://секрет@хост:порт "
+    hint: "direct, если сервер за границей (с октября 2026 — Амстердам); прокси на зарубежной "
+      + "машине, если сервер в России. TELEGRAM_API_ROOT его не заменяет — тот воркер умеет "
+      + "только HTTP-запросы Bot API",
+    pattern: /^(direct|(socks5h?|mtproxy|mtproto):\/\/[^/]+:\d+)$/i,
+    patternHint: "direct, socks5://логин:пароль@хост:порт или mtproxy://секрет@хост:порт "
       + "(socks5h тоже принимается — это то же самое)"
   }
 ];
@@ -143,10 +144,10 @@ const WHATSAPP_ACCOUNT = [
   },
   {
     name: "WHATSAPP_ACCOUNT_PROXY",
-    hint: "прокси до WhatsApp; годится та же амстердамская машина, что у Telegram-аккаунта. "
+    hint: "direct, если сервер за границей; прокси до WhatsApp, если сервер в России. "
       + "Своя переменная, а не общая: одна правка не должна гасить два канала сразу",
-    pattern: /^socks5h?:\/\/[^/]+:\d+$/,
-    patternHint: "socks5://логин:пароль@хост:порт"
+    pattern: /^(direct|socks5h?:\/\/[^/]+:\d+)$/i,
+    patternHint: "direct или socks5://логин:пароль@хост:порт"
   }
 ];
 

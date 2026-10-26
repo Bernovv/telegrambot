@@ -1,6 +1,59 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { loadApiConfig, loadTelegramBotConfig, loadWorkerConfig } from "./index.js";
+import {
+  loadApiConfig,
+  loadTelegramAccountConfig,
+  loadTelegramBotConfig,
+  loadWhatsAppAccountConfig,
+  loadWorkerConfig
+} from "./index.js";
+
+describe("account proxies", () => {
+  const telegram = {
+    APP_ENV: "production",
+    TELEGRAM_ACCOUNT_API_ID: "1234567",
+    TELEGRAM_ACCOUNT_API_HASH: "0123456789abcdef0123456789abcdef",
+    TELEGRAM_ACCOUNT_PHONE: "+79934828408",
+    TELEGRAM_ACCOUNT_SESSION_DIR: "/var/lib/telegrambot/tg-account",
+    TELEGRAM_ACCOUNT_DB_KEY: "0123456789abcdef0123456789abcdef"
+  };
+
+  it("lets a server abroad reach Telegram directly, but only when told so", () => {
+    // Сервер в Амстердаме видит Telegram напрямую. Пустое значение всё равно ошибка:
+    // молча пойти другим путём — то, из-за чего однажды два часа не доставлялись билеты.
+    const direct = loadTelegramAccountConfig({ ...telegram, TELEGRAM_ACCOUNT_PROXY: "direct" });
+
+    assert.equal(direct.enabled, true);
+    assert.equal(direct.enabled && direct.proxy, null);
+    assert.throws(() => loadTelegramAccountConfig(telegram), /TELEGRAM_ACCOUNT_PROXY is required/);
+    assert.throws(
+      () => loadTelegramAccountConfig({ ...telegram, TELEGRAM_ACCOUNT_PROXY: "" }),
+      /or direct when the server is abroad/
+    );
+  });
+
+  it("still reads a SOCKS5 proxy for a server in Russia", () => {
+    const config = loadTelegramAccountConfig({
+      ...telegram,
+      TELEGRAM_ACCOUNT_PROXY: "socks5://tgproxy:secret@185.11.135.121:11080"
+    });
+
+    assert.equal(config.enabled && config.proxy?.kind, "socks5");
+  });
+
+  it("lets WhatsApp go direct the same explicit way", () => {
+    const whatsapp = {
+      APP_ENV: "production",
+      WHATSAPP_ACCOUNT_SESSION_DIR: "/var/lib/telegrambot/wa-account",
+      WHATSAPP_ACCOUNT_PHONE: "79934828408"
+    };
+
+    const config = loadWhatsAppAccountConfig({ ...whatsapp, WHATSAPP_ACCOUNT_PROXY: "DIRECT" });
+
+    assert.equal(config.enabled, true);
+    assert.throws(() => loadWhatsAppAccountConfig(whatsapp), /WHATSAPP_ACCOUNT_PROXY is required/);
+  });
+});
 
 describe("loadTelegramBotConfig", () => {
   it("loads long polling defaults for local development", () => {
