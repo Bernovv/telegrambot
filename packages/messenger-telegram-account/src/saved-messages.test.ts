@@ -161,16 +161,51 @@ test("отказ Telegram приходит разобранным", async () => 
   );
 });
 
-test("сообщение, которое нельзя скопировать, останавливает рассылку, а не человека", async () => {
+test("кружок не пропущен, текст ушёл — это доставка, а не остановка рассылки", async () => {
+  // Так 19.11.2026 встала первая боевая: у человека закрыты видеосообщения, TDLib вернул
+  // пустое место вместо кружка, а текст рядом отправил.
+  const client = {
+    invoke: async (request: Record<string, unknown>) => {
+      if (request._ === "forwardMessages") {
+        return { _: "messages", total_count: 2, messages: [{ id: -1 }, null] };
+      }
+      return {};
+    }
+  };
+  const sender = createTdlibBroadcastSender(client as never, { confirm: async () => "9001" }, SELF);
+  const result = await sender.copy({
+    externalChatId: "777",
+    externalMessageIds: ["1048576", "2097152"]
+  });
+  assert.deepEqual(result.providerMessageIds, ["9001"]);
+  assert.deepEqual(result.skippedExternalMessageIds, ["2097152"]);
+});
+
+test("не пропущено ничего, а в «Избранном» всё на месте — не дошло этому человеку", async () => {
   const client = {
     invoke: async (request: Record<string, unknown>) =>
       request._ === "forwardMessages" ? { _: "messages", total_count: 1, messages: [null] } : {}
   };
-  const sender = createTdlibBroadcastSender(
-    client as never,
-    { confirm: async () => "1" },
-    SELF
+  const sender = createTdlibBroadcastSender(client as never, { confirm: async () => "1" }, SELF);
+  await assert.rejects(
+    sender.copy({ externalChatId: "777", externalMessageIds: ["1048576"] }),
+    (error: unknown) => error instanceof AccountBroadcastSendError && error.kind === "recipient"
   );
+});
+
+test("пропущенного правда нет в «Избранном» — рассылка встаёт", async () => {
+  const client = {
+    invoke: async (request: Record<string, unknown>) => {
+      if (request._ === "forwardMessages") {
+        return { _: "messages", total_count: 1, messages: [null] };
+      }
+      if (request._ === "getMessage") {
+        throw new Error("Not Found");
+      }
+      return {};
+    }
+  };
+  const sender = createTdlibBroadcastSender(client as never, { confirm: async () => "1" }, SELF);
   await assert.rejects(
     sender.copy({ externalChatId: "777", externalMessageIds: ["1048576"] }),
     (error: unknown) => error instanceof AccountBroadcastSendError && error.kind === "source"

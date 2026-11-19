@@ -591,10 +591,14 @@ export interface AccountBroadcastQueue {
   }): Promise<ClaimedBroadcastRecipient | null>;
   markSent(input: {
     readonly recipient: ClaimedBroadcastRecipient;
+    /** Что дошло. Telegram может пропустить часть — например, кружок тому, кто их закрыл. */
+    readonly parts: readonly ClaimedBroadcastPart[];
     readonly messageId: string;
     readonly attachmentIds: readonly string[];
     readonly providerMessageIds: readonly string[];
     readonly body: string | null;
+    /** Почему дошло не всё. Пусто — дошло всё. */
+    readonly partialReason: string | null;
     readonly at: Date;
   }): Promise<void>;
   markFailed(input: {
@@ -625,7 +629,11 @@ export interface AccountBroadcastSender {
   copy(input: {
     readonly externalChatId: string;
     readonly externalMessageIds: readonly string[];
-  }): Promise<{ readonly providerMessageIds: readonly string[] }>;
+  }): Promise<{
+    readonly providerMessageIds: readonly string[];
+    /** Что Telegram этому человеку не пропустил, хотя в «Избранном» оно есть. */
+    readonly skippedExternalMessageIds?: readonly string[];
+  }>;
 }
 
 /**
@@ -750,13 +758,21 @@ export class SendAccountBroadcastsService {
         externalChatId: recipient.externalChatId,
         externalMessageIds: recipient.parts.map((part) => part.externalMessageId)
       });
-      const stored = recipient.parts.filter((part) => part.storagePath !== null);
+      const skipped = new Set(sent.skippedExternalMessageIds ?? []);
+      const delivered = recipient.parts.filter((part) => !skipped.has(part.externalMessageId));
+      const missed = recipient.parts.filter((part) => skipped.has(part.externalMessageId));
+      const stored = delivered.filter((part) => part.storagePath !== null);
       await this.queue.markSent({
         recipient,
+        parts: delivered,
         messageId: this.ids.newId(),
         attachmentIds: stored.map(() => this.ids.newId()),
         providerMessageIds: sent.providerMessageIds,
-        body: broadcastFeedBody(recipient.parts),
+        body: broadcastFeedBody(delivered),
+        partialReason: missed.length === 0
+          ? null
+          : `ушло частично: Telegram не пропустил ${missed.map((part) => kindLabel(part.kind).toLowerCase()).join(", ")} — `
+            + "у человека закрыты голосовые и видеосообщения",
         at
       });
       return { kind: "sent", broadcastId: recipient.broadcastId, nextRunAt: next };

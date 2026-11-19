@@ -480,7 +480,9 @@ implements AdminAccountBroadcastRepository {
                  select recipient.failure_reason as reason, count(*)::int as total
                    from public.account_broadcast_recipients recipient
                   where recipient.broadcast_id = broadcast.id
-                    and recipient.status = 'failed'
+                    -- Дошедшее частично — тоже повод знать: кружок кому-то не ушёл.
+                    and (recipient.status = 'failed'
+                         or (recipient.status = 'sent' and recipient.failure_reason is not null))
                   group by recipient.failure_reason
                   order by total desc
                   limit 3
@@ -924,10 +926,12 @@ export class PostgresAccountBroadcastQueue implements AccountBroadcastQueue {
    */
   async markSent(input: {
     readonly recipient: ClaimedBroadcastRecipient;
+    readonly parts: readonly ClaimedBroadcastPart[];
     readonly messageId: string;
     readonly attachmentIds: readonly string[];
     readonly providerMessageIds: readonly string[];
     readonly body: string | null;
+    readonly partialReason: string | null;
     readonly at: Date;
   }): Promise<void> {
     const connection = await this.pool.connect();
@@ -952,14 +956,17 @@ export class PostgresAccountBroadcastQueue implements AccountBroadcastQueue {
             JSON.stringify({
               source: "account_broadcast",
               broadcastId: recipient.broadcastId,
-              savedMessageIds: recipient.parts.map((part) => part.savedMessageId),
+              savedMessageIds: input.parts.map((part) => part.savedMessageId),
+              skippedSavedMessageIds: recipient.parts
+                .filter((part) => !input.parts.includes(part))
+                .map((part) => part.savedMessageId),
               providerMessageIds: input.providerMessageIds
             }),
             input.at
           ]
         );
 
-        const stored = recipient.parts.filter((part) => part.storagePath !== null);
+        const stored = input.parts.filter((part) => part.storagePath !== null);
         for (const [index, part] of stored.entries()) {
           const attachmentId = input.attachmentIds[index];
           if (attachmentId === undefined) {
@@ -1000,10 +1007,10 @@ export class PostgresAccountBroadcastQueue implements AccountBroadcastQueue {
                   sent_at = $2::timestamptz,
                   message_id = $3::uuid,
                   next_attempt_at = null,
-                  failure_reason = null,
+                  failure_reason = $4::text,
                   updated_at = $2::timestamptz
             where id = $1::uuid`,
-          [recipient.recipientId, input.at, input.messageId]
+          [recipient.recipientId, input.at, input.messageId, input.partialReason?.slice(0, 500) ?? null]
         );
         // Пробная уходит своим — касание в карточке сотрудника было бы шумом.
         if (!recipient.isTest) {

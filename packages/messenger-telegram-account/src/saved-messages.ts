@@ -257,21 +257,40 @@ export function createTdlibBroadcastSender(
 
       try {
         await client.invoke({ _: "createPrivateChat", user_id: chatId, force: false });
+        const ordered = [...messageIds].sort((left, right) => left - right);
         const forwarded = await client.invoke({
           _: "forwardMessages",
           chat_id: chatId,
           from_chat_id: selfChatId,
-          message_ids: [...messageIds].sort((left, right) => left - right),
+          message_ids: ordered,
           send_copy: true,
           remove_caption: false
         });
-        if (forwarded.messages.some((message) => message === null)) {
+
+        /**
+         * Пустое место в ответе — TDLib это сообщение пропустил, остальные уже отправляет.
+         *
+         * Чаще всего виноват не источник, а получатель: у человека с Telegram Premium можно
+         * закрыть приём голосовых и видеосообщений, и тогда кружок к нему не пропускается,
+         * а текст рядом с ним — пропускается. 19.11.2026 первая же боевая рассылка встала
+         * целиком на двенадцатом человеке именно так: пропуск приняли за пропажу сообщения
+         * из «Избранного». Поэтому сначала проверяем, живо ли пропущенное у нас, — и только
+         * если его правда нет, останавливаем рассылку.
+         */
+        const skipped = ordered.filter((_, index) => (forwarded.messages[index] ?? null) === null);
+        if (skipped.length > 0 && !(await allExist(client, selfChatId, skipped))) {
           throw new AccountBroadcastSendError(
             "source",
-            "Telegram не даёт скопировать сообщение из «Избранного»"
+            "сообщения больше нет в «Избранном»"
           );
         }
         const drafts = forwarded.messages.filter((message): message is TdMessage => message !== null);
+        if (drafts.length === 0) {
+          throw new AccountBroadcastSendError(
+            "recipient",
+            "Telegram не пропускает этому человеку: закрыты голосовые и видеосообщения или личка"
+          );
+        }
         // Ждём все разом: подтверждения приходят в любом порядке, а ждать их по очереди
         // значило бы пропустить уже пришедшее.
         const confirmed = await Promise.allSettled(
@@ -285,7 +304,10 @@ export function createTdlibBroadcastSender(
         if (sent.length === 0 && firstFailure !== undefined) {
           throw firstFailure.reason;
         }
-        return { providerMessageIds: sent };
+        return {
+          providerMessageIds: sent,
+          skippedExternalMessageIds: skipped.map(String)
+        };
       } catch (error) {
         throw toSendError(error);
       }
@@ -321,6 +343,27 @@ export function classifyTdlibSendError(message: string): {
     return { kind: "source", retryAfterSeconds: null };
   }
   return { kind: "transient", retryAfterSeconds: null };
+}
+
+/** Живы ли сообщения в «Избранном». Ответ «не найдено» — нет; любой другой сбой — не знаем. */
+async function allExist(
+  client: Pick<Client, "invoke">,
+  selfChatId: number,
+  messageIds: readonly number[]
+): Promise<boolean> {
+  for (const messageId of messageIds) {
+    try {
+      await client.invoke({ _: "getMessage", chat_id: selfChatId, message_id: messageId });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (/not found/i.test(text)) {
+        return false;
+      }
+      // Сеть моргнула — не повод останавливать рассылку. Считаем живым: если сообщения
+      // правда нет, следующий проход «Избранного» отметит его удалённым, и рассылка встанет.
+    }
+  }
+  return true;
 }
 
 function toSendError(error: unknown): AccountBroadcastSendError {

@@ -680,12 +680,19 @@ async function main(): Promise<void> {
       if (claimed.parts[0]?.kind !== "video_note") {
         throw new Error("Порядок частей не тот: кружок записан раньше текста");
       }
+      // Первому уходит всё, остальным — без кружка: так Telegram поступает с теми, у кого
+      // закрыты видеосообщения, и история обязана показать это причиной.
+      const delivered = round === 0
+        ? claimed.parts
+        : claimed.parts.filter((part) => part.kind !== "video_note");
       await accountBroadcasts.queue.markSent({
         recipient: claimed,
+        parts: delivered,
         messageId: randomUUID(),
         attachmentIds: [randomUUID()],
         providerMessageIds: [`${9001 + round * 2}`, `${9002 + round * 2}`],
         body: "Ждём вас во вторник",
+        partialReason: round === 0 ? null : "ушло частично: Telegram не пропустил кружок",
         at: now
       });
       broadcastSent += 1;
@@ -737,6 +744,9 @@ async function main(): Promise<void> {
     const live = items.find((item) => item.id === liveBroadcastId);
     if (live?.status !== "completed" || live.sentCount !== broadcastSent || live.parts.length !== 2) {
       throw new Error(`История не та: ${JSON.stringify(live)}`);
+    }
+    if (broadcastSent > 1 && live.failureReasons.length === 0) {
+      throw new Error("Частичная доставка не видна в причинах");
     }
   });
   await check("account countAudience после отправки видит «уже получили»", async () => {

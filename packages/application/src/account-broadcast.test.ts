@@ -180,6 +180,22 @@ describe("SendAccountBroadcastsService", () => {
     assert.ok(queue.calls.includes("completeFinished"));
   });
 
+  it("кружок не пропущен — в ленте только текст, причина записана, рассылка идёт", async () => {
+    const queue = fakeQueue();
+    const result = await service(queue, async () => ({
+      providerMessageIds: ["9002"],
+      skippedExternalMessageIds: ["1048576"]
+    })).execute({ at: NOON });
+
+    assert.equal(result.kind, "sent");
+    const sent = queue.sent[0];
+    assert.deepEqual(sent?.parts.map((part) => part.kind), ["text"]);
+    assert.equal(sent?.attachmentIds.length, 0);
+    assert.equal(sent?.body, "Ждём вас во вторник!");
+    assert.match(sent?.partialReason ?? "", /кружок/);
+    assert.equal(queue.calls.includes("stopBroadcast"), false);
+  });
+
   it("ночью боевых не берёт, а пробную берёт", async () => {
     const live = fakeQueue();
     const idle = await service(live, async () => ({ providerMessageIds: ["1"] }))
