@@ -70,6 +70,9 @@
       ],
       "@ticket-platform/contracts/admin-greetings": [
         "../../packages/contracts/src/admin-greetings.ts"
+      ],
+      "@ticket-platform/contracts/admin-account-broadcasts": [
+        "../../packages/contracts/src/admin-account-broadcasts.ts"
       ]
     }
   },

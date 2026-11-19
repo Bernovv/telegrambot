@@ -17,6 +17,8 @@
  * - **Отправляет ответы менеджеров** — те, что написаны в панели в ветку этого канала.
  * - **Ищет людей в Telegram по номеру телефона.** Единственный способ узнать, есть ли у
  *   номера аккаунт, — спросить живым клиентом, а живой клиент здесь только один.
+ * - **Рассылает от своего имени.** Смотрит, что лежит в «Избранном», показывает это панели
+ *   и копирует выбранное участникам мероприятия — по одному, с паузой и только днём.
  */
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -25,16 +27,20 @@ import {
   ConversationLog,
   DownloadConversationAttachmentsBatchService,
   ResolveChannelLookupsBatchService,
-  SendConversationRepliesBatchService
+  SendAccountBroadcastsService,
+  SendConversationRepliesBatchService,
+  SyncAccountSavedMessagesService
 } from "@ticket-platform/application";
 import type { IdGenerator } from "@ticket-platform/application";
 import {
+  loadAccountBroadcastsConfig,
   loadAppConfig,
   loadConversationAttachmentsConfig,
   loadConversationRepliesConfig,
   loadChannelLookupConfig
 } from "@ticket-platform/config";
 import {
+  createAccountBroadcastPersistence,
   createConversationPersistence,
   createAttachmentDownloadPersistence,
   createConversationReplyQueue,
@@ -43,9 +49,14 @@ import {
 } from "@ticket-platform/database";
 import {
   createTdlibAttachmentSource,
+  createTdlibBroadcastSender,
   createTdlibPhoneLookup,
   createTdlibReplySender,
+  createTdlibSavedMessageFileSource,
+  createTdlibSavedMessagesSource,
+  deletedSavedMessageIds,
   incomingPrivateMessage,
+  isNewSavedMessage,
   participantOf,
   readAccountIdentity,
   readAuthorizationState,
@@ -135,13 +146,16 @@ async function main(): Promise<void> {
   // явно, потому что аккаунтов больше одного: чужую строку этот процесс отправить не может
   // и, забрав её, только похоронил бы.
   const replyOptions = loadConversationRepliesConfig(process.env);
+  // Одно ожидание подтверждений на процесс: и ответы, и рассылка ждут одних и тех же
+  // обновлений TDLib, и два слушателя означали бы двойную работу на каждом сообщении.
+  const confirmations = new TdlibSendConfirmations(client);
   const replies = new SendConversationRepliesBatchService(
     createConversationReplyQueue(pool, {
       transport: "account",
       channels: ["telegram"]
     }).queue,
     {
-      telegram: createTdlibReplySender(client, new TdlibSendConfirmations(client), {
+      telegram: createTdlibReplySender(client, confirmations, {
         outgoingDirectory: join(sessionPaths(config.sessionDirectory).filesDirectory, "outgoing")
       })
     },
@@ -176,7 +190,84 @@ async function main(): Promise<void> {
     }
   );
 
+  /**
+   * Рассылка от имени аккаунта.
+   *
+   * «Избранное» — это чат аккаунта с самим собой, и номер у него тот же, что у аккаунта.
+   * Отсюда берётся содержимое: кружок записывают на телефоне, кидают в «Избранное», панель
+   * его видит, рассылка копирует.
+   */
+  const broadcastOptions = loadAccountBroadcastsConfig(process.env);
+  const selfChatId = Number(identity.userId);
+  const broadcastPersistence = createAccountBroadcastPersistence(pool);
+  const savedFileStorage = new FileSystemAttachmentStorage(attachments.directory);
+  const savedMessages = new SyncAccountSavedMessagesService(
+    broadcastPersistence.savedMessages,
+    createTdlibSavedMessagesSource(client, selfChatId),
+    attachments.enabled
+      ? {
+        source: createTdlibSavedMessageFileSource(client, {
+          onCleanupFailure: (error) => {
+            logger.error("tdlib saved file not deleted after copy", {
+              errorMessage: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }),
+        storage: {
+          save: async (input) => await savedFileStorage.save({
+            attachmentId: input.id,
+            bytes: input.bytes,
+            fileName: input.fileName,
+            mimeType: input.mimeType
+          })
+        },
+        maxBytes: attachments.maxBytes
+      }
+      : null,
+    { limit: broadcastOptions.savedLimit, maxFileAttempts: 3 }
+  );
+  const broadcasts = new SendAccountBroadcastsService(
+    broadcastPersistence.queue,
+    createTdlibBroadcastSender(client, confirmations, selfChatId),
+    ids,
+    {
+      enabled: broadcastOptions.enabled,
+      pauseMinMs: broadcastOptions.pauseMinMs,
+      pauseMaxMs: broadcastOptions.pauseMaxMs,
+      idlePollMs: 30_000,
+      dailyLimit: broadcastOptions.dailyLimit,
+      window: {
+        startHour: broadcastOptions.windowStartHour,
+        endHour: broadcastOptions.windowEndHour,
+        timeZone: broadcastOptions.windowTimeZone
+      },
+      maxAttempts: broadcastOptions.maxAttempts,
+      retryDelayMs: broadcastOptions.retryDelayMs,
+      leaseMs: 10 * 60_000,
+      accountPauseMs: broadcastOptions.accountPauseMs
+    }
+  );
+  let nextSavedSyncAt = 0;
+  let nextBroadcastAt = 0;
+  let lastBroadcastState = "";
+
   client.on("update", (update) => {
+    // Новое в «Избранном» — смотрим сразу: человек, только что скинувший кружок, ждёт его
+    // в панели, а не через полминуты.
+    if (isNewSavedMessage(update, selfChatId)) {
+      nextSavedSyncAt = 0;
+    }
+    const deleted = deletedSavedMessageIds(update, selfChatId);
+    if (deleted !== null && deleted.length > 0) {
+      void broadcastPersistence.savedMessages
+        .markDeleted({ externalMessageIds: deleted, at: new Date() })
+        .catch((error: unknown) => {
+          logger.error("saved message deletion not recorded", {
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+        });
+    }
+
     const incoming = incomingPrivateMessage(update);
     if (incoming === null) {
       return;
@@ -251,6 +342,56 @@ async function main(): Promise<void> {
       });
     }
 
+    if (Date.now() >= nextSavedSyncAt) {
+      try {
+        const synced = await savedMessages.execute({ at: new Date() });
+        if (synced.stored > 0 || synced.failed > 0) {
+          logger.info("saved messages synced", {
+            seen: synced.seen,
+            stored: synced.stored,
+            failed: synced.failed
+          });
+        }
+      } catch (error) {
+        logger.error("saved messages sync failed", {
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      }
+      nextSavedSyncAt = Date.now() + broadcastOptions.savedSyncIntervalMs;
+    }
+
+    if (Date.now() >= nextBroadcastAt) {
+      try {
+        const pass = await broadcasts.execute({ at: new Date() });
+        nextBroadcastAt = pass.nextRunAt.getTime();
+        if (pass.kind === "sent" || pass.kind === "failed" || pass.kind === "retry" || pass.kind === "stopped") {
+          logger.info("account broadcast", {
+            outcome: pass.kind,
+            broadcastId: pass.broadcastId,
+            ...(pass.kind === "sent" ? {} : { reason: pass.reason })
+          });
+        }
+        // Пауза и простой пишутся один раз при смене, а не каждые полминуты.
+        const state = pass.kind === "paused"
+          ? `paused:${pass.until.toISOString()}`
+          : pass.kind === "idle" ? `idle:${pass.reason}` : pass.kind;
+        if (state !== lastBroadcastState && (pass.kind === "paused" || pass.kind === "idle")) {
+          logger.info("account broadcast waiting", {
+            state: pass.kind,
+            ...(pass.kind === "paused"
+              ? { until: pass.until.toISOString(), reason: pass.reason }
+              : { reason: pass.reason })
+          });
+        }
+        lastBroadcastState = state;
+      } catch (error) {
+        nextBroadcastAt = Date.now() + 60_000;
+        logger.error("account broadcast pass failed", {
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
     if (Date.now() >= nextLookupSweepAt) {
       try {
         const resolved = await lookups.execute({
@@ -299,7 +440,13 @@ async function main(): Promise<void> {
       nextAttachmentSweepAt = Date.now() + attachments.pollIntervalMs;
     }
 
-    await delay(replyOptions.pollIntervalMs);
+    // Спим до ближайшего дела: темп рассылки (20–30 секунд) короче такта ответов, и общий
+    // такт растягивал бы паузу между её сообщениями до пятнадцати секунд сверху.
+    const now = Date.now();
+    await delay(Math.max(
+      1_000,
+      Math.min(replyOptions.pollIntervalMs, nextBroadcastAt - now, nextSavedSyncAt - now)
+    ));
   }
 
   await client.close();

@@ -8,6 +8,7 @@ import {
   AdminEventExpensesService,
   AdminEventInventoryService,
   AdminEventTeamService,
+  AdminAccountBroadcastService,
   AdminEventGreetingService,
   AdminStaffService,
   AdminEventOverviewService,
@@ -70,7 +71,7 @@ import {
   UpdateAdminEventProductService,
   type IdGenerator
 } from "@ticket-platform/application";
-import { loadApiConfig } from "@ticket-platform/config";
+import { loadAccountBroadcastsConfig, loadApiConfig } from "@ticket-platform/config";
 import {
   createOfferAcceptancePersistence,
   createAdminBroadcastPersistence,
@@ -86,6 +87,7 @@ import {
   createAdminEventExpensesPersistence,
   createAdminEventInventoryPersistence,
   createAdminEventTeamPersistence,
+  createAccountBroadcastPersistence,
   createAdminEventGreetingPersistence,
   createAdminEventOverviewPersistence,
   createAdminEventReportPersistence,
@@ -424,6 +426,23 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
           createAdminEventTeamPersistence(pool).repository,
           { now: () => new Date() },
           idGenerator
+        )
+      : undefined;
+    // Рассылка от рабочего аккаунта. Темп читается из тех же переменных, что у процесса
+    // аккаунта: панель показывает, за сколько дней уйдёт, и должна считать как он.
+    const accountBroadcastsConfig = loadAccountBroadcastsConfig(env);
+    const adminAccountBroadcast = adminAuth
+      ? new AdminAccountBroadcastService(
+          createAccountBroadcastPersistence(pool).admin,
+          idGenerator,
+          {
+            pauseMinSeconds: Math.round(accountBroadcastsConfig.pauseMinMs / 1_000),
+            pauseMaxSeconds: Math.round(accountBroadcastsConfig.pauseMaxMs / 1_000),
+            dailyLimit: accountBroadcastsConfig.dailyLimit,
+            windowStartHour: accountBroadcastsConfig.windowStartHour,
+            windowEndHour: accountBroadcastsConfig.windowEndHour,
+            timeZone: accountBroadcastsConfig.windowTimeZone
+          }
         )
       : undefined;
     const adminGreeting = adminAuth
@@ -769,6 +788,7 @@ export async function bootstrapApi(env: NodeJS.ProcessEnv = process.env): Promis
       ...(adminInventory ? { adminInventory } : {}),
       ...(adminTeam ? { adminTeam } : {}),
       ...(adminGreeting ? { adminGreeting } : {}),
+      ...(adminAccountBroadcast ? { adminAccountBroadcast } : {}),
       ...(adminStaff ? { adminStaff } : {}),
       ...(adminOverview ? { adminOverview } : {}),
       ...(adminEventReport ? { adminEventReport } : {}),

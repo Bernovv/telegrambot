@@ -657,6 +657,120 @@ export function loadRegistrationGreetingsConfig(
   };
 }
 
+/**
+ * Рассылка от рабочего аккаунта Telegram: темп и окно.
+ *
+ * Темп выбрал владелец 19.11.2026 — «быстрее»: одно сообщение в 20–30 секунд, до 150 человек
+ * в сутки. Это заметно смелее приветствий, и платит за смелость тот же аккаунт, через который
+ * идут ответы клиентам. Поэтому ночью не пишем вовсе, а просьбу Telegram подождать
+ * выполняем целиком — для всех рассылок сразу.
+ *
+ * Те же значения читает api: панель показывает, за сколько дней уйдёт рассылка.
+ */
+export interface AccountBroadcastsConfig {
+  readonly enabled: boolean;
+  readonly pauseMinMs: number;
+  readonly pauseMaxMs: number;
+  readonly dailyLimit: number;
+  readonly windowStartHour: number;
+  readonly windowEndHour: number;
+  readonly windowTimeZone: string;
+  readonly maxAttempts: number;
+  readonly retryDelayMs: number;
+  /** Пауза после того, как Telegram ограничил аккаунт (PEER_FLOOD и подобное). */
+  readonly accountPauseMs: number;
+  /** Как часто заглядывать в «Избранное». */
+  readonly savedSyncIntervalMs: number;
+  /** Сколько последних сообщений «Избранного» смотреть. */
+  readonly savedLimit: number;
+}
+
+export function loadAccountBroadcastsConfig(env: NodeJS.ProcessEnv): AccountBroadcastsConfig {
+  const pauseMinMs = parseBoundedInteger(
+    env.ACCOUNT_BROADCASTS_PAUSE_MIN_MS ?? "20000",
+    "ACCOUNT_BROADCASTS_PAUSE_MIN_MS",
+    5_000,
+    3_600_000
+  );
+  const pauseMaxMs = parseBoundedInteger(
+    env.ACCOUNT_BROADCASTS_PAUSE_MAX_MS ?? "30000",
+    "ACCOUNT_BROADCASTS_PAUSE_MAX_MS",
+    5_000,
+    3_600_000
+  );
+  if (pauseMaxMs < pauseMinMs) {
+    throw new Error(
+      "ACCOUNT_BROADCASTS_PAUSE_MAX_MS must not be less than ACCOUNT_BROADCASTS_PAUSE_MIN_MS"
+    );
+  }
+  const windowStartHour = parseBoundedInteger(
+    env.ACCOUNT_BROADCASTS_WINDOW_START ?? "10",
+    "ACCOUNT_BROADCASTS_WINDOW_START",
+    0,
+    23
+  );
+  const windowEndHour = parseBoundedInteger(
+    env.ACCOUNT_BROADCASTS_WINDOW_END ?? "21",
+    "ACCOUNT_BROADCASTS_WINDOW_END",
+    1,
+    24
+  );
+  if (windowEndHour <= windowStartHour) {
+    throw new Error(
+      "ACCOUNT_BROADCASTS_WINDOW_END must be later than ACCOUNT_BROADCASTS_WINDOW_START"
+    );
+  }
+
+  return {
+    enabled: parseBoolean(
+      env.ACCOUNT_BROADCASTS_ENABLED ?? "true",
+      "ACCOUNT_BROADCASTS_ENABLED"
+    ),
+    pauseMinMs,
+    pauseMaxMs,
+    dailyLimit: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_DAILY_LIMIT ?? "150",
+      "ACCOUNT_BROADCASTS_DAILY_LIMIT",
+      1,
+      1_000
+    ),
+    windowStartHour,
+    windowEndHour,
+    windowTimeZone: (env.ACCOUNT_BROADCASTS_TIMEZONE ?? "Europe/Moscow").trim()
+      || "Europe/Moscow",
+    maxAttempts: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_MAX_ATTEMPTS ?? "3",
+      "ACCOUNT_BROADCASTS_MAX_ATTEMPTS",
+      1,
+      20
+    ),
+    retryDelayMs: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_RETRY_DELAY_MS ?? "600000",
+      "ACCOUNT_BROADCASTS_RETRY_DELAY_MS",
+      10_000,
+      86_400_000
+    ),
+    accountPauseMs: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_ACCOUNT_PAUSE_MS ?? "86400000",
+      "ACCOUNT_BROADCASTS_ACCOUNT_PAUSE_MS",
+      600_000,
+      604_800_000
+    ),
+    savedSyncIntervalMs: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_SAVED_SYNC_MS ?? "30000",
+      "ACCOUNT_BROADCASTS_SAVED_SYNC_MS",
+      5_000,
+      3_600_000
+    ),
+    savedLimit: parseBoundedInteger(
+      env.ACCOUNT_BROADCASTS_SAVED_LIMIT ?? "30",
+      "ACCOUNT_BROADCASTS_SAVED_LIMIT",
+      5,
+      100
+    )
+  };
+}
+
 /** «telegram,max» — по порядку, без повторов. Пустой список значит «никуда», это ошибка. */
 function parseGreetingChannels(value: string): readonly LookupChannel[] {
   const known: readonly LookupChannel[] = ["telegram", "max", "whatsapp"];

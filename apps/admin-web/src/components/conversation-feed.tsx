@@ -583,6 +583,27 @@ function AttachmentRow({
     );
   }
 
+  if (attachment.kind === "video") {
+    // Кружок из рассылки аккаунта лежит с именем «Кружок.mp4» — его и рисуем кругом, как
+    // его видит получатель. Остальное видео — обычным прямоугольником. Ссылка рядом на тот
+    // же случай, что у голосовых: не каждый браузер играет то, что прислал Telegram.
+    const round = attachment.fileName === "Кружок.mp4";
+    return (
+      <div className="conversation-attachment-video">
+        <video
+          className={round ? "is-round" : undefined}
+          controls
+          preload="none"
+          playsInline
+          src={url}
+        />
+        <a href={url} target="_blank" rel="noreferrer">
+          Открыть файл{size}
+        </a>
+      </div>
+    );
+  }
+
   return (
     <p className="conversation-attachment">
       <a href={url} target="_blank" rel="noreferrer">

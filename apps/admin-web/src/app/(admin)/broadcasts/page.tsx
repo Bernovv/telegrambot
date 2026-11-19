@@ -38,9 +38,11 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   Megaphone,
+  Send,
   TestTube,
   X
 } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
@@ -239,6 +241,16 @@ export default function BroadcastsPage() {
           <h1>Рассылки</h1>
           <p>Сообщение уходит всем, кто попадает под выбранные условия.</p>
         </div>
+        {/* От бота пишут тем, кто его открывал. Участникам с сайта и кружками — от
+            рабочего аккаунта: это отдельный экран, содержимое там берётся из «Избранного». */}
+        <Link
+          className="secondary-button"
+          href={targetEventId
+            ? `/broadcasts/account?event=${encodeURIComponent(targetEventId)}`
+            : "/broadcasts/account"}
+        >
+          <Send size={16} /> От рабочего аккаунта — с кружками
+        </Link>
       </div>
 
       <section className="data-section" aria-label="Новая рассылка">

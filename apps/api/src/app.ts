@@ -58,6 +58,10 @@ import {
   type AdminBroadcastHandlers
 } from "./admin-broadcast-api.js";
 import {
+  AdminAccountBroadcastApiModule,
+  type AdminAccountBroadcastHandler
+} from "./admin-account-broadcast-api.js";
+import {
   AdminConversationsApiModule,
   type AdminConversationsHandler,
   type ConversationFilesConfig
@@ -180,6 +184,8 @@ export interface ApiApplicationOptions {
   readonly adminEvents?: AdminEventsHandlers;
   readonly participantsExport?: ExportParticipantsHandler;
   readonly adminBroadcast?: AdminBroadcastHandlers;
+  /** Рассылка от рабочего аккаунта: «Избранное», подсчёт, запуск, история. */
+  readonly adminAccountBroadcast?: AdminAccountBroadcastHandler;
   readonly adminOutreach?: AdminOutreachHandler;
   readonly adminConversations?: AdminConversationsHandler;
   /** Папка вложений переписки: та же, куда их кладёт воркер. */
@@ -286,6 +292,12 @@ class ApiModule {
         ...(options.adminGreeting
           ? [AdminGreetingApiModule.register(options.adminGreeting)]
           : []),
+        ...(options.adminAccountBroadcast
+          ? [AdminAccountBroadcastApiModule.register(
+            options.adminAccountBroadcast,
+            options.conversationFiles ?? { directory: "" }
+          )]
+          : []),
         ...(options.adminStaff
           ? [AdminStaffApiModule.register(options.adminStaff)]
           : []),
@@ -355,6 +367,7 @@ export async function createApiApplication(
       || options.adminInventory
       || options.adminTeam
       || options.adminGreeting
+      || options.adminAccountBroadcast
       || options.adminStaff
       || options.adminOverview
     )

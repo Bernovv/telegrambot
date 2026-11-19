@@ -68,7 +68,12 @@ export function isAllowedAdminApiPath(
       || /^events\/[0-9a-f-]{36}\/overview$/i.test(path)
       || /^events\/[0-9a-f-]{36}\/report$/i.test(path)
       || path === "broadcasts"
-      || path === "broadcasts/audience";
+      || path === "broadcasts/audience"
+      // Рассылка от рабочего аккаунта: история, «Избранное», файл кружка и подсчёт.
+      || path === "account-broadcasts"
+      || path === "account-broadcasts/saved"
+      || /^account-broadcasts\/saved\/[0-9a-f-]{36}\/file$/i.test(path)
+      || /^account-broadcasts\/audience(?:\?.*)?$/i.test(path);
   }
   if (method === "POST") {
     // Ответ менеджера в конкретный диалог. Путь узкий намеренно: писать можно только в
@@ -77,6 +82,8 @@ export function isAllowedAdminApiPath(
       || path === "events"
       || path === "broadcasts"
       || path === "broadcast-images"
+      || path === "account-broadcasts"
+      || /^account-broadcasts\/[0-9a-f-]{36}\/cancel$/i.test(path)
       || path === "outreach/campaigns"
       || path === "outreach/campaign-contacts/activities"
       || path === "outreach/campaign-contacts/assign"
@@ -173,7 +180,8 @@ export function isFileDownloadPath(path: string): boolean {
  * файл выглядит целым по размеру и не открывается.
  */
 export function isBinaryDownloadPath(path: string): boolean {
-  return /^conversations\/attachments\/[0-9a-f-]{36}\/file$/i.test(path);
+  return /^conversations\/attachments\/[0-9a-f-]{36}\/file$/i.test(path)
+    || /^account-broadcasts\/saved\/[0-9a-f-]{36}\/file$/i.test(path);
 }
 export function isTrustedMutationOrigin(
   origin: string | null,

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getAdminMutationBodyLimit,
   isAllowedAdminApiPath,
+  isBinaryDownloadPath,
   isFileDownloadPath,
   isTrustedMutationOrigin,
   isValidIdempotencyKey,
@@ -769,4 +770,19 @@ test("forwards the inbox list, one thread and the read mark", () => {
   // Список — только для чтения. POST по этому пути не обрабатывает никто, и открытый
   // путь без обработчика — это обещание, которого api не выполнит.
   assert.equal(isAllowedAdminApiPath("POST", "conversations"), false);
+});
+
+test("allowlists the company-account broadcast and streams its saved files as bytes", () => {
+  const id = "00000000-0000-4000-8000-000000000101";
+  assert.equal(isAllowedAdminApiPath("GET", "account-broadcasts"), true);
+  assert.equal(isAllowedAdminApiPath("GET", "account-broadcasts/saved"), true);
+  assert.equal(isAllowedAdminApiPath("GET", `account-broadcasts/saved/${id}/file`), true);
+  assert.equal(isAllowedAdminApiPath("GET", "account-broadcasts/audience"), true);
+  assert.equal(isAllowedAdminApiPath("POST", "account-broadcasts"), true);
+  assert.equal(isAllowedAdminApiPath("POST", `account-broadcasts/${id}/cancel`), true);
+  // Писать в «Избранное» панель не умеет и не должна: содержимое кладут с телефона.
+  assert.equal(isAllowedAdminApiPath("POST", "account-broadcasts/saved"), false);
+  assert.equal(isAllowedAdminApiPath("GET", "account-broadcasts/saved/../../etc/file"), false);
+  assert.equal(isBinaryDownloadPath(`account-broadcasts/saved/${id}/file`), true);
+  assert.equal(isBinaryDownloadPath("account-broadcasts/saved"), false);
 });

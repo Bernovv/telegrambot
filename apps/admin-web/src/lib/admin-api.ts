@@ -1,4 +1,12 @@
 import type {
+  AccountBroadcastAudienceResult,
+  AccountBroadcastListResult,
+  AccountSavedMessagesResult,
+  CancelAccountBroadcastResult,
+  CreateAccountBroadcastRequest,
+  CreateAccountBroadcastResult
+} from "@ticket-platform/contracts/admin-account-broadcasts";
+import type {
   AdminInboxFilter,
   AdminInboxPage,
   AdminPersonConversations,
@@ -1691,6 +1699,53 @@ export function countBroadcastAudience(
   return requestAdminApi<AdminBroadcastAudienceResult>(
     `broadcasts/audience${search ? `?${search}` : ""}`,
     signal
+  );
+}
+
+// Рассылка от рабочего аккаунта: содержимое берётся из «Избранного», а не набирается здесь.
+export function listAccountSavedMessages(
+  signal?: AbortSignal
+): Promise<AccountSavedMessagesResult> {
+  return requestAdminApi<AccountSavedMessagesResult>("account-broadcasts/saved", signal);
+}
+
+export function accountSavedMessageFileUrl(savedMessageId: string): string {
+  return `/admin-api/account-broadcasts/saved/${encodeURIComponent(savedMessageId)}/file`;
+}
+
+export function countAccountBroadcastAudience(
+  input: { readonly eventId: string; readonly savedMessageIds: readonly string[] },
+  signal?: AbortSignal
+): Promise<AccountBroadcastAudienceResult> {
+  const query = new URLSearchParams({ eventId: input.eventId });
+  if (input.savedMessageIds.length > 0) {
+    query.set("savedMessageIds", input.savedMessageIds.join(","));
+  }
+  return requestAdminApi<AccountBroadcastAudienceResult>(
+    `account-broadcasts/audience?${query.toString()}`,
+    signal
+  );
+}
+
+export function createAccountBroadcast(
+  input: CreateAccountBroadcastRequest
+): Promise<CreateAccountBroadcastResult> {
+  return requestAdminMutation("account-broadcasts", "POST", input);
+}
+
+export function listAccountBroadcasts(
+  signal?: AbortSignal
+): Promise<AccountBroadcastListResult> {
+  return requestAdminApi<AccountBroadcastListResult>("account-broadcasts", signal);
+}
+
+export function cancelAccountBroadcast(
+  broadcastId: string
+): Promise<CancelAccountBroadcastResult> {
+  return requestAdminMutation(
+    `account-broadcasts/${encodeURIComponent(broadcastId)}/cancel`,
+    "POST",
+    {}
   );
 }
 

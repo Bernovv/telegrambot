@@ -27,6 +27,7 @@ import { createSiteRegistrationPersistence } from "../src/site-registration-pers
 import { createRegistrationGreetingPersistence } from "../src/registration-greeting-persistence.js";
 import { createChannelLookupQueue } from "../src/channel-lookup-persistence.js";
 import { createAdminEventGreetingPersistence } from "../src/admin-event-greeting-persistence.js";
+import { createAccountBroadcastPersistence } from "../src/account-broadcast-persistence.js";
 import {
   createAdminConversationsPersistence,
   createAttachmentFilePersistence,
@@ -533,6 +534,246 @@ async function main(): Promise<void> {
   // Списки людей и заказов: то, что панель открывает первым делом. Здесь легко потерять
   // колонку, которой нет в подзапросе, — Postgres отвергнет запрос целиком, и страница
   // отдаст 500. Именно так уже случалось со списком контактов воронки.
+  // Рассылка от рабочего аккаунта: «Избранное» → подсчёт → запуск → отправка → история.
+  // Участник мероприятия из заготовки получает ветку Telegram через проверку номера, как
+  // на боевом, и рассылка доходит до него по всей цепочке.
+  console.log("\nРассылка от рабочего аккаунта:");
+  const accountBroadcasts = createAccountBroadcastPersistence(pool);
+  const broadcastChatId = String(Math.floor(Math.random() * 1_000_000_000) + 1);
+  const savedBase = BigInt(Math.floor(Math.random() * 1_000_000) + 1) * 1_048_576n;
+  const circleExternalId = savedBase.toString();
+  const textExternalId = (savedBase + 1_048_576n).toString();
+  await check("lookups markFound для рассылки", () => lookups.markFound({
+    contactId,
+    channel: "telegram",
+    externalUserId: broadcastChatId,
+    externalChatId: broadcastChatId,
+    username: null,
+    conversationId: randomUUID(),
+    at: now
+  }));
+  await check("savedMessages syncSeen", () => accountBroadcasts.savedMessages.syncSeen({
+    ids: [textExternalId, circleExternalId],
+    messages: [
+      {
+        externalMessageId: circleExternalId, kind: "video_note", body: null,
+        durationSeconds: 42, minithumbnailBase64: "AAAA", externalFileId: "55",
+        fileName: "Кружок.mp4", mimeType: "video/mp4", sizeBytes: 2_000_000, sentAt: now
+      },
+      {
+        externalMessageId: textExternalId, kind: "text", body: "Ждём вас во вторник",
+        durationSeconds: null, minithumbnailBase64: null, externalFileId: null,
+        fileName: null, mimeType: null, sizeBytes: null, sentAt: now
+      }
+    ],
+    fileKinds: ["video_note"],
+    maxFileBytes: 5_000_000,
+    at: now
+  }));
+  // Второй проход видит то же окно, но у кружка сменился номер файла у TDLib: строка
+  // обновляется через `on conflict`, а не заводится заново.
+  await check("savedMessages syncSeen второй раз (on conflict)", () =>
+    accountBroadcasts.savedMessages.syncSeen({
+      ids: [textExternalId, circleExternalId],
+      messages: [
+        {
+          externalMessageId: circleExternalId, kind: "video_note", body: null,
+          durationSeconds: 42, minithumbnailBase64: "AAAA", externalFileId: "56",
+          fileName: "Кружок.mp4", mimeType: "video/mp4", sizeBytes: 2_000_000, sentAt: now
+        },
+        {
+          externalMessageId: textExternalId, kind: "text", body: "Ждём вас во вторник",
+          durationSeconds: null, minithumbnailBase64: null, externalFileId: null,
+          fileName: null, mimeType: null, sizeBytes: null, sentAt: now
+        }
+      ],
+      fileKinds: ["video_note"],
+      maxFileBytes: 5_000_000,
+      at: now
+    })
+  );
+  let savedIds: string[] = [];
+  await check("account listSavedMessages", async () => {
+    const listed = await accountBroadcasts.admin.listSavedMessages({ limit: 30 });
+    savedIds = listed.items
+      .filter((item) => item.kind === "video_note" || item.body === "Ждём вас во вторник")
+      .map((item) => item.id);
+    if (savedIds.length !== 2 || listed.lastSyncedAt === null) {
+      throw new Error(`Не то в «Избранном»: ${JSON.stringify(listed.items)}`);
+    }
+  });
+  await check("savedMessages listPendingFiles и markFileStored", async () => {
+    const pending = await accountBroadcasts.savedMessages.listPendingFiles({ limit: 10, maxAttempts: 3 });
+    const circle = pending.find((item) => item.externalFileId === "56");
+    if (!circle) {
+      throw new Error(`Кружок не ждёт скачивания: ${JSON.stringify(pending)}`);
+    }
+    await accountBroadcasts.savedMessages.markFileStored({
+      savedMessageId: circle.savedMessageId,
+      storagePath: "2026/11/circle.mp4",
+      sha256: "a".repeat(64),
+      sizeBytes: 1_999_999,
+      at: now
+    });
+    const file = await accountBroadcasts.admin.findSavedMessageFile(circle.savedMessageId);
+    if (file?.storagePath !== "2026/11/circle.mp4") {
+      throw new Error("Файл кружка не находится");
+    }
+  });
+  await check("savedMessages markFileFailed", () => accountBroadcasts.savedMessages.markFileFailed({
+    savedMessageId: randomUUID(), giveUp: true, at: now
+  }));
+  await check("account eventExists", () => accountBroadcasts.admin.eventExists(upcomingEventId));
+  await check("account countAudience", async () => {
+    const counts = await accountBroadcasts.admin.countAudience({
+      eventId: upcomingEventId,
+      savedMessageIds: savedIds
+    });
+    if (counts.reachable < 1) {
+      throw new Error(`Участник с веткой не виден: ${JSON.stringify(counts)}`);
+    }
+  });
+  await check("account findTestRecipient", () => accountBroadcasts.admin.findTestRecipient({
+    username: "nobody_here", phoneE164: phone
+  }));
+  const liveBroadcastId = randomUUID();
+  await check("account createBroadcast по мероприятию", async () => {
+    const outcome = await accountBroadcasts.admin.createBroadcast({
+      broadcastId: liveBroadcastId,
+      adminId: AUTOMATION_ADMIN,
+      savedMessageIds: savedIds,
+      target: { kind: "event", eventId: upcomingEventId, limit: 5_000 },
+      at: now
+    });
+    if (outcome.kind !== "created") {
+      throw new Error(`Рассылка не завелась: ${JSON.stringify(outcome)}`);
+    }
+    const again = await accountBroadcasts.admin.createBroadcast({
+      broadcastId: randomUUID(),
+      adminId: AUTOMATION_ADMIN,
+      savedMessageIds: savedIds,
+      target: { kind: "event", eventId: upcomingEventId, limit: 5_000 },
+      at: now
+    });
+    if (again.kind !== "already_sending") {
+      throw new Error(`Вторая рассылка по тому же мероприятию прошла: ${again.kind}`);
+    }
+  });
+  await check("account queue activePause и countSentSince", async () => {
+    await accountBroadcasts.queue.activePause(now);
+    await accountBroadcasts.queue.countSentSince(new Date(now.getTime() - 86_400_000));
+  });
+  let broadcastSent = 0;
+  await check("account queue claimNext и markSent", async () => {
+    // Участников с веткой у мероприятия заготовки может быть больше одного: отправляем
+    // всем, пока очередь не опустеет, — иначе рассылку нечем будет закрыть.
+    for (let round = 0; round < 10; round += 1) {
+      const claimed = await accountBroadcasts.queue.claimNext({
+        at: now, includeLive: true, leaseUntil: new Date(now.getTime() + 600_000)
+      });
+      if (claimed === null) {
+        break;
+      }
+      if (claimed.broadcastId !== liveBroadcastId || claimed.parts.length !== 2) {
+        throw new Error(`Взяли не того: ${JSON.stringify(claimed)}`);
+      }
+      if (claimed.parts[0]?.kind !== "video_note") {
+        throw new Error("Порядок частей не тот: кружок записан раньше текста");
+      }
+      await accountBroadcasts.queue.markSent({
+        recipient: claimed,
+        messageId: randomUUID(),
+        attachmentIds: [randomUUID()],
+        providerMessageIds: [`${9001 + round * 2}`, `${9002 + round * 2}`],
+        body: "Ждём вас во вторник",
+        at: now
+      });
+      broadcastSent += 1;
+    }
+    if (broadcastSent === 0) {
+      throw new Error("Некого было отправлять");
+    }
+  });
+  await check("account queue release, markFailed, pauseAll", async () => {
+    await accountBroadcasts.queue.release({
+      recipientId: randomUUID(), reason: "проверка", retryAt: now, countAttempt: true, at: now
+    });
+    await accountBroadcasts.queue.markFailed({ recipientId: randomUUID(), reason: "проверка", at: now });
+    await accountBroadcasts.queue.pauseAll({
+      until: new Date(now.getTime() - 1_000), reason: "проверка", at: now
+    });
+  });
+  await check("account queue completeFinished", async () => {
+    const completed = await accountBroadcasts.queue.completeFinished(now);
+    if (completed < 1) {
+      throw new Error("Рассылка, где ждать некого, не закрылась");
+    }
+  });
+  const testBroadcastId = randomUUID();
+  await check("account createBroadcast пробная и остановка", async () => {
+    const recipient = await accountBroadcasts.admin.findTestRecipient({
+      username: null, phoneE164: phone
+    });
+    if (recipient === null) {
+      throw new Error("Пробный получатель по телефону не нашёлся");
+    }
+    const outcome = await accountBroadcasts.admin.createBroadcast({
+      broadcastId: testBroadcastId,
+      adminId: AUTOMATION_ADMIN,
+      savedMessageIds: savedIds,
+      target: { kind: "test", recipient, recipientId: randomUUID() },
+      at: now
+    });
+    if (outcome.kind !== "created") {
+      throw new Error(`Пробная не завелась: ${outcome.kind}`);
+    }
+    await accountBroadcasts.queue.stopBroadcast({ broadcastId: testBroadcastId, reason: "проверка", at: now });
+    await accountBroadcasts.admin.cancelBroadcast({
+      broadcastId: testBroadcastId, adminId: AUTOMATION_ADMIN, reason: "проверка", at: now
+    });
+  });
+  await check("account listBroadcasts", async () => {
+    const items = await accountBroadcasts.admin.listBroadcasts(30);
+    const live = items.find((item) => item.id === liveBroadcastId);
+    if (live?.status !== "completed" || live.sentCount !== broadcastSent || live.parts.length !== 2) {
+      throw new Error(`История не та: ${JSON.stringify(live)}`);
+    }
+  });
+  await check("account countAudience после отправки видит «уже получили»", async () => {
+    const counts = await accountBroadcasts.admin.countAudience({
+      eventId: upcomingEventId,
+      savedMessageIds: savedIds
+    });
+    if (counts.alreadyReceived < 1) {
+      throw new Error(`Получивший не учтён: ${JSON.stringify(counts)}`);
+    }
+  });
+  await check("savedMessages markDeleted", () => accountBroadcasts.savedMessages.markDeleted({
+    externalMessageIds: [randomUUID()], at: now
+  }));
+  // Проход видит только кружок, а текст новее его: текст пропал из окна — значит удалён.
+  await check("savedMessages syncSeen отмечает удалённое в окне", async () => {
+    await accountBroadcasts.savedMessages.syncSeen({
+      ids: [circleExternalId],
+      messages: [{
+        externalMessageId: circleExternalId, kind: "video_note", body: null,
+        durationSeconds: 42, minithumbnailBase64: "AAAA", externalFileId: "56",
+        fileName: "Кружок.mp4", mimeType: "video/mp4", sizeBytes: 2_000_000, sentAt: now
+      }],
+      fileKinds: ["video_note"],
+      maxFileBytes: 5_000_000,
+      at: now
+    });
+    const listed = await accountBroadcasts.admin.listSavedMessages({ limit: 30 });
+    if (listed.items.some((item) => item.body === "Ждём вас во вторник")) {
+      throw new Error("Удалённый текст всё ещё виден в «Избранном»");
+    }
+    const circle = listed.items.find((item) => item.kind === "video_note");
+    if (circle?.hasFile !== true) {
+      throw new Error("Повторный проход стёр отметку о скачанном файле");
+    }
+  });
+
   console.log("\nСписки панели:");
   const operations = createAdminOperationsPersistence(pool);
   await check("listUsers", async () => {

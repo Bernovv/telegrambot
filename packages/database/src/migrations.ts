@@ -354,5 +354,10 @@ export const migrations: readonly MigrationDescriptor[] = [
     id: "20260831090000_event_greetings_opt_in",
     description: "Make the registration greeting opt-in per event: nothing is sent until someone turns it on",
     destructive: false
+  },
+  {
+    id: "20260901090000_account_broadcasts",
+    description: "Broadcast from the company Telegram account: copy messages and video notes from Saved Messages to event participants",
+    destructive: false
   }
 ];

@@ -4167,6 +4167,152 @@ tbody tr:hover {
   font-size: 13px;
 }
 
+/* Рассылка от рабочего аккаунта: «Избранное» карточками, кружок — кругом. */
+.account-broadcast-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.account-saved-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-saved-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+
+.account-saved-card.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.account-saved-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-saved-media:empty {
+  display: none;
+}
+
+.account-saved-circle {
+  display: block;
+  width: 150px;
+  height: 150px;
+  margin: 0 auto;
+  object-fit: cover;
+  background: var(--surface-muted);
+  border-radius: 50%;
+}
+
+.account-saved-video,
+.account-saved-photo {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  background: var(--surface-muted);
+  border-radius: 4px;
+}
+
+.account-saved-circle.is-blurred,
+.account-saved-photo.is-blurred {
+  filter: blur(2px);
+}
+
+.account-saved-kind {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-saved-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.account-saved-meta,
+.account-saved-sync {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-audience {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.account-audience div {
+  padding: 10px 12px;
+  background: var(--surface-muted);
+  border-radius: 5px;
+}
+
+.account-audience dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-audience dd {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.account-audience .account-audience-total {
+  background: var(--accent-soft);
+}
+
+.account-audience .account-audience-total dd {
+  color: var(--accent);
+}
+
+.account-test-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.account-history-parts {
+  max-width: 320px;
+}
+
+.account-history-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .account-test-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1050px) {
   .broadcast-extras {
     grid-template-columns: minmax(0, 1fr);
@@ -6942,6 +7088,32 @@ a.person-channel:hover {
 .conversation-attachment-audio audio {
   max-width: 100%;
   height: 32px;
+}
+
+.conversation-attachment-video {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+.conversation-attachment-video video {
+  max-width: min(100%, 320px);
+  max-height: 240px;
+  background: var(--surface-muted);
+  border-radius: 6px;
+}
+
+.conversation-attachment-video video.is-round {
+  width: 200px;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.conversation-attachment-video a {
+  color: var(--accent);
+  font-size: 12px;
 }
 
 .conversation-attachment-audio a,

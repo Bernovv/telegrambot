@@ -54,3 +54,4 @@ export * from "./conversation-attachment-persistence.js";
 export * from "./conversation-persistence.js";
 export * from "./channel-lookup-persistence.js";
 export * from "./zvonobot-persistence.js";
+export * from "./account-broadcast-persistence.js";
